@@ -1131,10 +1131,22 @@ test('candidates keep accumulating with no admin route at all', async () => {
 
 import { _resetEngine } from './src/engine.js';
 
-test('the engine switch defaults to Cloudflare', async () => {
+const ENGINE_KEY = 'engine-secret';
+
+async function flip(env, cloudflare, headers = {}) {
+  return call(env, '/api/engine', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify({ cloudflare }),
+  });
+}
+
+const keyed = { 'x-engine-key': ENGINE_KEY };
+
+test('the engine switch defaults to Cloudflare and reads without a key', async () => {
   const { kv } = kvStore();
   _resetEngine();
-  const res = await call(makeEnv({ MEM: kv }), '/api/engine');
+  const res = await call(makeEnv({ MEM: kv, KEY: ENGINE_KEY }), '/api/engine');
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.engine, 'cloudflare');
@@ -1142,12 +1154,47 @@ test('the engine switch defaults to Cloudflare', async () => {
   assert.equal(body.bound.store, true);
 });
 
-test('switching Cloudflare off persists and sends chat to OpenRouter', async () => {
+test('writing the switch needs the KEY', async () => {
+  const { kv } = kvStore();
+  _resetEngine();
+  const env = makeEnv({ MEM: kv, KEY: ENGINE_KEY, OPENROUTER_API_KEY: 'test-key' });
+
+  const anon = await flip(env, false);
+  assert.equal(anon.status, 401);
+  assert.equal((await anon.json()).error.code, 'key_required');
+
+  const wrong = await flip(env, false, { 'x-engine-key': 'wrong-key-here' });
+  assert.equal(wrong.status, 401);
+
+  // A refused write must not move the switch.
+  const view = await (await call(env, '/api/engine')).json();
+  assert.equal(view.cloudflare, true);
+
+  // The bearer form works too, so curl stays usable.
+  const ok = await flip(env, false, { authorization: `Bearer ${ENGINE_KEY}` });
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json()).engine, 'openrouter');
+});
+
+test('the switch fails closed when KEY is unset', async () => {
+  const { kv } = kvStore();
+  _resetEngine();
+  const env = makeEnv({ MEM: kv, OPENROUTER_API_KEY: 'test-key' });
+  const res = await flip(env, false, keyed);
+  assert.equal(res.status, 503);
+  assert.equal((await res.json()).error.code, 'key_unset');
+
+  const view = await (await call(env, '/api/engine')).json();
+  assert.equal(view.cloudflare, true);
+});
+
+test('switching Cloudflare off sends chat to the free router', async () => {
   const { kv, store } = kvStore();
   _resetEngine();
   let aiCalls = 0;
   const env = makeEnv({
     MEM: kv,
+    KEY: ENGINE_KEY,
     OPENROUTER_API_KEY: 'test-key',
     AI: {
       async run() {
@@ -1157,36 +1204,38 @@ test('switching Cloudflare off persists and sends chat to OpenRouter', async () 
     },
   });
 
-  const off = await call(env, '/api/engine', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ cloudflare: false }),
-  });
+  const off = await flip(env, false, keyed);
   assert.equal(off.status, 200);
   assert.equal((await off.json()).engine, 'openrouter');
   assert.match(store.get('settings:engine'), /"cloudflare":false/);
 
   const original = globalThis.fetch;
-  globalThis.fetch = async () =>
-    new Response(
-      'data: {"choices":[{"delta":{"content":"openrouter only"}}]}\n\ndata: [DONE]\n\n',
+  let sent = null;
+  globalThis.fetch = async (url, init) => {
+    sent = JSON.parse(init.body);
+    return new Response(
+      'data: {"choices":[{"delta":{"content":"free answer"}}]}\n\ndata: [DONE]\n\n',
       { status: 200 },
     );
+  };
   try {
     const res = await call(env, '/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth' }),
     });
     const events = await readSSE(res);
     assert.equal(events[0].route, 'openrouter');
-    assert.equal(
-      events.filter((e) => e.type === 'delta').map((e) => e.text).join(''),
-      'openrouter only',
-    );
+    assert.equal(events[0].model, 'openrouter/free');
+    assert.equal(sent.model, 'openrouter/free');
+    // A preset reference would point at the paid preset; the local prompt is sent
+    // instead so the answer keeps the preset's character.
+    assert.equal(sent.messages[0].role, 'system');
+    assert.equal(sent.temperature, 0.1);
     // Neither clef nor the chat rung may touch Workers AI while it is off.
     assert.equal(aiCalls, 0);
     assert.ok(events[0].decision.trace.includes('intent:fallback'));
+    assert.equal(events.filter((e) => e.type === 'delta').map((e) => e.text).join(''), 'free answer');
   } finally {
     globalThis.fetch = original;
   }
@@ -1195,22 +1244,40 @@ test('switching Cloudflare off persists and sends chat to OpenRouter', async () 
   assert.equal(health.engine.active, 'openrouter');
   assert.equal(health.engine.cloudflare, false);
   assert.equal(health.engine.workersAI, true);
-  assert.equal(health.features.chat, true);
+  assert.equal(health.models.openrouterFree, 'openrouter/free');
 });
 
-test('the switch will not turn Cloudflare off without an OpenRouter key', async () => {
-  const { kv } = kvStore();
+test('the truth cache still answers first with Cloudflare off', async () => {
+  const { kv, store } = kvStore();
   _resetEngine();
-  const res = await call(makeEnv({ MEM: kv }), '/api/engine', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ cloudflare: false }),
-  });
-  assert.equal(res.status, 409);
-  assert.equal((await res.json()).error.code, 'no_openrouter_key');
+  store.set('truth:master:hi', JSON.stringify({ query: 'hi', answer: 'curated answer' }));
 
-  const view = await (await call(makeEnv({ MEM: kv }), '/api/engine')).json();
-  assert.equal(view.cloudflare, true);
+  const env = makeEnv({ MEM: kv, KEY: ENGINE_KEY, OPENROUTER_API_KEY: 'test-key' });
+  await flip(env, false, keyed);
+
+  const original = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async () => {
+    fetches += 1;
+    return new Response('{}', { status: 200 });
+  };
+  try {
+    const res = await call(env, '/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+    });
+    const events = await readSSE(res);
+    assert.equal(events[0].route, 'truth');
+    assert.equal(
+      events.filter((e) => e.type === 'delta').map((e) => e.text).join(''),
+      'curated answer',
+    );
+    // Cache before model: nothing reached OpenRouter at all.
+    assert.equal(fetches, 0);
+  } finally {
+    globalThis.fetch = original;
+  }
 });
 
 test('switching Cloudflare back on restores the Workers AI rung', async () => {
@@ -1219,6 +1286,7 @@ test('switching Cloudflare back on restores the Workers AI rung', async () => {
   let aiCalls = 0;
   const env = makeEnv({
     MEM: kv,
+    KEY: ENGINE_KEY,
     OPENROUTER_API_KEY: 'test-key',
     AI: {
       async run(model, body = {}) {
@@ -1229,11 +1297,7 @@ test('switching Cloudflare back on restores the Workers AI rung', async () => {
     },
   });
 
-  const on = await call(env, '/api/engine', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ cloudflare: true }),
-  });
+  const on = await flip(env, true, keyed);
   assert.equal((await on.json()).engine, 'cloudflare');
 
   const res = await call(env, '/api/chat', {
@@ -1252,6 +1316,7 @@ test('stt follows the switch to OpenRouter', async () => {
   let aiCalls = 0;
   const env = makeEnv({
     MEM: kv,
+    KEY: ENGINE_KEY,
     OPENROUTER_API_KEY: 'test-key',
     AI: {
       async run() {
@@ -1260,11 +1325,7 @@ test('stt follows the switch to OpenRouter', async () => {
       },
     },
   });
-  await call(env, '/api/engine', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ cloudflare: false }),
-  });
+  await flip(env, false, keyed);
 
   const original = globalThis.fetch;
   globalThis.fetch = async () =>
@@ -1288,6 +1349,7 @@ test('tts follows the switch to OpenRouter', async () => {
   let aiCalls = 0;
   const env = makeEnv({
     MEM: kv,
+    KEY: ENGINE_KEY,
     OPENROUTER_API_KEY: 'test-key',
     AI: {
       async run() {
@@ -1296,11 +1358,7 @@ test('tts follows the switch to OpenRouter', async () => {
       },
     },
   });
-  await call(env, '/api/engine', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ cloudflare: false }),
-  });
+  await flip(env, false, keyed);
 
   const original = globalThis.fetch;
   globalThis.fetch = async () => new Response('mp3-bytes', { status: 200 });

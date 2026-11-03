@@ -1,4 +1,4 @@
-import { json, fail, has, options, b64FromBytes, bytesFromB64, clientIp } from './util.js';
+import { json, fail, has, options, b64FromBytes, bytesFromB64, clientIp, keyMatches } from './util.js';
 import { charge } from './budget.js';
 import { stateKv, objects, bindingReport } from './bindings.js';
 import { engineFor, setEngineFor, canUseCloudflare } from './engine.js';
@@ -118,6 +118,8 @@ async function health(env) {
       asr: cf.ASR_MODEL,
       tts: cf.TTS_MODEL,
       openrouter: env.OPENROUTER_MODEL || or.DEFAULT_MODEL,
+      // What answers when the switch is off.
+      openrouterFree: or.freeModelFor(env),
       // On the OpenRouter rung these resolve to @preset/<slug> instead.
       openrouterPresets: openRouterBackedPresets(),
     },
@@ -153,6 +155,22 @@ async function engineView(env) {
 }
 
 async function switchEngine(request, env) {
+  // This is the one route that changes how the app spends money, so it is the
+  // one route with a gate. An unset KEY fails closed rather than open.
+  const secret = String(env?.KEY || '');
+  if (!secret) {
+    return fail(
+      503,
+      'key_unset',
+      'Set the KEY secret (wrangler secret put KEY) before the switch can be used.',
+    );
+  }
+  const bearer = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  const provided = request.headers.get('x-engine-key') || bearer;
+  if (!keyMatches(secret, provided)) {
+    return fail(401, 'key_required', 'Send the KEY in the x-engine-key header.');
+  }
+
   const body = await request.json().catch(() => null);
   if (!body || typeof body.cloudflare !== 'boolean') {
     return fail(400, 'cloudflare_required', 'Send { cloudflare: true | false }.');
@@ -228,7 +246,10 @@ function pickCfModel(preset, images, { decision, explicit } = {}) {
 }
 
 /** The provider ladder: Cloudflare first, OpenRouter when CF cannot serve it. */
-async function openUpstream(env, { messages, images, preset, decision, explicit, allowCloudflare = true }) {
+async function openUpstream(
+  env,
+  { messages, images, preset, decision, explicit, allowCloudflare = true, freeRouter = false },
+) {
   const failures = [];
 
   if (allowCloudflare && has(env, 'AI')) {
@@ -253,8 +274,12 @@ async function openUpstream(env, { messages, images, preset, decision, explicit,
     // A referenced OpenRouter preset owns its model, prompt and sampling params.
     // Request fields shallow-merge over preset fields, so sending ours here
     // would override the configuration the preset exists to hold.
-    const usesPreset = Boolean(preset?.orPreset);
-    const model = or.modelFor(env, preset);
+    // Only the switch sends traffic to the free router. A deployment with no AI
+    // binding is not the same thing: OpenRouter is its only engine, so it keeps
+    // the presets and the paid model it always had.
+    const freeOnly = Boolean(freeRouter);
+    const usesPreset = !freeOnly && Boolean(preset?.orPreset);
+    const model = freeOnly ? or.freeModelFor(env) : or.modelFor(env, preset);
     const base = usesPreset ? messages.filter((message) => message.role !== 'system') : messages;
     const payload = base.map((message, index) =>
       index === base.length - 1 && images.length
@@ -411,6 +436,7 @@ async function chat(request, env, ctx) {
       decision: reported,
       explicit: pinned,
       allowCloudflare: useCf,
+      freeRouter: engine === 'openrouter',
     });
     let text = '';
     let frames = 0;
@@ -455,6 +481,7 @@ async function chat(request, env, ctx) {
     decision: reported,
     explicit: pinned,
     allowCloudflare: useCf,
+    freeRouter: engine === 'openrouter',
   });
 
   const out = new ReadableStream({

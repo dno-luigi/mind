@@ -62,3 +62,16 @@ export function clientIp(request) {
 }
 
 export const utcDay = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * Compare a presented key with the configured one without leaking where they
+ * diverge. Length is compared up front, which only reveals a length.
+ */
+export function keyMatches(expected, provided) {
+  const a = String(expected || '');
+  const b = String(provided || '');
+  if (!a || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}

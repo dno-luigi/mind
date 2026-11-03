@@ -255,15 +255,25 @@ switch that flips the whole Worker to OpenRouter-only. It is server state, not a
 browser preference: the value is written to MEM as `settings:engine`, so every
 isolate and every device follows the same switch.
 
+Reading the switch is public — the page needs the label — but writing it needs the
+`KEY` secret, sent as `x-engine-key` or `Authorization: Bearer`. Without `KEY` set
+the write fails closed with `503 key_unset` rather than leaving the switch open.
+
 ```bash
+npx wrangler secret put KEY          # once; use that value below
 curl -s https://mind.ai-n.workers.dev/api/engine
 curl -s -X POST https://mind.ai-n.workers.dev/api/engine \
-  -H 'content-type: application/json' -d '{"cloudflare":false}'
+  -H "x-engine-key: $KEY" -H 'content-type: application/json' \
+  -d '{"cloudflare":false}'
 ```
 
 With it off, no `env.AI.run` is called at all:
 
-- chat skips the Workers AI rung and answers from OpenRouter
+- chat answers from OpenRouter's free router, `openrouter/free`, which picks a free
+  model per request; set `OPENROUTER_FREE_MODEL` to pin a specific `:free` slug
+  instead. Presets are skipped on this path — their prompts and models live in the
+  account and are paid — so the preset's local system prompt and sampling params
+  travel with the request
 - clef is skipped, so the decision falls back to the preset (`intent:fallback` in
   `decision.trace`) and costs nothing
 - STT and TTS move to OpenRouter's transcriptions and speech endpoints
@@ -272,9 +282,10 @@ With it off, no `env.AI.run` is called at all:
   a model
 
 It refuses to switch off when `OPENROUTER_API_KEY` is unset (`409
-no_openrouter_key`) rather than leaving the app with no engine at all. And KV is
-only eventually consistent, so an isolate holding the old value can take up to
-ten seconds to notice a flip.
+no_openrouter_key`) rather than leaving the app with no engine at all, and it
+refuses a write without the key (`401 key_required`). KV is only eventually
+consistent, so an isolate holding the old value can take up to ten seconds to
+notice a flip.
 
 ## Cost
 

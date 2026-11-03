@@ -2073,6 +2073,14 @@ Do not output any other text.`;
     /** The switch is server state, so the label has to be read, not remembered. */
     async loadEngine() {
         try {
+            this.engineKey = localStorage.getItem('mind-engine-key') || '';
+        } catch {
+            this.engineKey = '';
+        }
+        const keyInput = document.getElementById('engineKeyInput');
+        if (keyInput) keyInput.value = this.engineKey;
+
+        try {
             const res = await fetch('/api/engine', { headers: { accept: 'application/json' } });
             const body = await res.json();
             this.engineCloudflare = Boolean(body.cloudflare);
@@ -2083,12 +2091,27 @@ Do not output any other text.`;
         this.renderEngineToggle();
     }
 
+    /** The key is only ever sent with a write, and never leaves this device. */
+    saveEngineKey(value) {
+        this.engineKey = String(value || '').trim();
+        try {
+            if (this.engineKey) localStorage.setItem('mind-engine-key', this.engineKey);
+            else localStorage.removeItem('mind-engine-key');
+        } catch {
+            // Private mode: it still works for this page's lifetime.
+        }
+    }
+
     async toggleEngine() {
         const next = !this.engineCloudflare;
+        if (!this.engineKey) {
+            this.showToast('Add the KEY first — the switch is keyed');
+            return;
+        }
         try {
             const res = await fetch('/api/engine', {
                 method: 'POST',
-                headers: { 'content-type': 'application/json' },
+                headers: { 'content-type': 'application/json', 'x-engine-key': this.engineKey },
                 body: JSON.stringify({ cloudflare: next }),
             });
             const body = await res.json().catch(() => null);

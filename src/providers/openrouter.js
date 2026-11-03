@@ -33,6 +33,21 @@ export function modelFor(env, preset) {
   return preset?.or || env.OPENROUTER_MODEL || DEFAULT_MODEL;
 }
 
+/**
+ * The model that answers when Cloudflare is switched off.
+ *
+ * `openrouter/free` is OpenRouter's own free router: it picks a free model per
+ * request, so the app keeps answering when the daily neurons are gone instead
+ * of repointing at one free model that may be withdrawn. A preset cannot be
+ * used on this path — its prompt lives in the account and its model is the paid
+ * one — so the local prompt travels with the request.
+ */
+export const FREE_MODEL = 'openrouter/free';
+
+export function freeModelFor(env) {
+  return env.OPENROUTER_FREE_MODEL || FREE_MODEL;
+}
+
 async function post(env, path, body) {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
