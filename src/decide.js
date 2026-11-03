@@ -122,9 +122,11 @@ function parseDecision(out) {
 }
 
 /** Stage 2 — intent. A decision is an optimisation, never a single point of failure. */
-async function intentFor(env, { messages, images, presetId }) {
+async function intentFor(env, { messages, images, presetId, engine = 'cloudflare' }) {
   const fallback = { preset: presetId, depth: 'normal', tone: 'plain', task: 'chat', source: 'fallback' };
-  if (!env?.AI || env.DECIDE === 'off') return fallback;
+  // With Cloudflare switched off there is no clef to ask, and asking it anyway
+  // would spend exactly the neurons the switch exists to save.
+  if (engine !== 'cloudflare' || !env?.AI || env.DECIDE === 'off') return fallback;
 
   for (const rung of LADDER) {
     try {
@@ -203,7 +205,10 @@ export async function recordReview(env, ctx, record) {
  *
  * Stage 6 (review) runs after generation, since it records the answer too.
  */
-export async function decide(env, { messages, images = [], presetId = null, allowPreset = true } = {}) {
+export async function decide(
+  env,
+  { messages, images = [], presetId = null, allowPreset = true, engine = 'cloudflare' } = {},
+) {
   const trace = [];
   // The client carries its base prompt inside the user turn, so the question a
   // cache or a curated pair is keyed by has to be lifted out of it.
@@ -251,7 +256,7 @@ export async function decide(env, { messages, images = [], presetId = null, allo
   }
 
   // 2. intent
-  const intent = await intentFor(env, { messages, images, presetId });
+  const intent = await intentFor(env, { messages, images, presetId, engine });
   trace.push(`intent:${intent.source}`);
 
   // 3. browse

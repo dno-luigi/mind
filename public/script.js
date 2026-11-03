@@ -169,6 +169,7 @@ class App {
 
     init() {
         this.loadState();
+        this.loadEngine();
         this.applyTheme();
         this.applyView();
         this.bindEvents();
@@ -2066,6 +2067,54 @@ Do not output any other text.`;
                 const transcript = event.results[0][0].transcript;
                 document.getElementById('userInput').value = transcript;
             };
+        }
+    }
+
+    /** The switch is server state, so the label has to be read, not remembered. */
+    async loadEngine() {
+        try {
+            const res = await fetch('/api/engine', { headers: { accept: 'application/json' } });
+            const body = await res.json();
+            this.engineCloudflare = Boolean(body.cloudflare);
+        } catch {
+            // Offline, or a Worker without the route: "On" is what it will be doing.
+            this.engineCloudflare = true;
+        }
+        this.renderEngineToggle();
+    }
+
+    async toggleEngine() {
+        const next = !this.engineCloudflare;
+        try {
+            const res = await fetch('/api/engine', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ cloudflare: next }),
+            });
+            const body = await res.json().catch(() => null);
+            if (!res.ok) {
+                this.showToast(body?.error?.message || `Could not switch engines (${res.status})`);
+                return;
+            }
+            this.engineCloudflare = Boolean(body.cloudflare);
+            this.renderEngineToggle();
+            this.showToast(
+                this.engineCloudflare
+                    ? 'Cloudflare on — Workers AI answers first'
+                    : 'Cloudflare off — OpenRouter only, no neurons',
+            );
+        } catch (err) {
+            this.showToast(`Could not switch engines: ${err.message}`);
+        }
+    }
+
+    renderEngineToggle() {
+        const btn = document.getElementById('engineToggle');
+        const label = document.getElementById('engineLabel');
+        if (label) label.textContent = this.engineCloudflare ? 'Cloudflare: On' : 'Cloudflare: Off';
+        if (btn) {
+            btn.setAttribute('aria-pressed', String(this.engineCloudflare));
+            btn.classList.toggle('active', this.engineCloudflare);
         }
     }
 

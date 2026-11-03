@@ -6,7 +6,8 @@ there is no CORS or proxy URL to configure.
 
 Inference is **Cloudflare-first**. Workers AI answers by default via a `clef`
 decision model, and OpenRouter is the escalation rung for what Workers AI cannot
-serve, plus the whole voice path's fallback.
+serve, plus the whole voice path's fallback. That can be turned off entirely —
+see [Turning Cloudflare off](#turning-cloudflare-off).
 
 ```mermaid
 flowchart LR
@@ -246,6 +247,34 @@ collapsing at every boundary.
 
 TTS is a **cacheable GET** rather than a POST so an `<audio>` element can stream
 it and Cloudflare's edge can hold the result. Repeat reads cost zero neurons.
+
+## Turning Cloudflare off
+
+Neurons are a daily allowance; OpenRouter is not. Settings → **Engine** has a
+switch that flips the whole Worker to OpenRouter-only. It is server state, not a
+browser preference: the value is written to MEM as `settings:engine`, so every
+isolate and every device follows the same switch.
+
+```bash
+curl -s https://mind.ai-n.workers.dev/api/engine
+curl -s -X POST https://mind.ai-n.workers.dev/api/engine \
+  -H 'content-type: application/json' -d '{"cloudflare":false}'
+```
+
+With it off, no `env.AI.run` is called at all:
+
+- chat skips the Workers AI rung and answers from OpenRouter
+- clef is skipped, so the decision falls back to the preset (`intent:fallback` in
+  `decision.trace`) and costs nothing
+- STT and TTS move to OpenRouter's transcriptions and speech endpoints
+- nothing is charged against `DAILY_NEURONS`, so the allowance stops draining
+- curated truths still answer first: that cache is KV and a service binding, not
+  a model
+
+It refuses to switch off when `OPENROUTER_API_KEY` is unset (`409
+no_openrouter_key`) rather than leaving the app with no engine at all. And KV is
+only eventually consistent, so an isolate holding the old value can take up to
+ten seconds to notice a flip.
 
 ## Cost
 

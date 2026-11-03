@@ -1,6 +1,7 @@
 import { json, fail, has, options, b64FromBytes, bytesFromB64, clientIp } from './util.js';
 import { charge } from './budget.js';
 import { stateKv, objects, bindingReport } from './bindings.js';
+import { engineFor, setEngineFor, canUseCloudflare } from './engine.js';
 import { publicPresets, findPreset, openRouterBackedPresets, DEFAULT_PRESET } from './presets.js';
 import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
@@ -86,23 +87,30 @@ async function route(request, env, ctx, url) {
   if (path === '/api/stt' && method === 'POST') return stt(request, env);
   if (path === '/api/tts' && method === 'GET') return tts(url, env, ctx);
   if (path === '/api/upload' && method === 'POST') return upload(request, env);
+  if (path === '/api/engine' && method === 'GET') return engineView(env);
+  if (path === '/api/engine' && method === 'POST') return switchEngine(request, env);
 
   // No admin routes: nothing reachable over HTTP can write a truth. Candidates
   // still accumulate in MEM, and truth records are seeded out of band.
   return fail(404, 'not_found', `No route for ${method} ${path}`);
 }
 
-function health(env) {
+async function health(env) {
   const kv = stateKv(env);
   const bucket = objects(env);
+  const engine = await engineFor(env);
+  const useCf = canUseCloudflare(env, engine);
 
   return json({
     ok: true,
     service: 'mind',
-    version: '1.1.0',
+    version: '1.2.0',
     engine: {
       workersAI: has(env, 'AI'),
       openrouterKey: has(env, 'OPENROUTER_API_KEY'),
+      // The switch. "openrouter" means no Workers AI call is made at all.
+      active: engine,
+      cloudflare: useCf,
     },
     bindings: bindingReport(env),
     models: {
@@ -115,9 +123,9 @@ function health(env) {
     },
     // Features disable themselves rather than failing the whole service.
     features: {
-      chat: has(env, 'AI') || has(env, 'OPENROUTER_API_KEY'),
-      stt: has(env, 'AI') || has(env, 'OPENROUTER_API_KEY'),
-      tts: has(env, 'AI') || has(env, 'OPENROUTER_API_KEY'),
+      chat: useCf || has(env, 'OPENROUTER_API_KEY'),
+      stt: useCf || has(env, 'OPENROUTER_API_KEY'),
+      tts: useCf || has(env, 'OPENROUTER_API_KEY'),
       uploads: Boolean(bucket),
       ttsCache: Boolean(bucket) || typeof caches !== 'undefined',
       // False means the budget is per-isolate and resets; see wrangler.jsonc.
@@ -127,6 +135,40 @@ function health(env) {
       truth: Boolean(kv),
     },
   });
+}
+
+/** What the switch reads as, without exposing the store. */
+async function engineView(env) {
+  const engine = await engineFor(env);
+  return json({
+    ok: true,
+    engine,
+    cloudflare: canUseCloudflare(env, engine),
+    bound: {
+      ai: has(env, 'AI'),
+      openrouter: has(env, 'OPENROUTER_API_KEY'),
+      store: Boolean(stateKv(env)),
+    },
+  });
+}
+
+async function switchEngine(request, env) {
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body.cloudflare !== 'boolean') {
+    return fail(400, 'cloudflare_required', 'Send { cloudflare: true | false }.');
+  }
+  // Turning Cloudflare off with no key to fall back to would leave the app
+  // answering nothing, which is a worse outcome than a loud refusal.
+  if (!body.cloudflare && !has(env, 'OPENROUTER_API_KEY')) {
+    return fail(
+      409,
+      'no_openrouter_key',
+      'OPENROUTER_API_KEY is not set, so Cloudflare cannot be turned off.',
+    );
+  }
+
+  const engine = await setEngineFor(env, body.cloudflare);
+  return json({ ok: true, engine, cloudflare: canUseCloudflare(env, engine) });
 }
 
 function normalizeMessages(raw) {
@@ -186,10 +228,10 @@ function pickCfModel(preset, images, { decision, explicit } = {}) {
 }
 
 /** The provider ladder: Cloudflare first, OpenRouter when CF cannot serve it. */
-async function openUpstream(env, { messages, images, preset, decision, explicit }) {
+async function openUpstream(env, { messages, images, preset, decision, explicit, allowCloudflare = true }) {
   const failures = [];
 
-  if (has(env, 'AI')) {
+  if (allowCloudflare && has(env, 'AI')) {
     const model = pickCfModel(preset, images, { decision, explicit });
     try {
       const stream = await within(UPSTREAM_OPEN_MS, `workers-ai ${model}`, () =>
@@ -230,7 +272,10 @@ async function openUpstream(env, { messages, images, preset, decision, explicit 
     return { route: 'openrouter', model, stream: res.body, extract: fromOpenRouterChat };
   }
 
-  const err = new Error(`No usable engine. ${failures.join('; ') || 'Bind AI or set OPENROUTER_API_KEY.'}`);
+  const switchedOff = allowCloudflare ? '' : ' Cloudflare is switched off and OPENROUTER_API_KEY is unset.';
+  const err = new Error(
+    `No usable engine.${switchedOff} ${failures.join('; ') || 'Bind AI or set OPENROUTER_API_KEY.'}`,
+  );
   err.code = 'no_engine';
   err.status = 503;
   throw err;
@@ -298,7 +343,12 @@ async function chat(request, env, ctx) {
   // decision. A preset picked deliberately (anything but the default) does.
   const pinned = Boolean(requestedPreset) && requestedPreset.id !== DEFAULT_PRESET;
 
-  const gate = await charge(env, clientIp(request), 300);
+  const engine = await engineFor(env);
+  const useCf = canUseCloudflare(env, engine);
+
+  // Neurons are the reason this switch exists: with Cloudflare off nothing is
+  // charged against the daily allowance, and OpenRouter's limits apply instead.
+  const gate = useCf ? await charge(env, clientIp(request), 300) : { ok: true };
   if (!gate.ok) {
     return fail(429, 'budget_exhausted', `Daily budget reached (${gate.used}/${gate.limit} neurons). Resets at 00:00 UTC.`);
   }
@@ -309,6 +359,7 @@ async function chat(request, env, ctx) {
     images,
     presetId: pinned ? requested : null,
     allowPreset: !noneSelected,
+    engine,
   });
   // A deliberate pick wins outright. Otherwise the decision steers, and the
   // preset the client sent (truth, normally) is the fallback prompt.
@@ -359,6 +410,7 @@ async function chat(request, env, ctx) {
       preset,
       decision: reported,
       explicit: pinned,
+      allowCloudflare: useCf,
     });
     let text = '';
     let frames = 0;
@@ -402,6 +454,7 @@ async function chat(request, env, ctx) {
     preset,
     decision: reported,
     explicit: pinned,
+    allowCloudflare: useCf,
   });
 
   const out = new ReadableStream({
@@ -482,12 +535,14 @@ async function stt(request, env) {
 
   const info = wavInfo(bytes);
   const seconds = info?.seconds ?? null;
-  const gate = await charge(env, clientIp(request), (seconds ? seconds / 60 : 1) * 46.63);
+  const engine = await engineFor(env);
+  const useCf = canUseCloudflare(env, engine);
+  const gate = useCf ? await charge(env, clientIp(request), (seconds ? seconds / 60 : 1) * 46.63) : { ok: true };
   if (!gate.ok) {
     return fail(429, 'budget_exhausted', `Daily budget reached (${gate.used}/${gate.limit} neurons).`);
   }
 
-  if (has(env, 'AI')) {
+  if (useCf) {
     // 30 s of 16 kHz mono WAV is ~960 KB, under the documented ~1 MB guidance.
     const chunks = info ? wavChunks(bytes, info, 30) : [bytes];
     let text = '';
@@ -533,13 +588,17 @@ async function tts(url, env, ctx) {
     if (hit) return hit;
   }
 
-  const gate = await charge(env, clientIpFromUrl(url), Math.max(20, text.length / 6));
+  const engine = await engineFor(env);
+  const useCf = canUseCloudflare(env, engine);
+  const gate = useCf
+    ? await charge(env, clientIpFromUrl(url), Math.max(20, text.length / 6))
+    : { ok: true };
   if (!gate.ok) {
     return fail(429, 'budget_exhausted', `Daily budget reached (${gate.used}/${gate.limit} neurons).`);
   }
 
   let speech;
-  if (has(env, 'AI')) {
+  if (useCf) {
     speech = await cf.speech(env, { text, voice, lang: url.searchParams.get('lang') || 'en' });
   } else if (has(env, 'OPENROUTER_API_KEY')) {
     speech = await or.speech(env, { text, voice, model });

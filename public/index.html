@@ -106,6 +106,15 @@
             </div>
             <div class="modal-body">
                 <div class="style-section">
+                    <h4>Engine</h4>
+                    <div class="toggle-group" style="margin-bottom:8px;">
+                        <button class="toggle-btn" id="engineToggle" onclick="app.toggleEngine()" aria-pressed="true">
+                            <i class="fas fa-cloud"></i> <span id="engineLabel">Cloudflare: On</span>
+                        </button>
+                    </div>
+                    <small style="color:var(--text); opacity:0.7;">Off sends every answer straight to OpenRouter and spends no daily neurons. It applies to every browser, not just this one.</small>
+                </div>
+                <div class="style-section">
                     <h4>API Configuration</h4>
                     <input type="text" id="proxyUrlInput" placeholder="Proxy URL (Default provided)" style="width:100%; margin-bottom:8px;">
                     <small style="color:var(--text); opacity:0.7;">Leave empty to use default.</small>
@@ -289,6 +298,6 @@
 
     <div id="toast">Action Saved</div>
 
-    <script src="script.js?v=4"></script>
+    <script src="script.js?v=5"></script>
 </body>
 </html>

@@ -1128,3 +1128,189 @@ test('candidates keep accumulating with no admin route at all', async () => {
   assert.equal(candidate.hits, PROMOTE_AT);
   assert.equal(candidate.suggested, true);
 });
+
+import { _resetEngine } from './src/engine.js';
+
+test('the engine switch defaults to Cloudflare', async () => {
+  const { kv } = kvStore();
+  _resetEngine();
+  const res = await call(makeEnv({ MEM: kv }), '/api/engine');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.engine, 'cloudflare');
+  assert.equal(body.cloudflare, true);
+  assert.equal(body.bound.store, true);
+});
+
+test('switching Cloudflare off persists and sends chat to OpenRouter', async () => {
+  const { kv, store } = kvStore();
+  _resetEngine();
+  let aiCalls = 0;
+  const env = makeEnv({
+    MEM: kv,
+    OPENROUTER_API_KEY: 'test-key',
+    AI: {
+      async run() {
+        aiCalls += 1;
+        return { response: 'from workers ai' };
+      },
+    },
+  });
+
+  const off = await call(env, '/api/engine', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ cloudflare: false }),
+  });
+  assert.equal(off.status, 200);
+  assert.equal((await off.json()).engine, 'openrouter');
+  assert.match(store.get('settings:engine'), /"cloudflare":false/);
+
+  const original = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      'data: {"choices":[{"delta":{"content":"openrouter only"}}]}\n\ndata: [DONE]\n\n',
+      { status: 200 },
+    );
+  try {
+    const res = await call(env, '/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+    });
+    const events = await readSSE(res);
+    assert.equal(events[0].route, 'openrouter');
+    assert.equal(
+      events.filter((e) => e.type === 'delta').map((e) => e.text).join(''),
+      'openrouter only',
+    );
+    // Neither clef nor the chat rung may touch Workers AI while it is off.
+    assert.equal(aiCalls, 0);
+    assert.ok(events[0].decision.trace.includes('intent:fallback'));
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  const health = await (await call(env, '/api/health')).json();
+  assert.equal(health.engine.active, 'openrouter');
+  assert.equal(health.engine.cloudflare, false);
+  assert.equal(health.engine.workersAI, true);
+  assert.equal(health.features.chat, true);
+});
+
+test('the switch will not turn Cloudflare off without an OpenRouter key', async () => {
+  const { kv } = kvStore();
+  _resetEngine();
+  const res = await call(makeEnv({ MEM: kv }), '/api/engine', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ cloudflare: false }),
+  });
+  assert.equal(res.status, 409);
+  assert.equal((await res.json()).error.code, 'no_openrouter_key');
+
+  const view = await (await call(makeEnv({ MEM: kv }), '/api/engine')).json();
+  assert.equal(view.cloudflare, true);
+});
+
+test('switching Cloudflare back on restores the Workers AI rung', async () => {
+  const { kv } = kvStore();
+  _resetEngine();
+  let aiCalls = 0;
+  const env = makeEnv({
+    MEM: kv,
+    OPENROUTER_API_KEY: 'test-key',
+    AI: {
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{}' };
+        aiCalls += 1;
+        return body.stream ? sse(['from cf']) : { response: 'from cf' };
+      },
+    },
+  });
+
+  const on = await call(env, '/api/engine', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ cloudflare: true }),
+  });
+  assert.equal((await on.json()).engine, 'cloudflare');
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  const events = await readSSE(res);
+  assert.equal(events[0].route, 'workers-ai');
+  assert.ok(aiCalls > 0);
+});
+
+test('stt follows the switch to OpenRouter', async () => {
+  const { kv } = kvStore();
+  _resetEngine();
+  let aiCalls = 0;
+  const env = makeEnv({
+    MEM: kv,
+    OPENROUTER_API_KEY: 'test-key',
+    AI: {
+      async run() {
+        aiCalls += 1;
+        return { text: 'from workers ai' };
+      },
+    },
+  });
+  await call(env, '/api/engine', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ cloudflare: false }),
+  });
+
+  const original = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ text: 'from openrouter' }), { status: 200 });
+  try {
+    const pcm = new Uint8Array(16000 * 2);
+    const wav = wrapWav(pcm, { channels: 1, rate: 16000, bits: 16 });
+    const res = await call(env, '/api/stt', { method: 'POST', body: wav });
+    const body = await res.json();
+    assert.equal(body.engine, 'openrouter');
+    assert.equal(body.text, 'from openrouter');
+    assert.equal(aiCalls, 0);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('tts follows the switch to OpenRouter', async () => {
+  const { kv } = kvStore();
+  _resetEngine();
+  let aiCalls = 0;
+  const env = makeEnv({
+    MEM: kv,
+    OPENROUTER_API_KEY: 'test-key',
+    AI: {
+      async run() {
+        aiCalls += 1;
+        return { audio: btoa('cf-mp3') };
+      },
+    },
+  });
+  await call(env, '/api/engine', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ cloudflare: false }),
+  });
+
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('mp3-bytes', { status: 200 });
+  try {
+    const res = await call(env, '/api/tts?t=hello');
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('x-tts-source'), 'generated');
+    assert.equal(await res.text(), 'mp3-bytes');
+    assert.equal(aiCalls, 0);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
