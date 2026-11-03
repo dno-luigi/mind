@@ -1,5 +1,6 @@
 import { json, fail, has, options, b64FromBytes, bytesFromB64, clientIp } from './util.js';
 import { charge } from './budget.js';
+import { stateKv, objects, bindingReport } from './bindings.js';
 import { publicPresets, findPreset, openRouterBackedPresets } from './presets.js';
 import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
@@ -75,19 +76,19 @@ async function route(request, env, ctx, url) {
 }
 
 function health(env) {
+  const kv = stateKv(env);
+  const bucket = objects(env);
+
   return json({
     ok: true,
-    service: 'ai-Ncards Worker',
-    version: '1.0.0',
+    service: 'mind',
+    version: '1.1.0',
     engine: {
       workersAI: has(env, 'AI'),
-      openrouter: has(env, 'OPENROUTER_API_KEY'),
+      openrouterKey: has(env, 'OPENROUTER_API_KEY'),
+      openrouterProxy: has(env, 'ORPROXY'),
     },
-    bindings: {
-      kv: has(env, 'KV'),
-      r2: has(env, 'R2'),
-      assets: has(env, 'ASSETS'),
-    },
+    bindings: bindingReport(env),
     models: {
       text: cf.TEXT_MODEL,
       asr: cf.ASR_MODEL,
@@ -101,8 +102,11 @@ function health(env) {
       chat: has(env, 'AI') || has(env, 'OPENROUTER_API_KEY'),
       stt: has(env, 'AI') || has(env, 'OPENROUTER_API_KEY'),
       tts: has(env, 'AI') || has(env, 'OPENROUTER_API_KEY'),
-      uploads: has(env, 'R2'),
-      ttsCache: has(env, 'R2') || typeof caches !== 'undefined',
+      uploads: Boolean(bucket),
+      ttsCache: Boolean(bucket) || typeof caches !== 'undefined',
+      // False means the budget is per-isolate and resets; see wrangler.jsonc.
+      sharedBudget: Boolean(kv),
+      decisionCache: Boolean(kv),
     },
   });
 }
@@ -320,8 +324,9 @@ async function tts(url, env, ctx) {
   const model = url.searchParams.get('m') || 'melotts';
   const key = `tts/${await sha256Key(`${model}|${voice}|${text}`)}.mp3`;
 
-  if (has(env, 'R2')) {
-    const hit = await env.R2.get(key);
+  const bucket = objects(env);
+  if (bucket) {
+    const hit = await bucket.get(key);
     if (hit) return audioResponse(hit.body, { source: 'r2' });
   }
 
@@ -349,7 +354,7 @@ async function tts(url, env, ctx) {
   const bytes = speech.bytes || new Uint8Array(await new Response(speech.body).arrayBuffer());
   const response = audioResponse(bytes, { source: 'generated' });
 
-  if (has(env, 'R2') && ctx?.waitUntil) ctx.waitUntil(env.R2.put(key, bytes).catch(() => {}));
+  if (bucket && ctx?.waitUntil) ctx.waitUntil(bucket.put(key, bytes).catch(() => {}));
   if (cache && cacheKey && ctx?.waitUntil) ctx.waitUntil(cache.put(cacheKey, response.clone()).catch(() => {}));
 
   return response;
@@ -371,8 +376,9 @@ async function sha256Key(value) {
 }
 
 async function upload(request, env) {
-  if (!has(env, 'R2')) {
-    return fail(503, 'no_storage', 'Uploads need an R2 binding named R2.');
+  const bucket = objects(env);
+  if (!bucket) {
+    return fail(503, 'no_storage', 'Uploads need the BUCKET R2 binding.');
   }
   const contentType = request.headers.get('content-type') || 'application/octet-stream';
   if (!/^(image\/(png|jpeg|webp|gif)|application\/pdf|audio\/|video\/)/.test(contentType)) {
@@ -385,7 +391,7 @@ async function upload(request, env) {
 
   const digest = await sha256Key(`${contentType}:${bytes.length}:${Date.now()}`);
   const id = `${digest.slice(0, 32)}${extensionFor(contentType)}`;
-  await env.R2.put(`uploads/${id}`, bytes, { httpMetadata: { contentType } });
+  await bucket.put(`uploads/${id}`, bytes, { httpMetadata: { contentType } });
   return json({ id, url: `/f/${id}`, contentType, size: bytes.length });
 }
 
@@ -403,8 +409,9 @@ function extensionFor(contentType) {
 }
 
 async function serveObject(env, id) {
-  if (!has(env, 'R2')) return new Response('Not found', { status: 404 });
-  const object = await env.R2.get(`uploads/${id}`);
+  const bucket = objects(env);
+  if (!bucket) return new Response('Not found', { status: 404 });
+  const object = await bucket.get(`uploads/${id}`);
   if (!object) return new Response('Not found', { status: 404 });
   return new Response(object.body, {
     headers: {

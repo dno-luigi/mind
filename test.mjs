@@ -7,6 +7,7 @@ import { _resetBudget } from './src/budget.js';
 import { LADDER } from './src/decide.js';
 import { upsertBody, upsertPath, syncPlan } from './src/preset-sync.js';
 import { PRESETS, findPreset } from './src/presets.js';
+import { stateKv, objects, bindingReport } from './src/bindings.js';
 
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 
@@ -57,10 +58,15 @@ test('health reports which rungs and bindings are live', async () => {
   const res = await call(makeEnv(), '/api/health');
   assert.equal(res.status, 200);
   const body = await res.json();
+  assert.equal(body.service, 'mind');
   assert.equal(body.engine.workersAI, true);
-  assert.equal(body.engine.openrouter, false);
-  assert.equal(body.bindings.kv, false);
+  assert.equal(body.engine.openrouterKey, false);
+  assert.equal(body.engine.openrouterProxy, false);
+  assert.equal(body.bindings.kv.mem, false);
+  assert.equal(body.bindings.r2.bucket, false);
   assert.equal(body.features.uploads, false);
+  // Honest signal that the budget is per-isolate until MEM has an id.
+  assert.equal(body.features.sharedBudget, false);
   assert.equal(body.features.chat, true);
 });
 
@@ -356,6 +362,23 @@ test('the sync plan covers every slugged preset and skips local-only ones', () =
   assert.equal(plan.length, slugged.length);
   assert.equal(plan.some((item) => item.slug === 'default'), false);
   assert.equal(upsertPath('truth-engine'), '/presets/truth-engine/chat/completions');
+});
+
+test('stores resolve to the deployed names, with the generic ones as fallback', () => {
+  assert.equal(stateKv({ MEM: 'memoria', KV: 'old' }), 'memoria');
+  assert.equal(stateKv({ KV: 'old' }), 'old');
+  assert.equal(stateKv({}), null);
+  assert.equal(objects({ BUCKET: 'r2-explorer-bucket', R2: 'old' }), 'r2-explorer-bucket');
+  assert.equal(objects({}), null);
+});
+
+test('health reports the deployment binding names', () => {
+  const report = bindingReport({ AI: 1, ASSETS: 1, MEM: 1, BUCKET: 1, ORPROXY: 1 });
+  assert.equal(report.kv.mem, true);
+  assert.equal(report.kv.master, false);
+  assert.equal(report.r2.bucket, true);
+  assert.equal(report.services.orproxy, true);
+  assert.equal(report.services.agentBrowsing, false);
 });
 
 test('the worker serves static assets when it has no API route', async () => {

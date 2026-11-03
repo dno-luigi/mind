@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "ai-ncards",
+  "name": "mind",
   "main": "src/index.js",
   "compatibility_date": "2026-11-03",
 
@@ -17,24 +17,49 @@
     "binding": "AI"
   },
 
+  // Already exists in this account (r2-explorer-bucket). Enabling it turns on
+  // /api/upload, /f/:id and the TTS mp3 cache.
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "r2-explorer-bucket"
+    }
+  ],
+
+  // Bound to match the deployment, and so /api/health can report reachability.
+  // Nothing calls these yet: ORPROXY speaks the older ai_ncards_format surface
+  // (/api/openrouter), and no route needs AGENT-BROWSING.
+  "services": [
+    {
+      "binding": "ORPROXY",
+      "service": "orproxy"
+    },
+    {
+      "binding": "AGENT-BROWSING",
+      "service": "agent-browsing"
+    }
+  ],
+
   "observability": {
     "enabled": true
   },
 
   // ---------------------------------------------------------------------------
-  // Optional bindings. The worker runs without them and reports what is missing
-  // at GET /api/health, so this can ship before the namespaces exist.
+  // KV: shared daily neuron budget + clef decision cache.
   //
-  // KV:  shared daily neuron budget + decision cache (falls back to per-isolate
-  //      memory, which resets — fine for a single user, not for a public app).
-  // R2:  attachment storage (/api/upload, /f/:id) and TTS mp3 cache.
+  // Both namespaces exist in the account (MEM = "Memoria", MASTER = "master
+  // truths") but wrangler needs the namespace *id*, and ids are not readable
+  // from here without a login. Copy each one from
+  //   Dashboard → Workers & Pages → KV → Memoria / master truths
+  // then uncomment this block.
   //
-  // Create them, then uncomment and paste the ids:
-  //   npx wrangler kv namespace create KV
-  //   npx wrangler r2 bucket create ai-ncards
+  // Until then the worker falls back to per-isolate memory: correct for one user,
+  // but the budget resets whenever the isolate is recycled.
   //
-  // "kv_namespaces": [{ "binding": "KV", "id": "<id>" }],
-  // "r2_buckets": [{ "binding": "R2", "bucket_name": "ai-ncards" }],
+  // "kv_namespaces": [
+  //   { "binding": "MEM", "id": "<Memoria namespace id>" },
+  //   { "binding": "MASTER", "id": "<master truths namespace id>" }
+  // ],
   // ---------------------------------------------------------------------------
 
   "vars": {

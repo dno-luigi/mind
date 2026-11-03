@@ -1,4 +1,5 @@
 import { sha256Hex } from './util.js';
+import { stateKv } from './bindings.js';
 
 /**
  * The clef ladder: smallest window first, escalate only when the state does not
@@ -74,9 +75,10 @@ export async function decide(env, { messages, images = [], presetId = null } = {
   const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
   const cacheKey = `decision:${await sha256Hex(`${lastUser.slice(-4000)}|${images.length}|${presetId || ''}`)}`;
 
-  if (env.KV) {
+  const kv = stateKv(env);
+  if (kv) {
     try {
-      const hit = await env.KV.get(cacheKey);
+      const hit = await kv.get(cacheKey);
       if (hit) return { ...JSON.parse(hit), source: 'cache' };
     } catch {
       /* cache is optional */
@@ -97,9 +99,9 @@ export async function decide(env, { messages, images = [], presetId = null } = {
       const parsed = parseDecision(out);
       if (parsed) {
         const decision = { ...fallback, ...parsed, source: rung.model };
-        if (env.KV) {
+        if (kv) {
           try {
-            await env.KV.put(cacheKey, JSON.stringify(decision), { expirationTtl: 3600 });
+            await kv.put(cacheKey, JSON.stringify(decision), { expirationTtl: 3600 });
           } catch {
             /* ignore */
           }

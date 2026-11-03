@@ -93,24 +93,35 @@ applies.
 
 ## Bindings
 
-`AI` is bound already and needs no key or id. The rest are optional: the Worker
-runs without them and reports what is missing at `/api/health`.
+The worker is `mind`. These are attached in the deployment:
 
-| Binding | Needed for | Without it |
-|---|---|---|
-| `AI` | chat, STT, TTS, decisions | falls back to OpenRouter |
-| `OPENROUTER_API_KEY` (secret) | escalation, PDF/AV input | chat stays on Workers AI |
-| `KV` | shared daily neuron budget, decision cache | per-isolate memory, resets |
-| `R2` | uploads, TTS mp3 cache | uploads 503, TTS regenerates |
+| Binding | Type | Used for | Without it |
+|---|---|---|---|
+| `AI` | Workers AI | chat, STT, TTS, clef decisions | falls back to OpenRouter |
+| `BUCKET` | R2 `r2-explorer-bucket` | `/api/upload`, `/f/:id`, TTS mp3 cache | uploads 503, TTS regenerates |
+| `MEM` | KV `Memoria` | shared daily budget, decision cache | per-isolate memory, resets |
+| `MASTER` | KV `master truths` | reserved — nothing reads it yet | — |
+| `ORPROXY` | service `orproxy` | reserved — see below | direct calls need the key |
+| `AGENT-BROWSING` | service `agent-browsing` | reserved — no route uses it | — |
+| `ASSETS` | static assets | serves `public/` | no frontend |
 
-To add the two optional ones, uncomment the blocks in `wrangler.jsonc` after
-creating them:
+`MEM` and `MASTER` are commented out in `wrangler.jsonc` because wrangler needs
+the namespace **id**, and an id cannot be read without a dashboard login. Copy
+each one from Dashboard → Workers & Pages → KV → *Memoria* / *master truths*,
+then uncomment. Until then `/api/health` answers `features.sharedBudget: false`
+— the honest signal that the budget is per-isolate and resets.
+
+Only the escalation rung needs a secret:
 
 ```bash
-npx wrangler kv namespace create KV
-npx wrangler r2 bucket create ai-ncards
 npx wrangler secret put OPENROUTER_API_KEY
 ```
+
+`MASTER`, `ORPROXY` and `AGENT-BROWSING` are bound to match the account but are
+not called. `AGENT-BROWSING` has no route yet, and `ORPROXY` speaks the older
+`ai_ncards_format` surface (`/api/openrouter`, `/api/presets`), not
+OpenAI-compatible JSON — routing this client through it would need a translation
+layer, so the Worker talks to OpenRouter directly while a key is present.
 
 ## Why the voice path looks like this
 
@@ -147,7 +158,7 @@ default and aura is a per-card choice.
 ```bash
 npm install
 cp .dev.vars.example .dev.vars   # add OPENROUTER_API_KEY if you want the fallback
-npm test                          # 17 tests, no network, no credentials
+npm test                          # 24 tests, no network, no credentials
 npm run dev                       # http://localhost:8787
 npm run dry-run                   # bundle check without deploying
 npm run deploy
@@ -168,6 +179,9 @@ src/audio.js              WAV parse, wrap, sample-aligned chunking
 src/budget.js             shared daily neuron budget
 src/normalize.js          SSE wire format and per-vendor extractors
 src/presets.js            server-side preset table
+src/preset-sync.js        promote presets into the OpenRouter account
+src/bindings.js           resolve MEM / BUCKET by their deployed names
+scripts/sync-presets.mjs  presets:sync CLI, dry run by default
 public/                   index.html, script.js, style.css
 test.mjs                  offline test suite
 ```

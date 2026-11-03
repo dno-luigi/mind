@@ -1,4 +1,5 @@
 import { utcDay } from './util.js';
+import { stateKv } from './bindings.js';
 
 // Per-isolate fallback. Resets whenever the isolate is recycled, which is why
 // KV is the real store; this only keeps a single-instance deployment honest.
@@ -23,12 +24,13 @@ export async function charge(env, ip, neurons = 0) {
   const key = `budget:${utcDay()}:${ip}`;
   const amount = Math.max(0, Math.round(neurons));
 
-  if (env?.KV) {
-    const raw = await env.KV.get(key);
+  const kv = stateKv(env);
+  if (kv) {
+    const raw = await kv.get(key);
     const used = Number(raw || 0);
     if (used + amount > limit) return { ok: false, used, limit };
     const next = used + amount;
-    await env.KV.put(key, String(next), { expirationTtl: 172800 });
+    await kv.put(key, String(next), { expirationTtl: 172800 });
     return { ok: true, used: next, limit };
   }
 
