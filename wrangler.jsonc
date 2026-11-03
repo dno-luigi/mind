@@ -1,0 +1,46 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ai-ncards",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-03",
+
+  // Frontend and API served from the same origin, so the client calls "/api/chat"
+  // and there is no CORS to get wrong.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+
+  // Workers AI needs no key and no id — this binding alone gives us
+  // whisper, melotts, aura and the clef decision ladder.
+  "ai": {
+    "binding": "AI"
+  },
+
+  "observability": {
+    "enabled": true
+  },
+
+  // ---------------------------------------------------------------------------
+  // Optional bindings. The worker runs without them and reports what is missing
+  // at GET /api/health, so this can ship before the namespaces exist.
+  //
+  // KV:  shared daily neuron budget + decision cache (falls back to per-isolate
+  //      memory, which resets — fine for a single user, not for a public app).
+  // R2:  attachment storage (/api/upload, /f/:id) and TTS mp3 cache.
+  //
+  // Create them, then uncomment and paste the ids:
+  //   npx wrangler kv namespace create KV
+  //   npx wrangler r2 bucket create ai-ncards
+  //
+  // "kv_namespaces": [{ "binding": "KV", "id": "<id>" }],
+  // "r2_buckets": [{ "binding": "R2", "bucket_name": "ai-ncards" }],
+  // ---------------------------------------------------------------------------
+
+  "vars": {
+    // Neurons per IP per UTC day across chat + stt + tts (free allowance is 10000).
+    "DAILY_NEURONS": "8000",
+    "OPENROUTER_MODEL": "google/gemini-2.5-flash",
+    "OPENROUTER_STT_MODEL": "openai/whisper-large-v3"
+  }
+}

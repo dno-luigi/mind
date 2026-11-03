@@ -1,0 +1,17 @@
+{
+  "name": "ai-ncards",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ai-Ncards — flip-card AI chat on Cloudflare Workers with Workers AI first and OpenRouter as escalation.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "dry-run": "wrangler deploy --dry-run --outdir=.wrangler/dry",
+    "test": "node --test test.mjs",
+    "check": "node --check src/index.js && node --check src/decide.js && node --check src/audio.js && node --check src/providers/workers-ai.js && node --check src/providers/openrouter.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.42.0"
+  }
+}

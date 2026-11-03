@@ -1,0 +1,10 @@
+# Copy to .dev.vars for `npm run dev`. Never commit the real file.
+# Workers AI needs no key — the AI binding covers it.
+# OpenRouter is the escalation rung; without it, chat stays on Workers AI.
+OPENROUTER_API_KEY=
+
+# Optional overrides
+# OPENROUTER_MODEL=google/gemini-2.5-flash
+# OPENROUTER_STT_MODEL=openai/whisper-large-v3
+# DAILY_NEURONS=8000
+# DECIDE=off

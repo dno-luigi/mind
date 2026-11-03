@@ -1,4 +1,5 @@
-const DEFAULT_PROXY_URL = "https://ai-proxy.ai-n.workers.dev/api/generate";
+// Same-origin: the Worker serves this page and /api/chat, so there is no CORS.
+const DEFAULT_PROXY_URL = "/api/chat";
 const STORAGE_KEY = "ai_ndraft_data_v2";
 const PRESETS_KEY = "ai_ncards_presets_v1";
 
@@ -136,24 +137,6 @@ class App {
             return ''; // Don't send local system prompt with OpenRouter presets
         }
         return SYSTEM_PROMPT_BASE;
-    }
-
-    getModelForRequest() {
-        // Return model reference with preset if one is selected
-        const preset = this.getCurrentPreset();
-        if (preset && preset.key && this.currentPresetKey !== 'default') {
-            return `@preset/${preset.key}`;
-        }
-        return 'openai/gpt-4'; // Default model
-    }
-
-    getPresetForRequest() {
-        // Return preset name to include in request
-        const preset = this.getCurrentPreset();
-        if (preset && this.currentPresetKey !== 'default' && preset.key) {
-            return preset.key;
-        }
-        return null;
     }
 
     init() {
@@ -1031,7 +1014,7 @@ class App {
             return;
         }
 
-        if (this.settings.asrEnabled && this.recognizer) {
+        if (this.settings.asrEnabled && this.recognition) {
             this.recognition.start();
             return;
         }
@@ -1124,59 +1107,14 @@ class App {
         try {
             const url = this.getProxyUrl();
             
-            // Build request body - keep original format for proxy compatibility
-            let requestBody = {
-                sessionId: this.sessionId,
-                prompt: fullPrompt
-            };
-            
-            // Add model if using a preset
-            if (usePreset) {
-                requestBody.model = `@preset/${preset.key}`;
-                console.log("Using preset model:", requestBody.model);
-            }
-            
-            console.log("Request body:", JSON.stringify(requestBody).substring(0, 200));
-
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestBody),
-                signal
-            });
-
-            if (!res.ok) throw new Error(`Proxy Error: ${res.status}`);
-
-            const reader = res.body.getReader();
-            let buffer = '';
-            let accumulated = '';
-            let isFirstChunk = true;
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += this.decoder.decode(value, { stream: true });
-                
-                const lines = buffer.split('\n\n');
-                buffer = lines.pop() || '';
-                for (const line of lines) {
-                    const jsonStr = line.replace('data: ', '').trim();
-                    if (!jsonStr || jsonStr === '[DONE]') continue;
-                    try {
-                        const json = JSON.parse(jsonStr);
-                        const chunk = json.choices?.[0]?.delta?.content;
-                        if (chunk) {
-                            accumulated += chunk;
-                            if (isFirstChunk) {
-                                this.updateStreamingContent(accumulated, true);
-                                isFirstChunk = false;
-                            } else {
-                                this.updateStreamingContent(accumulated, false);
-                            }
-                        }
-                    } catch {}
-                }
-            }
+            const accumulated = await this.streamChat(
+                {
+                    messages: [{ role: 'user', content: fullPrompt }],
+                    preset: usePreset ? preset.key : null,
+                    signal
+                },
+                (text, first) => this.updateStreamingContent(text, first)
+            );
 
             this.finalizeResponse(accumulated);
 
@@ -1192,6 +1130,68 @@ class App {
         } finally {
             this.abortController = null;
         }
+    }
+
+    /**
+     * The Worker emits one normalized stream: meta, deltas, error, [DONE].
+     * The client never learns which provider answered, which is why switching
+     * between Workers AI and OpenRouter needs no frontend change.
+     */
+    async streamChat({ messages, preset = null, signal = null }, onText) {
+        const res = await fetch(this.getProxyUrl(), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages, preset, stream: true }),
+            signal
+        });
+
+        if (!res.ok || !res.body) {
+            let detail = `HTTP ${res.status}`;
+            try {
+                const body = await res.json();
+                detail = body?.error?.message || detail;
+            } catch {}
+            throw new Error(detail);
+        }
+
+        const reader = res.body.getReader();
+        let buffer = '';
+        let accumulated = '';
+        let first = true;
+        let failure = null;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += this.decoder.decode(value, { stream: true });
+            const frames = buffer.split('\n\n');
+            buffer = frames.pop() || '';
+
+            for (const frame of frames) {
+                const line = frame.replace(/^data: /, '').trim();
+                if (!line || line === '[DONE]') continue;
+
+                let event;
+                try {
+                    event = JSON.parse(line);
+                } catch {
+                    continue;
+                }
+
+                if (event.type === 'delta' && event.text) {
+                    accumulated += event.text;
+                    onText(accumulated, first);
+                    first = false;
+                } else if (event.type === 'error') {
+                    failure = event.error?.message || event.error?.code || 'stream failed';
+                } else if (event.type === 'meta') {
+                    this.lastRoute = event;
+                }
+            }
+        }
+
+        if (failure && !accumulated) throw new Error(failure);
+        return accumulated;
     }
 
     stopStream() {
@@ -1660,59 +1660,18 @@ class App {
             const preset = this.getCurrentPreset();
             const usePreset = this.currentPresetKey !== 'default' && preset && preset.key;
 
-            // Build request body - keep original format for proxy compatibility
-            let requestBody = {
-                sessionId: this.sessionId,
-                prompt: prompt
-            };
-            
-            // Add system prompt only if not using an OpenRouter preset
             const sysPrompt = this.getCurrentSystemPrompt();
-            if (sysPrompt) {
-                requestBody.prompt = sysPrompt + "\n\nUser: " + requestBody.prompt;
-            }
-            
-            // Add model if using a preset
-            if (usePreset) {
-                requestBody.model = `@preset/${preset.key}`;
-            }
+            const fullPrompt = sysPrompt ? sysPrompt + "\n\nUser: " + prompt : prompt;
 
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestBody),
-                signal
-            });
-            if (!res.ok) throw new Error("Proxy Error");
-            
-            const reader = res.body.getReader();
-            let buffer = '';
-            let accumulated = '';
-            let isFirstChunk = true;
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += this.decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n\n');
-                buffer = lines.pop() || '';
-                for (const line of lines) {
-                    const jsonStr = line.replace('data: ', '').trim();
-                    if (!jsonStr || jsonStr === '[DONE]') continue;
-                    try {
-                        const json = JSON.parse(jsonStr);
-                        const chunk = json.choices?.[0]?.delta?.content;
-                        if (chunk) {
-                            accumulated += chunk;
-                            if (isFirstChunk) {
-                                this.updateStreamingContent(accumulated, true);
-                                isFirstChunk = false;
-                            } else {
-                                this.updateStreamingContent(accumulated, false);
-                            }
-                        }
-                    } catch {}
-                }
-            }
+            const accumulated = await this.streamChat(
+                {
+                    messages: [{ role: 'user', content: fullPrompt }],
+                    preset: usePreset ? preset.key : null,
+                    signal
+                },
+                (text, first) => this.updateStreamingContent(text, first)
+            );
+
             this.finalizeResponse(accumulated);
         } catch (err) {
             if (err.name === 'AbortError') {
@@ -1754,53 +1713,25 @@ Do not output any other text.`;
         this.closeModal('aiThemeModal');
         this.showToast("Generating Theme...");
         
-        const url = this.getProxyUrl();
-        
-        // Get preset for this request
         const preset = this.getCurrentPreset();
         const usePreset = this.currentPresetKey !== 'default' && preset && preset.key;
 
-        // Build request body - keep original format for proxy compatibility
-        let requestBody = {
-            sessionId: this.sessionId,
-            prompt: prompt
-        };
-        
-        // Add model if using a preset
-        if (usePreset) {
-            requestBody.model = `@preset/${preset.key}`;
-        }
-
-        fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody)
+        this.streamChat(
+            { messages: [{ role: 'user', content: prompt }], preset: usePreset ? preset.key : null },
+            () => {}
+        )
+        .then(fullText => {
+            const { themeUpdate } = this.parseCommands(fullText);
+            if (themeUpdate) {
+                this.theme = { ...this.theme, ...themeUpdate };
+                this.applyTheme();
+                this.saveState();
+                this.showToast(`Theme: ${themeUpdate.name}`);
+            } else {
+                this.showToast("Theme generation failed (parse error)");
+            }
         })
-        .then(res => {
-            const reader = res.body.getReader();
-            let fullText = "";
-            const processChunk = () => {
-                return reader.read().then(({done, value}) => {
-                    if (done) {
-                        const { themeUpdate } = this.parseCommands(fullText);
-                        if (themeUpdate) {
-                            this.theme = { ...this.theme, ...themeUpdate };
-                            this.applyTheme();
-                            this.saveState();
-                            this.showToast(`Theme: ${themeUpdate.name}`);
-                        } else {
-                            this.showToast("Theme generation failed (parse error)");
-                        }
-                        return;
-                    }
-                    const text = this.decoder.decode(value, { stream: true });
-                    fullText += text;
-                    return processChunk();
-                });
-            };
-            return processChunk();
-        })
-        .catch(e => {
+        .catch(() => {
             this.showToast("Theme generation failed");
         });
     }
@@ -2031,11 +1962,90 @@ Do not output any other text.`;
         const card = this.cards.find(c => c.id === id);
         if (!card || !card.r) return;
         
-        if (responsiveVoice.isPlaying()) {
-            responsiveVoice.cancel();
-        } else {
-            const text = card.r.replace(/[#*_`>~-]/g, '').substring(0, 2000);
-            responsiveVoice.speak(text, "US English Female", { rate: 1.1 });
+        this.speak(card.r);
+    }
+
+    /** Strip the app's own directives so the voice never reads markup aloud. */
+    cleanForSpeech(text) {
+        return String(text || '')
+            .replace(/!theme:[^!]*!/gi, ' ')
+            .replace(/!action:[^!]*!/gi, ' ')
+            .replace(/![a-z]+:[^!]*!/gi, ' ')
+            .replace(/!(bold|italic)!?/gi, ' ')
+            .replace(/\[(FRONT|BACK)\]/gi, ' ')
+            .replace(/[#*_`>~]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    stopSpeech() {
+        if (this.speechAudio) {
+            this.speechAudio.pause();
+            this.speechAudio = null;
+        }
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+    }
+
+    /**
+     * Cloudflare melotts behind a cacheable GET, so the audio element streams it
+     * and re-reading the same card costs no neurons. Browser speech is the
+     * offline rung when the Worker cannot answer.
+     */
+    speak(text) {
+        const clean = this.cleanForSpeech(text);
+        if (!clean) return;
+
+        if (this.speechAudio) {
+            this.stopSpeech();
+            return;
+        }
+
+        const chunks = [];
+        let rest = clean;
+        while (rest.length > 1800) {
+            const cut = rest.lastIndexOf('. ', 1800);
+            const at = cut > 400 ? cut + 1 : 1800;
+            chunks.push(rest.slice(0, at).trim());
+            rest = rest.slice(at).trim();
+        }
+        if (rest) chunks.push(rest);
+
+        const base = this.getProxyUrl().replace(/\/api\/chat$/, '');
+        const queue = chunks.map(chunk => `${base}/api/tts?${new URLSearchParams({ t: chunk, m: 'melotts' })}`);
+
+        const playNext = () => {
+            const src = queue.shift();
+            if (!src) {
+                this.speechAudio = null;
+                return;
+            }
+            const audio = new Audio(src);
+            this.speechAudio = audio;
+            audio.onended = playNext;
+            audio.onerror = () => {
+                this.speechAudio = null;
+                this.speakLocally(clean);
+            };
+            audio.play().catch(() => {
+                this.speechAudio = null;
+                this.speakLocally(clean);
+            });
+        };
+
+        playNext();
+    }
+
+    speakLocally(text) {
+        if (!window.speechSynthesis) {
+            this.showToast('Speech unavailable');
+            return;
+        }
+        window.speechSynthesis.cancel();
+        // Chrome truncates long utterances, so sentence-sized chunks.
+        for (const sentence of text.match(/[^.!?]+[.!?]*/g) || [text]) {
+            const utterance = new SpeechSynthesisUtterance(sentence.trim());
+            utterance.rate = 1.05;
+            window.speechSynthesis.speak(utterance);
         }
     }
 
