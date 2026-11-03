@@ -1,5 +1,6 @@
 import { sha256Hex } from './util.js';
 import { stateKv } from './bindings.js';
+import { resolveTruth } from './truth.js';
 import { DEFAULT_PRESET } from './presets.js';
 
 /**
@@ -210,8 +211,25 @@ export async function decide(env, { messages, images = [], presetId = null, allo
   const memo = kv ? L1 : null;
   const cacheKey = `decision:${await sha256Hex(`${lastUser.slice(-4000)}|${images.length}|${presetId || ''}`)}`;
 
-  // 1. cache. Memory first: a KV read can lag the write that produced it.
+  // 1. cache. A promoted truth is the strongest hit there is, so master and
+  // provisional are checked before the decision cache. Memory sits in front of KV
+  // because a KV read can lag the write that produced it.
   if (kv) {
+    const truth = await resolveTruth(env, lastUser).catch(() => null);
+    if (truth?.layer === 'master' || truth?.layer === 'provisional') {
+      return {
+        preset: presetId || DEFAULT_PRESET,
+        task: 'chat',
+        depth: 'normal',
+        tone: 'plain',
+        source: 'cache',
+        trace: ['cache:hit'],
+        cacheSource: truth.layer,
+        truth,
+        cacheKey,
+      };
+    }
+
     const local = memo?.get(cacheKey);
     if (local) return cacheHit(local, 'memory', cacheKey);
 

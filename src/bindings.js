@@ -7,6 +7,13 @@
  */
 
 export const stateKv = (env) => env?.MEM || env?.KV || null;
+
+/**
+ * Master truths belong in the namespace named for them. Where only MEM is bound
+ * (local dev, the test suite, a single-namespace deployment) they live there
+ * instead, so promotion never fails for want of a second binding.
+ */
+export const masterKv = (env) => env?.MASTER || stateKv(env) || null;
 export const objects = (env) => env?.BUCKET || env?.R2 || null;
 
 /** What is actually attached, by its deployed name, for /api/health. */

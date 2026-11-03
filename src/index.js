@@ -5,6 +5,7 @@ import { publicPresets, findPreset, openRouterBackedPresets, DEFAULT_PRESET } fr
 import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
 import { decide, recordReview, within } from './decide.js';
+import { recordCandidate, promote, resolveTruth, listCandidates, PROMOTE_AT } from './truth.js';
 import { wavInfo, wavChunks } from './audio.js';
 import { DONE, delta, errorEvent, meta, sseData, upstreamError, frameShape, fromOpenRouterChat, fromWorkersAI } from './normalize.js';
 
@@ -86,7 +87,66 @@ async function route(request, env, ctx, url) {
   if (path === '/api/tts' && method === 'GET') return tts(url, env, ctx);
   if (path === '/api/upload' && method === 'POST') return upload(request, env);
 
+  // The truth console. Every route past the unlock is keyed on ADMIN_KEY, so the
+  // page itself is never the gate — the secret is.
+  if (path === '/api/admin/unlock' && method === 'POST') return adminUnlock(request, env);
+  if (path === '/api/truth/candidates' && method === 'GET') return adminGuard(request, env, () => truthCandidates(env));
+  if (path === '/api/truth/resolve' && method === 'POST') return adminGuard(request, env, () => truthResolve(request, env));
+  if (path === '/api/truth/save' && method === 'POST') return adminGuard(request, env, () => truthSave(request, env));
+
   return fail(404, 'not_found', `No route for ${method} ${path}`);
+}
+
+/**
+ * A secret, not the page, decides who may write truth. An unset ADMIN_KEY locks
+ * the console instead of opening it, so a fresh deployment cannot be claimed.
+ */
+async function adminGuard(request, env, run) {
+  const configured = String(env?.ADMIN_KEY || '');
+  if (!configured) {
+    return fail(
+      503,
+      'admin_unconfigured',
+      'Admin is locked: set the ADMIN_KEY secret for this worker, then reload.',
+    );
+  }
+
+  // Compare digests: same work whatever was sent, so length leaks nothing.
+  const given = String(request.headers.get('x-admin-key') || '');
+  const [a, b] = await Promise.all([sha256Key(given), sha256Key(configured)]);
+  if (a !== b) return fail(401, 'admin_denied', 'That key does not unlock the admin.');
+
+  return run();
+}
+
+async function adminUnlock(request, env) {
+  return adminGuard(request, env, async () => json({ ok: true, unlocked: true }));
+}
+
+async function truthCandidates(env) {
+  const candidates = await listCandidates(env);
+  return json({ candidates, promoteAt: PROMOTE_AT });
+}
+
+async function truthResolve(request, env) {
+  const body = await request.json().catch(() => null);
+  const input = String(body?.input || '').trim();
+  if (!input) return fail(400, 'input_required', 'Send { input }.');
+  return json(await resolveTruth(env, input));
+}
+
+async function truthSave(request, env) {
+  const body = await request.json().catch(() => null);
+  if (!body) return fail(400, 'body_required', 'Send { input, answer, layer, editor, citations }.');
+
+  const truth = await promote(env, {
+    input: body.input,
+    answer: body.answer,
+    layer: body.layer,
+    editor: body.editor,
+    citations: body.citations,
+  });
+  return json({ ok: true, truth });
 }
 
 function health(env) {
@@ -120,6 +180,9 @@ function health(env) {
       // False means the budget is per-isolate and resets; see wrangler.jsonc.
       sharedBudget: Boolean(kv),
       decisionCache: Boolean(kv),
+      // Truth layers live in MEM; writing one also needs the ADMIN_KEY secret.
+      truth: Boolean(kv),
+      admin: Boolean(env?.ADMIN_KEY),
     },
   });
 }
@@ -314,12 +377,36 @@ async function chat(request, env, ctx) {
   // Report the preset that actually ran, not the one the decision model named:
   // they diverge whenever it suggests a preset that no longer exists.
   const reported = { ...decision, preset: preset?.id ?? null };
+  const wantsStream = body.stream !== false;
+
+  // A promoted truth is the cache that actually short-circuits: the MEM check
+  // decided this before clef was ever asked, so no model runs.
+  if (decision.truth?.answer) {
+    const truth = decision.truth;
+    if (!wantsStream) {
+      await recordReview(
+        env,
+        ctx,
+        reviewOf({ preset, decision: reported, route: 'truth', model: truth.layer, lastUser, text: truth.answer }),
+      );
+      return json({ text: truth.answer, route: 'truth', model: truth.layer, decision: reported });
+    }
+
+    const truthStream = new ReadableStream({
+      start(controller) {
+        const send = (chunk) => chunk && controller.enqueue(encoder.encode(chunk));
+        send(meta({ route: 'truth', model: truth.layer, preset: preset?.id, decision: reported }));
+        send(delta(truth.answer));
+        send(DONE);
+        controller.close();
+      },
+    });
+    return new Response(truthStream, { headers: SSE_HEADERS });
+  }
 
   const system = preset?.system
     ? [{ role: 'system', content: preset.system }, ...messages]
     : messages;
-
-  const wantsStream = body.stream !== false;
 
   if (!wantsStream) {
     const { route, model, stream, extract } = await openUpstream(env, {
@@ -360,6 +447,8 @@ async function chat(request, env, ctx) {
       );
     }
     await recordReview(env, ctx, reviewOf({ preset, decision: reported, route, model, lastUser, text }));
+    // Every answer becomes a candidate, so nothing has to be retyped to promote it.
+    await recordCandidate(env, { input: lastUser, answer: text, preset: preset?.id, route, model });
     return json({ text, route, model, decision: reported });
   }
 
@@ -419,6 +508,8 @@ async function chat(request, env, ctx) {
         ctx,
         reviewOf({ preset, decision: reported, route, model, lastUser, text: answer }),
       );
+      // Stored whether or not it is good: promotion is a later decision.
+      await recordCandidate(env, { input: lastUser, answer, preset: preset?.id, route, model });
       send(DONE);
       controller.close();
     },

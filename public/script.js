@@ -190,6 +190,48 @@ class App {
         }
     }
 
+    /**
+     * The admin is entered through a card, and the card is only a prompt: the
+     * Worker checks the key, so nothing here can grant access on its own.
+     */
+    openAdminCard() {
+        this.closeModal('settingsModal');
+        const status = document.getElementById('adminGateStatus');
+        if (status) status.textContent = '';
+        const input = document.getElementById('adminKeyInput');
+        if (input) input.value = sessionStorage.getItem('mind_admin_key') || '';
+        this.openModal('adminGateModal');
+    }
+
+    async unlockAdminCard() {
+        const input = document.getElementById('adminKeyInput');
+        const status = document.getElementById('adminGateStatus');
+        const key = (input ? input.value : '').trim();
+        if (!key) {
+            if (status) status.textContent = 'Enter the admin key.';
+            return;
+        }
+        if (status) status.textContent = 'Checking...';
+
+        try {
+            const res = await fetch('/api/admin/unlock', {
+                method: 'POST',
+                headers: { 'x-admin-key': key },
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                if (status) status.textContent = (data && data.error && data.error.message) || `Unlock failed (${res.status}).`;
+                return;
+            }
+            sessionStorage.setItem('mind_admin_key', key);
+            this.closeModal('adminGateModal');
+            this.showToast('Admin card unlocked');
+            window.open('/admin', '_blank');
+        } catch (err) {
+            if (status) status.textContent = `Unlock failed: ${err.message}`;
+        }
+    }
+
     managePresets() {
         this.closeModal('settingsModal');
         this.renderPresetsList();

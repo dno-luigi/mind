@@ -127,8 +127,8 @@ The worker is `mind`. These are attached in the deployment:
 |---|---|---|---|
 | `AI` | Workers AI | chat, STT, TTS, clef decisions | falls back to OpenRouter |
 | `BUCKET` | R2 `r2-explorer-bucket` | `/api/upload`, `/f/:id`, TTS mp3 cache | uploads 503, TTS regenerates |
-| `MEM` | KV `Memoria` | shared daily budget, decision cache | per-isolate memory, resets |
-| `MASTER` | KV `master truths` | reserved — nothing reads it yet | — |
+| `MEM` | KV `Memoria` | shared daily budget, decision cache, candidates and provisional truths | per-isolate memory, resets |
+| `MASTER` | KV `master truths` | master truths, plus the review records of every exchange | falls back to `MEM` |
 | `AGENT-BROWSING` | service `agent-browsing` | reserved — no route uses it | — |
 | `ASSETS` | static assets | serves `public/` | no frontend |
 
@@ -136,6 +136,23 @@ Both namespaces are wired in `wrangler.jsonc` by id, so the daily budget and the
 clef decision cache survive isolate restarts. `/api/health` answers
 `features.sharedBudget: true` once they are attached; `false` means the worker
 fell back to per-isolate memory and the budget will reset.
+
+## Truth layers
+
+Every generated answer is written to `MEM` as a candidate with a `hits` count,
+so nothing has to be retyped to promote it. The key is a blunt normalization of
+the query — lower case, collapsed spacing, trailing punctuation removed — because
+a fuzzy match would promote the wrong answer.
+
+`/admin` is the console, entered through a card gate. The page asks for the admin
+key; only `POST /api/admin/unlock` can confirm it, against the `ADMIN_KEY`
+secret, and without that secret every admin route answers 503 rather than
+opening. Promotion moves a candidate to `provisional`, then to `master`, and a
+master truth answers its query out of KV without running clef or any model.
+
+```sh
+npx wrangler secret put ADMIN_KEY
+```
 
 Only the escalation rung needs a secret:
 

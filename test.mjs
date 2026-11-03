@@ -8,6 +8,14 @@ import { LADDER, within, decide, _resetDecisionCache } from './src/decide.js';
 import { upsertBody, upsertPath, syncPlan } from './src/preset-sync.js';
 import { PRESETS, findPreset } from './src/presets.js';
 import { stateKv, objects, bindingReport } from './src/bindings.js';
+import {
+  truthKey,
+  resolveTruth,
+  recordCandidate,
+  promote,
+  listCandidates,
+  PROMOTE_AT,
+} from './src/truth.js';
 import { upstreamError, sseData, frameShape, fromWorkersAI } from './src/normalize.js';
 
 const ctx = { waitUntil() {}, passThroughOnException() {} };
@@ -783,4 +791,158 @@ test('the cache key follows the prompt, the images and the pinned preset', async
   const b = await decide(env, { messages: [{ role: 'user', content: 'second' }] });
   const c = await decide(env, { messages: [{ role: 'user', content: 'first' }], presetId: 'mnl' });
   assert.equal(new Set([a.cacheKey, b.cacheKey, c.cacheKey]).size, 3);
+});
+
+function kvStore() {
+  const store = new Map();
+  return {
+    store,
+    kv: {
+      async get(key) {
+        return store.get(key) ?? null;
+      },
+      async put(key, value) {
+        store.set(key, value);
+      },
+      async delete(key) {
+        store.delete(key);
+      },
+      async list({ prefix = '', limit = 1000 } = {}) {
+        const keys = [...store.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit);
+        return { keys: keys.map((name) => ({ name })), list_complete: true };
+      },
+    },
+  };
+}
+
+test('the hit formula folds case, spacing and trailing punctuation', () => {
+  assert.equal(truthKey('  What IS a  cache? '), 'what is a cache');
+  assert.equal(truthKey('what is a cache'), 'what is a cache');
+  assert.equal(truthKey("Who's asking?!"), 'whos asking');
+  assert.equal(truthKey(''), '');
+});
+
+test('every answer becomes a candidate and a repeat raises its hits', async () => {
+  const { kv } = kvStore();
+  const env = { MEM: kv };
+  const first = await recordCandidate(env, { input: 'What is a cache?', answer: 'A store.', preset: 'truth' });
+  const second = await recordCandidate(env, { input: 'what is  a cache', answer: 'A store.', preset: 'truth' });
+
+  assert.equal(first.hits, 1);
+  assert.equal(second.hits, 2);
+  assert.equal(first.id, second.id);
+  assert.equal(second.suggested, PROMOTE_AT <= 2);
+
+  const list = await listCandidates(env);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].answer, 'A store.');
+});
+
+test('truth resolves master, then provisional, then the candidate', async () => {
+  const { kv } = kvStore();
+  const env = { MEM: kv };
+
+  await recordCandidate(env, { input: 'what is truth', answer: 'generated' });
+  assert.equal((await resolveTruth(env, 'what is truth')).layer, 'candidate');
+
+  await promote(env, { input: 'what is truth', answer: 'provisional answer', layer: 'provisional' });
+  assert.equal((await resolveTruth(env, 'what is truth')).layer, 'provisional');
+
+  await promote(env, { input: 'What is truth?', answer: 'master answer', layer: 'master' });
+  const hit = await resolveTruth(env, 'what is truth');
+  assert.equal(hit.layer, 'master');
+  assert.equal(hit.answer, 'master answer');
+});
+
+test('a promoted truth answers the chat without calling a model', async () => {
+  const { kv } = kvStore();
+  let calls = 0;
+  const env = makeEnv({
+    MEM: kv,
+    AI: {
+      async run() {
+        calls += 1;
+        return sse(['model']);
+      },
+    },
+  });
+  await promote(env, { input: 'who are you', answer: 'mind', layer: 'master' });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'Who are you?' }] }),
+  });
+  const events = await readSSE(res);
+  const text = events.filter((event) => event.type === 'delta').map((event) => event.text).join('');
+
+  assert.equal(text, 'mind');
+  assert.equal(events.find((event) => event.type === 'meta').route, 'truth');
+  // clef never ran and no generation happened: the MEM hit ended it.
+  assert.equal(calls, 0);
+});
+
+test('a generated answer is stored as a candidate', async () => {
+  const { kv } = kvStore();
+  const env = makeEnv({ MEM: kv });
+  await (
+    await call(env, '/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hello there' }] }),
+    })
+  ).text();
+
+  const list = await listCandidates(env);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].hits, 1);
+  assert.equal(list[0].answer, 'Hello world');
+});
+
+test('the truth console is locked without ADMIN_KEY and keyed with it', async () => {
+  const { kv } = kvStore();
+  const locked = makeEnv({ MEM: kv });
+  const unconfigured = await call(locked, '/api/admin/unlock', { method: 'POST' });
+  assert.equal(unconfigured.status, 503);
+
+  const env = makeEnv({ MEM: kv, ADMIN_KEY: 'open-sesame' });
+  const denied = await call(env, '/api/admin/unlock', {
+    method: 'POST',
+    headers: { 'x-admin-key': 'nope' },
+  });
+  assert.equal(denied.status, 401);
+
+  const ok = await call(env, '/api/admin/unlock', {
+    method: 'POST',
+    headers: { 'x-admin-key': 'open-sesame' },
+  });
+  assert.equal(ok.status, 200);
+
+  const saved = await call(env, '/api/truth/save', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-admin-key': 'open-sesame' },
+    body: JSON.stringify({
+      input: 'is this real',
+      answer: 'yes',
+      layer: 'master',
+      editor: 'tester',
+      citations: [{ title: 'source', url: 'https://example.com' }],
+    }),
+  });
+  assert.equal(saved.status, 200);
+  assert.equal((await saved.json()).truth.layer, 'master');
+
+  const listed = await call(env, '/api/truth/candidates', {
+    method: 'GET',
+    headers: { 'x-admin-key': 'open-sesame' },
+  });
+  assert.equal(listed.status, 200);
+  assert.equal((await listed.json()).promoteAt, PROMOTE_AT);
+
+  const resolved = await call(env, '/api/truth/resolve', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-admin-key': 'open-sesame' },
+    body: JSON.stringify({ input: 'Is this real?' }),
+  });
+  assert.equal((await resolved.json()).layer, 'master');
 });
