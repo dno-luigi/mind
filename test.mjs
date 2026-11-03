@@ -8,7 +8,7 @@ import { LADDER, within } from './src/decide.js';
 import { upsertBody, upsertPath, syncPlan } from './src/preset-sync.js';
 import { PRESETS, findPreset } from './src/presets.js';
 import { stateKv, objects, bindingReport } from './src/bindings.js';
-import { upstreamError, sseData } from './src/normalize.js';
+import { upstreamError, sseData, frameShape, fromWorkersAI } from './src/normalize.js';
 
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 
@@ -699,4 +699,22 @@ test('within rejects anything that never settles', async () => {
 
 test('within leaves a slow call that finishes in time alone', async () => {
   assert.equal(await within(200, 'some-model', async () => 'ok'), 'ok');
+});
+
+// Workers AI answers in either its native shape or an OpenAI-compatible one.
+// Reading only the native one made a good answer look like an empty one.
+test('extracts text from native and openai-shaped frames', () => {
+  assert.equal(fromWorkersAI('{"response":"hi"}'), 'hi');
+  assert.equal(fromWorkersAI('{"result":{"response":"hi"}}'), 'hi');
+  assert.equal(fromWorkersAI('{"choices":[{"delta":{"content":"hi"}}]}'), 'hi');
+  assert.equal(fromWorkersAI('{"choices":[{"message":{"content":"hi"}}]}'), 'hi');
+  assert.equal(fromWorkersAI('{"choices":[{"text":"hi"}]}'), 'hi');
+  assert.equal(fromWorkersAI('{"unexpected":true}'), '');
+  assert.equal(fromWorkersAI('not json'), '');
+});
+
+test('frameShape names what arrived when no text was found', () => {
+  assert.equal(frameShape('{"response":"hi"}'), 'response');
+  assert.equal(frameShape('{"choices":[{"delta":{"content":"hi"}}]}'), 'choices');
+  assert.equal(frameShape('not json'), null);
 });

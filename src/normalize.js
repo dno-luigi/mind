@@ -90,14 +90,40 @@ export function upstreamError(data) {
   }
 }
 
-/** Workers AI native stream: {"response":"..."} */
+/**
+ * Workers AI streams either its native {"response":"..."} shape or an
+ * OpenAI-compatible one ({"choices":[{"delta":{"content"}}]}) depending on the
+ * model family. Reading only the native shape makes a perfectly good answer
+ * look like an empty one, which surfaces as "returned no text".
+ */
 export function fromWorkersAI(data) {
   if (!data || data === '[DONE]') return '';
   try {
     const parsed = JSON.parse(data);
-    return parsed.response || parsed.result?.response || '';
+    const choice = parsed.choices?.[0] ?? parsed.result?.choices?.[0];
+    return (
+      parsed.response ??
+      parsed.result?.response ??
+      choice?.delta?.content ??
+      choice?.message?.content ??
+      choice?.text ??
+      ''
+    );
   } catch {
     return '';
+  }
+}
+
+/** The top-level keys of a frame, so an empty answer can say what it received. */
+export function frameShape(data) {
+  if (!data || data === '[DONE]') return null;
+  try {
+    const parsed = JSON.parse(data);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const keys = Object.keys(parsed);
+    return keys.length ? keys.join(',') : null;
+  } catch {
+    return null;
   }
 }
 

@@ -49,7 +49,14 @@ export function buildPayload(model, { messages = [], temperature, maxTokens, ima
 
 export async function chat(env, opts) {
   const result = await env.AI.run(opts.model, buildPayload(opts.model, opts));
-  return result?.response ?? result?.result?.response ?? '';
+  // OpenAI-shaped models answer under choices[]; native ones under response.
+  return (
+    result?.response ??
+    result?.result?.response ??
+    result?.choices?.[0]?.message?.content ??
+    result?.result?.choices?.[0]?.message?.content ??
+    ''
+  );
 }
 
 export async function streamChat(env, opts) {

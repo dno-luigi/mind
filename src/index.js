@@ -6,7 +6,7 @@ import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
 import { decide, recordReview, within } from './decide.js';
 import { wavInfo, wavChunks } from './audio.js';
-import { DONE, delta, errorEvent, meta, sseData, upstreamError, fromOpenRouterChat, fromWorkersAI } from './normalize.js';
+import { DONE, delta, errorEvent, meta, sseData, upstreamError, frameShape, fromOpenRouterChat, fromWorkersAI } from './normalize.js';
 
 const encoder = new TextEncoder();
 
@@ -231,6 +231,12 @@ async function openUpstream(env, { messages, images, preset, decision, explicit 
   throw err;
 }
 
+/** "0 frames" and "3 frames with keys choices" point at different faults. */
+function describeEmpty(frames, shape) {
+  if (!frames) return 'the stream carried no frames';
+  return `${frames} frame${frames === 1 ? '' : 's'} with keys ${shape || 'unknown'}`;
+}
+
 /** An in-stream provider failure still needs to reach the caller as an error. */
 function explain(problem) {
   const err = new Error(problem);
@@ -324,9 +330,13 @@ async function chat(request, env, ctx) {
       explicit: pinned,
     });
     let text = '';
+    let frames = 0;
+    let shape = null;
     for await (const data of sseData(stream, { timeoutMs: STREAM_IDLE_MS })) {
       const problem = upstreamError(data);
       if (problem) throw explain(problem);
+      frames += 1;
+      shape = shape ?? frameShape(data);
       text += extract(data);
     }
     // An empty answer is not a valid answer. Retry once without streaming so a
@@ -342,7 +352,13 @@ async function chat(request, env, ctx) {
         }),
       );
     }
-    if (!text) return fail(502, 'empty_upstream', `${route} (${model}) returned no text.`);
+    if (!text) {
+      return fail(
+        502,
+        'empty_upstream',
+        `${route} (${model}) returned no text: ${describeEmpty(frames, shape)}.`,
+      );
+    }
     await recordReview(env, ctx, reviewOf({ preset, decision: reported, route, model, lastUser, text }));
     return json({ text, route, model, decision: reported });
   }
@@ -361,11 +377,15 @@ async function chat(request, env, ctx) {
       // Declared outside the try: the review call after it still needs them.
       let emitted = 0;
       let answer = '';
+      let frames = 0;
+      let shape = null;
       try {
         send(meta({ route, model, preset: preset?.id, decision: reported }));
         for await (const data of sseData(stream, { timeoutMs: STREAM_IDLE_MS })) {
           const problem = upstreamError(data);
           if (problem) throw explain(problem);
+          frames += 1;
+          shape = shape ?? frameShape(data);
           const text = extract(data);
           if (text) {
             emitted += 1;
@@ -387,7 +407,7 @@ async function chat(request, env, ctx) {
             answer += text;
             send(delta(text));
           }
-          else send(errorEvent('empty_upstream', `${model} returned no text.`));
+          else send(errorEvent('empty_upstream', `${model} returned no text: ${describeEmpty(frames, shape)}.`));
         } else if (!emitted) {
           send(errorEvent('empty_upstream', `${route} (${model}) returned no text.`));
         }
