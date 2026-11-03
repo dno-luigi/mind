@@ -1,5 +1,6 @@
 import { sha256Hex } from './util.js';
 import { stateKv } from './bindings.js';
+import { DEFAULT_PRESET } from './presets.js';
 
 /**
  * The clef ladder: smallest window first, escalate only when the state does not
@@ -19,7 +20,7 @@ export const QUESTIONS = {
   task: { type: 'choice', choices: ['chat', 'transform', 'generate', 'extract', 'compare'] },
   preset: {
     type: 'choice',
-    choices: ['default', 'truth-engine', 'coding', 'legal', 'creative', 'analysis'],
+    choices: ['truth', 'operator', 'mnl'],
   },
   depth: { type: 'choice', choices: ['terse', 'normal', 'deep'] },
   tone: { type: 'choice', choices: ['plain', 'precise', 'playful'] },
@@ -69,7 +70,7 @@ function parseDecision(out) {
  * binding, refusal, or unparseable answer falls back to a static decision.
  */
 export async function decide(env, { messages, images = [], presetId = null } = {}) {
-  const fallback = { preset: presetId || 'default', depth: 'normal', tone: 'plain', task: 'chat', source: 'fallback' };
+  const fallback = { preset: presetId || DEFAULT_PRESET, depth: 'normal', tone: 'plain', task: 'chat', source: 'fallback' };
   if (!env?.AI || env.DECIDE === 'off') return fallback;
 
   const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content || '';

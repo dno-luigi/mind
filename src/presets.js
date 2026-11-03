@@ -1,35 +1,26 @@
 /**
  * Presets are server data: prompt + model + params, one rung per provider.
  *
- * `orPreset` is the slug of an OpenRouter preset
- * (https://openrouter.ai/settings/presets). When the OpenRouter rung answers,
- * the request references `@preset/<slug>` and sends no prompt, model or
- * sampling params — the preset owns those. OpenRouter shallow-merges request
- * fields over preset fields, so sending ours would quietly undo the preset and
- * make the reference pointless.
+ * The OpenRouter side is the source of truth for the prompt: each `orPreset`
+ * names a preset in the account (https://openrouter.ai/settings/presets) and
+ * the escalation rung references `@preset/<slug>` while sending no prompt,
+ * model or sampling params of its own. OpenRouter shallow-merges request fields
+ * over preset fields, so sending ours would quietly undo the preset.
  *
  * `cf`, `system` and `temperature` therefore describe the Workers AI rung only.
- * The consequence worth knowing: if a preset has no system prompt configured on
- * OpenRouter and the escalation rung answers, no preset prompt applies. The
- * Cloudflare rung always has one.
+ * It cannot read a prompt that lives in the OpenRouter account, so anything you
+ * want on both rungs has to be written twice — here and in the dashboard.
  */
+
+/** Used when no preset is picked and the decision model declines to route. */
+export const DEFAULT_PRESET = 'truth';
 
 export const PRESETS = [
   {
-    id: 'default',
-    name: 'Default',
+    id: 'truth',
+    name: 'Truth',
     cf: '@cf/google/gemma-4-26b-a4b-it',
-    orPreset: null,
-    or: null,
-    temperature: 0.7,
-    maxTokens: 4096,
-    system: '',
-  },
-  {
-    id: 'truth-engine',
-    name: 'Truth Engine',
-    cf: '@cf/google/gemma-4-26b-a4b-it',
-    orPreset: 'truth-engine',
+    orPreset: 'truth',
     or: null,
     temperature: 0.1,
     maxTokens: 4096,
@@ -37,47 +28,27 @@ export const PRESETS = [
       'You separate verified fact from plausible inference from speculation. Label each claim, cite the reasoning, and say plainly when something cannot be known from the information given. Never invent sources.',
   },
   {
-    id: 'coding',
-    name: 'Coding',
+    id: 'operator',
+    name: 'Operator',
     cf: '@cf/qwen/qwen3.8-27b',
-    orPreset: 'coding',
+    orPreset: 'operator',
     or: null,
-    temperature: 0.2,
-    maxTokens: 8192,
-    system:
-      'You are a precise programming assistant. Prefer complete, runnable code over fragments. Name the language, state assumptions, and call out anything you could not verify.',
-  },
-  {
-    id: 'legal',
-    name: 'Legal',
-    cf: '@cf/google/gemma-4-26b-a4b-it',
-    orPreset: 'legal',
-    or: null,
-    temperature: 0.2,
-    maxTokens: 4096,
-    system:
-      'You explain legal concepts in plain language. You are not a lawyer and you say so when it matters. Distinguish what the text says from what it might imply.',
-  },
-  {
-    id: 'creative',
-    name: 'Creative',
-    cf: '@cf/google/gemma-4-26b-a4b-it',
-    orPreset: 'creative',
-    or: null,
-    temperature: 1.0,
-    maxTokens: 4096,
-    system: 'You write with voice. Concrete images over abstractions, no filler, no throat-clearing.',
-  },
-  {
-    id: 'analysis',
-    name: 'Analysis',
-    cf: '@cf/qwen/qwen3.8-27b',
-    orPreset: 'analysis',
-    or: null,
-    temperature: 0.4,
+    temperature: 0.3,
     maxTokens: 6144,
     system:
-      'You break problems into parts, weigh evidence, and state a conclusion. Where the data is thin, say what would change your answer.',
+      'You are an operator: you act rather than explain. Give the shortest path to a working result, name the exact commands or steps, state the precondition that would break it, and skip preamble.',
+  },
+  {
+    id: 'mnl',
+    name: 'MNL',
+    cf: '@cf/google/gemma-4-26b-a4b-it',
+    orPreset: 'mnl',
+    or: null,
+    temperature: 0.7,
+    maxTokens: 4096,
+    // The OpenRouter preset owns this prompt; this copy only runs on the
+    // Workers AI rung. Fill it in if MNL should behave the same there.
+    system: '',
   },
 ];
 
@@ -85,7 +56,7 @@ const BY_ID = new Map(PRESETS.map((p) => [p.id, p]));
 
 export function findPreset(id) {
   if (!id) return null;
-  // The client stores keys as truth_engine; presets are named truth-engine.
+  // Older clients sent keys with underscores; ids are lowercase and hyphenated.
   return BY_ID.get(String(id).toLowerCase().replace(/_/g, '-')) || null;
 }
 

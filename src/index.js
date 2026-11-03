@@ -1,7 +1,7 @@
 import { json, fail, has, options, b64FromBytes, bytesFromB64, clientIp } from './util.js';
 import { charge } from './budget.js';
 import { stateKv, objects, bindingReport } from './bindings.js';
-import { publicPresets, findPreset, openRouterBackedPresets } from './presets.js';
+import { publicPresets, findPreset, openRouterBackedPresets, DEFAULT_PRESET } from './presets.js';
 import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
 import { decide } from './decide.js';
@@ -228,7 +228,11 @@ async function chat(request, env) {
   const preset =
     requestedPreset ||
     (decision.preset && findPreset(decision.preset)) ||
-    findPreset('default');
+    findPreset(DEFAULT_PRESET);
+
+  // Report the preset that actually ran, not the one the decision model named:
+  // they diverge whenever it suggests a preset that no longer exists.
+  const reported = { ...decision, preset: preset?.id };
 
   const system = preset?.system
     ? [{ role: 'system', content: preset.system }, ...messages]
@@ -240,7 +244,7 @@ async function chat(request, env) {
     const { route, model, stream, extract } = await openUpstream(env, { messages: system, images, preset });
     let text = '';
     for await (const data of sseData(stream)) text += extract(data);
-    return json({ text, route, model, decision });
+    return json({ text, route, model, decision: reported });
   }
 
   const { route, model, stream, extract } = await openUpstream(env, { messages: system, images, preset });
@@ -249,7 +253,7 @@ async function chat(request, env) {
     async start(controller) {
       const send = (chunk) => chunk && controller.enqueue(encoder.encode(chunk));
       try {
-        send(meta({ route, model, preset: preset?.id, decision }));
+        send(meta({ route, model, preset: preset?.id, decision: reported }));
         for await (const data of sseData(stream)) {
           const text = extract(data);
           if (text) send(delta(text));

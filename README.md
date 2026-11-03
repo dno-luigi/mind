@@ -58,12 +58,9 @@ would override the preset and defeat the point of having one.
 
 | Preset | Workers AI | OpenRouter preset |
 |---|---|---|
-| `default` | gemma-4-26b-a4b-it | — |
-| `truth-engine` | gemma-4-26b-a4b-it | `@preset/truth-engine` |
-| `coding` | qwen3.8-27b | `@preset/coding` |
-| `legal` | gemma-4-26b-a4b-it | `@preset/legal` |
-| `creative` | gemma-4-26b-a4b-it | `@preset/creative` |
-| `analysis` | qwen3.8-27b | `@preset/analysis` |
+| `truth` (default) | gemma-4-26b-a4b-it | `@preset/truth` |
+| `operator` | qwen3.8-27b | `@preset/operator` |
+| `mnl` | gemma-4-26b-a4b-it | `@preset/mnl` |
 
 A bare slug is ignored by OpenRouter, so the `@preset/` prefix is required. Point
 the slugs in `src/presets.js` at your own presets at

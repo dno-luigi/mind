@@ -19,31 +19,24 @@ User requests are natural language. Be efficient.`;
 // Default presets - these reference OpenRouter presets by their slug
 // Configure your presets at: https://openrouter.ai/presets
 const DEFAULT_PRESETS = {
-    'default': {
-        name: 'Default',
-        key: null
+    'truth': {
+        name: 'Truth',
+        key: 'truth' // OpenRouter preset slug
     },
-    'truth_engine': {
-        name: 'Truth Engine',
-        key: 'truth-engine' // OpenRouter preset slug
+    'operator': {
+        name: 'Operator',
+        key: 'operator' // OpenRouter preset slug
     },
-    'coding': {
-        name: 'Coding',
-        key: 'coding' // OpenRouter preset slug
-    },
-    'legal': {
-        name: 'Legal',
-        key: 'legal' // OpenRouter preset slug
-    },
-    'creative': {
-        name: 'Creative',
-        key: 'creative' // OpenRouter preset slug
-    },
-    'analysis': {
-        name: 'Analysis',
-        key: 'analysis' // OpenRouter preset slug
+    'mnl': {
+        name: 'MNL',
+        key: 'mnl' // OpenRouter preset slug
     }
 };
+
+// Every preset is an OpenRouter preset. Truth is also the fallback the Worker
+// uses when neither the user nor the decision model picks one, so it is the one
+// entry that cannot be deleted.
+const FALLBACK_PRESET_KEY = 'truth';
 
 class App {
     constructor() {
@@ -51,7 +44,7 @@ class App {
         this.history = [];
         this.sessionId = "sess_" + Date.now();
         this.presets = this.loadPresets();
-        this.currentPresetKey = 'default';
+        this.currentPresetKey = FALLBACK_PRESET_KEY;
         this.theme = {
             name: 'ai-Ncards',
             primary: '#c41e3a',
@@ -126,16 +119,14 @@ class App {
     }
 
     getCurrentPreset() {
-        return this.presets[this.currentPresetKey] || this.presets['default'];
+        return this.presets[this.currentPresetKey] || this.presets['truth'];
     }
 
     getCurrentSystemPrompt() {
-        // OpenRouter presets handle system prompts on the server side
-        // Only use the base system prompt when NOT using an OpenRouter preset
-        const preset = this.getCurrentPreset();
-        if (this.currentPresetKey !== 'default' && preset && preset.key) {
-            return ''; // Don't send local system prompt with OpenRouter presets
-        }
+        // The base prompt carries the card directive grammar, so it always goes
+        // out. The Worker strips it on the OpenRouter rung, where the preset owns
+        // the prompt, and keeps it on the Workers AI rung — which cannot read a
+        // prompt that lives in the OpenRouter account.
         return SYSTEM_PROMPT_BASE;
     }
 
@@ -187,7 +178,7 @@ class App {
         
         let html = '';
         Object.entries(this.presets).forEach(([key, preset]) => {
-            const isDefault = key === 'default';
+            const isDefault = key === FALLBACK_PRESET_KEY;
             html += `
                 <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px; background: var(--bg); border-radius: 8px; margin-bottom: 8px;">
                     <div>
@@ -236,9 +227,9 @@ class App {
         
         delete this.presets[key];
         
-        // If deleted preset was current, reset to default
+        // If the deleted preset was current, fall back to the protected one.
         if (key === this.currentPresetKey) {
-            this.currentPresetKey = 'default';
+            this.currentPresetKey = FALLBACK_PRESET_KEY;
         }
         
         this.savePresets();
@@ -324,7 +315,7 @@ class App {
     selectPresetForNextQuery(presetKey) {
         if (!this.presets[presetKey]) return;
         
-        const wasDefault = this.currentPresetKey === 'default';
+        const wasDefault = this.currentPresetKey === FALLBACK_PRESET_KEY;
         this.currentPresetKey = presetKey;
         
         // Update button label
@@ -392,7 +383,7 @@ class App {
         const card = {
             id: id,
             q: `Preset: ${preset.name}`,
-            r: `OpenRouter Preset: ${preset.key || 'default'}\n\nThis card uses the OpenRouter preset configuration.`,
+            r: `OpenRouter Preset: ${preset.key}\n\nThis card uses the OpenRouter preset configuration.`,
             preset: presetKey,
             styles: {},
             isPresetCard: true
@@ -1078,7 +1069,7 @@ class App {
 
         // Get preset for this request
         const preset = this.getCurrentPreset();
-        const usePreset = this.currentPresetKey !== 'default' && preset && preset.key;
+        const usePreset = Boolean(preset && preset.key);
         
         console.log("sendRequest - currentPresetKey:", this.currentPresetKey);
         console.log("sendRequest - preset:", preset);
@@ -1658,7 +1649,7 @@ class App {
             
             // Get preset for this request
             const preset = this.getCurrentPreset();
-            const usePreset = this.currentPresetKey !== 'default' && preset && preset.key;
+            const usePreset = Boolean(preset && preset.key);
 
             const sysPrompt = this.getCurrentSystemPrompt();
             const fullPrompt = sysPrompt ? sysPrompt + "\n\nUser: " + prompt : prompt;
@@ -1714,7 +1705,7 @@ Do not output any other text.`;
         this.showToast("Generating Theme...");
         
         const preset = this.getCurrentPreset();
-        const usePreset = this.currentPresetKey !== 'default' && preset && preset.key;
+        const usePreset = Boolean(preset && preset.key);
 
         this.streamChat(
             { messages: [{ role: 'user', content: prompt }], preset: usePreset ? preset.key : null },

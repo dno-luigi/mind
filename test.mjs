@@ -25,7 +25,7 @@ function fakeAI(overrides = {}) {
   return {
     async run(model, body = {}) {
       if (model === '@cf/cloudflare/clef-flash') {
-        return { response: JSON.stringify({ preset: 'coding', depth: 'deep', tone: 'precise' }) };
+        return { response: JSON.stringify({ preset: 'operator', depth: 'deep', tone: 'precise' }) };
       }
       if (model.startsWith('@cf/openai/whisper')) return { text: `heard:${body.audio ? 'audio' : 'nothing'}` };
       if (model === '@cf/myshell-ai/melotts') return { audio: btoa('fake-mp3-bytes') };
@@ -72,7 +72,8 @@ test('health reports which rungs and bindings are live', async () => {
 test('presets never leak prompts or model slugs', async () => {
   const res = await call(makeEnv(), '/api/presets');
   const { presets } = await res.json();
-  assert.ok(presets.length >= 6);
+  assert.equal(presets.length, 3);
+  assert.deepEqual(presets.map((p) => p.id).sort(), ['mnl', 'operator', 'truth']);
   assert.deepEqual(Object.keys(presets[0]).sort(), ['id', 'name']);
 });
 
@@ -89,7 +90,7 @@ test('chat streams meta, deltas and [DONE]', async () => {
   assert.equal(events[0].type, 'meta');
   assert.equal(events[0].route, 'workers-ai');
   // No explicit preset, so the decision model picked one and its cf model follows.
-  assert.equal(events[0].decision.preset, 'coding');
+  assert.equal(events[0].decision.preset, 'operator');
   assert.equal(events[0].model, '@cf/qwen/qwen3.8-27b');
 
   const text = events.filter((e) => e.type === 'delta').map((e) => e.text).join('');
@@ -106,7 +107,7 @@ test('chat rejects an unknown preset instead of silently substituting', async ()
   assert.equal(res.status, 400);
   const body = await res.json();
   assert.equal(body.error.code, 'unknown_preset');
-  assert.ok(body.error.available.includes('coding'));
+  assert.ok(body.error.available.includes('truth'));
 });
 
 test('chat requires messages', async () => {
@@ -124,7 +125,7 @@ test('an explicit preset beats the decision model', async () => {
   const env = makeEnv({
     AI: fakeAI({
       async run(model, body = {}) {
-        if (model === '@cf/cloudflare/clef-flash') return { response: '{"preset":"coding"}' };
+        if (model === '@cf/cloudflare/clef-flash') return { response: '{"preset":"operator"}' };
         seen.push({ model, system: body.messages?.[0]?.role });
         if (body.stream) return sse(['ok']);
         return { response: 'ok' };
@@ -135,7 +136,7 @@ test('an explicit preset beats the decision model', async () => {
   await call(env, '/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'legal', stream: false }),
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth', stream: false }),
   });
 
   const generation = seen.at(-1);
@@ -150,7 +151,7 @@ test('decision ladder escalates when the smallest window refuses', async () => {
       async run(model, body = {}) {
         tried.push(model);
         if (model === LADDER[0].id) throw new Error('context length exceeded');
-        if (model === LADDER[1].id) return { response: '{"preset":"creative","depth":"terse"}' };
+        if (model === LADDER[1].id) return { response: '{"preset":"mnl","depth":"terse"}' };
         if (body.stream) return sse(['x']);
         return { response: 'x' };
       },
@@ -163,7 +164,7 @@ test('decision ladder escalates when the smallest window refuses', async () => {
     body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], stream: false }),
   });
   const body = await res.json();
-  assert.equal(body.decision.preset, 'creative');
+  assert.equal(body.decision.preset, 'mnl');
   assert.equal(body.decision.source, 'clef-omni');
   assert.deepEqual(tried.slice(0, 2), [LADDER[0].id, LADDER[1].id]);
 });
@@ -214,13 +215,13 @@ test('the openrouter rung references the preset and leaves its config alone', as
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'coding', stream: false }),
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth', stream: false }),
       },
     );
     await res.text();
 
     // Bare slugs are ignored upstream, so the @preset/ prefix is load-bearing.
-    assert.equal(sent.model, '@preset/coding');
+    assert.equal(sent.model, '@preset/truth');
     // Request fields shallow-merge over the preset, so ours must be absent.
     assert.equal(sent.temperature, undefined);
     assert.equal(sent.max_tokens, undefined);
@@ -246,7 +247,7 @@ test('the workers-ai rung still uses the local prompt and sampling', async () =>
   await call(env, '/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth-engine', stream: false }),
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth', stream: false }),
   });
 
   const body = seen.at(-1);
@@ -339,7 +340,7 @@ test('uploads are refused without R2 instead of failing open', async () => {
 });
 
 test('preset upserts send the prompt as a system message', () => {
-  const body = upsertBody(findPreset('truth-engine'), { model: 'openai/gpt-4o' });
+  const body = upsertBody(findPreset('truth'), { model: 'openai/gpt-4o' });
   assert.equal(body.model, 'openai/gpt-4o');
   assert.equal(body.temperature, 0.1);
   // messages is ignored for storage, but a system message is extracted as system_prompt
@@ -359,8 +360,8 @@ test('the sync plan covers every slugged preset and skips local-only ones', () =
   const plan = syncPlan({ model: 'openai/gpt-4o' });
   const slugged = PRESETS.filter((p) => p.orPreset);
   assert.equal(plan.length, slugged.length);
-  assert.equal(plan.some((item) => item.slug === 'default'), false);
-  assert.equal(upsertPath('truth-engine'), '/presets/truth-engine/chat/completions');
+  assert.deepEqual(plan.map((item) => item.slug).sort(), ['mnl', 'operator', 'truth']);
+  assert.equal(upsertPath('truth'), '/presets/truth/chat/completions');
 });
 
 test('stores resolve to the deployed names, with the generic ones as fallback', () => {
