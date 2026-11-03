@@ -16,10 +16,11 @@ export const stateKv = (env) => env?.MEM || env?.KV || null;
 export const masterKv = (env) => env?.MASTER || stateKv(env) || null;
 
 /**
- * Optional: the namespace a standalone admin writes to. Binding it here means the
- * pairs written there are read here, without copying anything between stores.
+ * Optional: the truth worker itself, as a service binding. It is the store the
+ * standalone admin writes to, so the first cache check can ask it the same
+ * question the console asks.
  */
-export const truthKv = (env) => env?.TRUTH || null;
+export const truthService = (env) => env?.TRUTH || null;
 export const objects = (env) => env?.BUCKET || env?.R2 || null;
 
 /** What is actually attached, by its deployed name, for /api/health. */
@@ -30,7 +31,6 @@ export function bindingReport(env) {
     kv: {
       mem: Boolean(env?.MEM),
       master: Boolean(env?.MASTER),
-      truth: Boolean(env?.TRUTH),
       legacy: Boolean(env?.KV),
     },
     r2: {
@@ -39,6 +39,7 @@ export function bindingReport(env) {
     },
     services: {
       agentBrowsing: Boolean(env?.['AGENT-BROWSING']),
+      truth: Boolean(env?.TRUTH),
     },
   };
 }

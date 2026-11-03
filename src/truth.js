@@ -1,4 +1,4 @@
-import { stateKv, masterKv, truthKv } from './bindings.js';
+import { stateKv, masterKv, truthService } from './bindings.js';
 import { sha256Hex } from './util.js';
 
 /**
@@ -211,6 +211,59 @@ function bad(status, code, message) {
   return Object.assign(new Error(message), { status, code });
 }
 
+/** A bound service that stops answering must not hold the turn open. */
+const REMOTE_TIMEOUT_MS = 2500;
+
+/**
+ * The truth worker, when bound as TRUTH, is the store the standalone admin writes
+ * to — the binding exposes the very routes the page calls, so the first cache
+ * check asks it the same question instead of guessing at key shapes.
+ *
+ * It is read-only from here. An answer generated for a question it did not have
+ * is kept as a candidate, so a curated pair is never written over.
+ */
+async function resolveRemoteTruth(env, input, { id, query }) {
+  const binding = truthService(env);
+  if (!binding || typeof binding.fetch !== 'function') return null;
+
+  const signal =
+    typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+      ? AbortSignal.timeout(REMOTE_TIMEOUT_MS)
+      : undefined;
+
+  try {
+    const res = await binding.fetch(
+      new Request('https://truth/api/truth/resolve', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ input }),
+        signal,
+      }),
+    );
+    if (!res.ok) return null;
+
+    const data = await res.json().catch(() => null);
+    const answer = answerOf(data);
+    if (!answer) return null;
+
+    // "none" is the console's own miss: let the local layers answer instead.
+    const layer = data?.layer === 'master' ? 'master' : data?.layer === 'provisional' ? 'provisional' : null;
+    if (!layer) return null;
+
+    return {
+      layer,
+      id: typeof data?.id === 'string' && data.id ? data.id : id,
+      query,
+      answer,
+      citations: citationsOf(data),
+      source: 'truth-service',
+      key: 'service:truth',
+    };
+  } catch {
+    return null; // bound but failing is a miss, never a failed turn
+  }
+}
+
 /**
  * Master, then provisional, then the candidate worth promoting. A miss is a
  * normal answer, not an error: it just means the pipeline has to generate.
@@ -224,17 +277,20 @@ function bad(status, code, message) {
 export async function resolveTruth(env, input) {
   const mem = stateKv(env);
   const master = masterKv(env);
-  // Optional: bind the namespace the admin writes to and its pairs are visible
-  // here without copying them anywhere.
-  const shared = truthKv(env);
+  const remote = truthService(env);
   const query = truthKey(input);
-  const stores = [shared, master, mem].filter((store, index, all) => store && all.indexOf(store) === index);
+  const stores = [master, mem].filter((store, index, all) => store && all.indexOf(store) === index);
 
-  if (!stores.length) return { layer: 'none', query, reason: 'unbound' };
+  if (!stores.length && !remote) return { layer: 'none', query, reason: 'unbound' };
   if (!query) return { layer: 'none', query, reason: 'empty' };
 
   const id = await sha256Hex(query);
   const raw = String(input || '').trim();
+
+  // The admin's store answers first: it is the one place a pair is written by
+  // hand, so it outranks anything this app cached for itself.
+  const curated = await resolveRemoteTruth(env, raw || query, { id, query });
+  if (curated) return curated;
   const canonical = [truthKeyOf('master', id), truthKeyOf('provisional', id), candidateKey(id)];
 
   const reads = [];

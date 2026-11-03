@@ -26,15 +26,27 @@
     }
   ],
 
-  // Bound to match the deployment, and so /api/health can report reachability.
-  // No route calls it yet: it is a browsing tool this app does not use.
-  "services": [
-    {
-      "binding": "AGENT-BROWSING",
-      "service": "agent-browsing",
-      "environment": "production"
-    }
-  ],
+  // TRUTH is the separate worker the standalone admin writes to. The binding
+  // exposes its /api/truth/* routes here, so the first cache check asks it the
+  // same question the console asks; AGENT-BROWSING is a browsing tool this app
+  // does not use. Declared in the shape the account already deploys.
+  "unsafe": {
+    "bindings": [
+      {
+        "name": "AGENT-BROWSING",
+        "type": "service",
+        "service": "agent-browsing",
+        "environment": "production"
+      },
+      {
+        "name": "TRUTH",
+        "type": "service",
+        "service": "truth",
+        "environment": "production",
+        "entrypoint": "default"
+      }
+    ]
+  },
 
   "observability": {
     "enabled": true

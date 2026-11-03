@@ -182,9 +182,17 @@ it tries:
 4. a bounded scan (500 keys listed, 30 read) for a record whose `query` or `input`
    says it answers the question
 
-Every store bound to the Worker is searched: `TRUTH` when you bind it, then
-`MASTER`, then `MEM`. The answer may sit under `answer`, `html`, `text`,
-`content`, `body`, `response`, or be the stored value itself.
+Step 0 is the truth worker itself. Bound as a service — the account uses
+`unsafe.bindings` with `{ "name": "TRUTH", "type": "service", "service":
+"truth" }` — its `/api/truth/resolve` is called with `{ input }`, exactly as the
+console calls it, and `{ answer, layer, id, meta.citations }` comes back. A `none`
+layer or a failed call falls through to the local layers below, so a truth worker
+that is down costs a lookup, never an answer. Nothing is ever posted back to it:
+an answer it did not have is kept as a candidate instead.
+
+Every bound KV store is searched as well: `MASTER`, then `MEM`. The answer may sit
+under `answer`, `html`, `text`, `content`, `body`, `response`, or be the stored
+value itself.
 
 Writes never replace a stored pair. A different answer is kept beside the first as
 an `alternatives[]` entry; `promote()` returns `{ saved: false, conflict: true }`

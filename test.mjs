@@ -929,6 +929,64 @@ test('promotion reports a clash instead of overwriting a truth', async () => {
   assert.equal(notices[0].type, 'promote_conflict');
 });
 
+test('the bound truth worker answers the first cache check', async () => {
+  const { kv } = kvStore();
+  const paths = [];
+  const env = {
+    MEM: kv,
+    TRUTH: {
+      async fetch(request) {
+        paths.push(new URL(request.url).pathname);
+        return new Response(
+          JSON.stringify({
+            layer: 'master',
+            id: 'curated-id',
+            answer: 'from the console',
+            meta: { citations: [{ title: 'Source', url: 'https://example.com' }] },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      },
+    },
+  };
+
+  const hit = await resolveTruth(env, 'ranger1189');
+  assert.equal(hit.layer, 'master');
+  assert.equal(hit.answer, 'from the console');
+  assert.equal(hit.id, 'curated-id');
+  assert.equal(hit.citations.length, 1);
+  assert.equal(hit.source, 'truth-service');
+  assert.deepEqual(paths, ['/api/truth/resolve']);
+});
+
+test('a truth worker that misses or fails falls through to the local store', async () => {
+  const { kv } = kvStore();
+
+  const missing = {
+    MEM: kv,
+    TRUTH: {
+      async fetch() {
+        return new Response(JSON.stringify({ layer: 'none' }), { status: 200 });
+      },
+    },
+  };
+  await promote(missing, { input: 'who are you', answer: 'mind' });
+  const hit = await resolveTruth(missing, 'who are you');
+  assert.equal(hit.layer, 'master');
+  assert.equal(hit.answer, 'mind');
+
+  const broken = {
+    MEM: kv,
+    TRUTH: {
+      async fetch() {
+        throw new Error('down');
+      },
+    },
+  };
+  const fallback = await resolveTruth(broken, 'who are you');
+  assert.equal(fallback.answer, 'mind');
+});
+
 test('a promoted truth answers the chat without calling a model', async () => {
   const { kv } = kvStore();
   let calls = 0;
