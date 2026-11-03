@@ -16,6 +16,7 @@ import {
   listCandidates,
   PROMOTE_AT,
 } from './src/truth.js';
+import { questionOf } from './src/truth.js';
 import { upstreamError, sseData, frameShape, fromWorkersAI } from './src/normalize.js';
 
 const ctx = { waitUntil() {}, passThroughOnException() {} };
@@ -998,6 +999,55 @@ test('a truth worker that misses or fails falls through to the local store', asy
   };
   const fallback = await resolveTruth(broken, 'who are you');
   assert.equal(fallback.answer, 'mind');
+});
+
+test('the question is lifted out of the prompt that carries it', () => {
+  assert.equal(questionOf('You are a helpful assistant.\n\nUser: ranger1185'), 'ranger1185');
+  assert.equal(questionOf('ranger1185'), 'ranger1185');
+  assert.equal(questionOf(''), '');
+});
+
+test('step 0 gets a second attempt after a failure', async () => {
+  const { kv } = kvStore();
+  let calls = 0;
+  const env = {
+    MEM: kv,
+    TRUTH: {
+      async fetch() {
+        calls += 1;
+        if (calls === 1) throw new Error('cold start');
+        return new Response(
+          JSON.stringify({ status: 'ok', layer: 'master', id: 'k', answer: 'second try', meta: { citations: [] } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      },
+    },
+  };
+
+  const hit = await resolveTruth(env, 'ranger1185');
+  assert.equal(calls, 2);
+  assert.equal(hit.answer, 'second try');
+});
+
+test('a clean miss is not retried', async () => {
+  const { kv } = kvStore();
+  let calls = 0;
+  const env = {
+    MEM: kv,
+    TRUTH: {
+      async fetch() {
+        calls += 1;
+        return new Response(
+          JSON.stringify({ status: 'miss', layer: 'none', answer: null }),
+          { status: 200 },
+        );
+      },
+    },
+  };
+
+  const hit = await resolveTruth(env, 'nobody home');
+  assert.equal(calls, 1);
+  assert.equal(hit.layer, 'none');
 });
 
 test('a promoted truth answers the chat without calling a model', async () => {

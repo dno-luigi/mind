@@ -5,7 +5,7 @@ import { publicPresets, findPreset, openRouterBackedPresets, DEFAULT_PRESET } fr
 import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
 import { decide, recordReview, within } from './decide.js';
-import { recordCandidate } from './truth.js';
+import { recordCandidate, questionOf } from './truth.js';
 import { wavInfo, wavChunks } from './audio.js';
 import { DONE, delta, errorEvent, meta, sseData, upstreamError, frameShape, fromOpenRouterChat, fromWorkersAI } from './normalize.js';
 
@@ -272,6 +272,8 @@ async function chat(request, env, ctx) {
 
   const { messages, images } = normalizeMessages(body.messages);
   const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
+  // What was actually asked, without the base prompt the client wraps around it.
+  const question = questionOf(lastUser);
   if (!messages.length) return fail(400, 'messages_required', 'No usable messages were provided.');
 
   const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
@@ -390,7 +392,7 @@ async function chat(request, env, ctx) {
     }
     await recordReview(env, ctx, reviewOf({ preset, decision: reported, route, model, lastUser, text }));
     // Every answer becomes a candidate, so nothing has to be retyped to promote it.
-    await recordCandidate(env, { input: lastUser, answer: text, preset: preset?.id, route, model }, ctx);
+    await recordCandidate(env, { input: question, answer: text, preset: preset?.id, route, model }, ctx);
     return json({ text, route, model, decision: reported });
   }
 
@@ -451,7 +453,7 @@ async function chat(request, env, ctx) {
         reviewOf({ preset, decision: reported, route, model, lastUser, text: answer }),
       );
       // Stored whether or not it is good: promotion is a later decision.
-      await recordCandidate(env, { input: lastUser, answer, preset: preset?.id, route, model }, ctx);
+      await recordCandidate(env, { input: question, answer, preset: preset?.id, route, model }, ctx);
       send(DONE);
       controller.close();
     },

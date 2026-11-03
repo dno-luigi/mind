@@ -1,6 +1,6 @@
 import { sha256Hex } from './util.js';
 import { stateKv } from './bindings.js';
-import { resolveTruth } from './truth.js';
+import { resolveTruth, questionOf } from './truth.js';
 import { DEFAULT_PRESET } from './presets.js';
 
 /**
@@ -205,7 +205,9 @@ export async function recordReview(env, ctx, record) {
  */
 export async function decide(env, { messages, images = [], presetId = null, allowPreset = true } = {}) {
   const trace = [];
-  const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
+  // The client carries its base prompt inside the user turn, so the question a
+  // cache or a curated pair is keyed by has to be lifted out of it.
+  const lastUser = questionOf([...messages].reverse().find((m) => m.role === 'user')?.content || '');
 
   const kv = stateKv(env);
   const memo = kv ? L1 : null;

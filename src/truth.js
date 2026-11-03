@@ -32,6 +32,26 @@ export function truthKey(input) {
     .slice(0, MAX_INPUT);
 }
 
+/**
+ * The question inside a message, not the prompt that carries it.
+ *
+ * The client sends its whole base prompt in the user turn —
+ * `SYSTEM_PROMPT_BASE + "\n\nUser: " + prompt` — so the raw content is a page of
+ * instructions followed by one question. Keying a cache or a curated pair on that
+ * blob can never match `ranger1185`, which is why a stored answer read as a miss.
+ */
+export function questionOf(content) {
+  let text = String(content || '');
+  for (const marker of ['\n\nUser: ', 'User Instruction: ', '\nUser: ']) {
+    const at = text.lastIndexOf(marker);
+    if (at !== -1) {
+      text = text.slice(at + marker.length);
+      break;
+    }
+  }
+  return text.trim();
+}
+
 export async function truthId(input) {
   const query = truthKey(input);
   return query ? sha256Hex(query) : null;
@@ -218,6 +238,10 @@ function bad(status, code, message) {
  */
 const REMOTE_TIMEOUT_MS = 12000;
 
+/** One extra attempt at step 0; a clean miss is final and is not retried. */
+const REMOTE_RETRIES = 1;
+const RETRY_DELAY_MS = 250;
+
 /**
  * The truth worker, when bound as TRUTH, is the store the standalone admin writes
  * to — the binding exposes the very routes the page calls, so the first cache
@@ -230,44 +254,55 @@ async function resolveRemoteTruth(env, input, { id, query }) {
   const binding = truthService(env);
   if (!binding || typeof binding.fetch !== 'function') return null;
 
-  const signal =
+  const signalFor = () =>
     typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
       ? AbortSignal.timeout(REMOTE_TIMEOUT_MS)
       : undefined;
 
-  try {
-    const res = await binding.fetch(
-      new Request('https://truth/api/truth/resolve', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ input }),
-        signal,
-      }),
-    );
-    if (!res.ok) return null;
+  // Step 0 gets a second chance. A service is cold on the first request after a
+  // deploy, and a timeout can leave the far side holding an answer it already
+  // wrote; one retry costs a quarter second and saves the turn its curated pair.
+  // A clean `miss` is not retried — that would pay for a second generation.
+  for (let attempt = 0; attempt <= REMOTE_RETRIES; attempt += 1) {
+    if (attempt) await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
 
-    const data = await res.json().catch(() => null);
-    // A miss is a 200 with status "miss", layer "none" and a null answer.
-    if (!data || data.status === 'miss') return null;
-    const answer = answerOf(data);
-    if (!answer) return null;
+    try {
+      const res = await binding.fetch(
+        new Request('https://truth/api/truth/resolve', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ input }),
+          signal: signalFor(),
+        }),
+      );
 
-    // "none" is the console's own miss: let the local layers answer instead.
-    const layer = data?.layer === 'master' ? 'master' : data?.layer === 'provisional' ? 'provisional' : null;
-    if (!layer) return null;
+      // A server error may be transient; try once more before giving up.
+      if (!res.ok) continue;
 
-    return {
-      layer,
-      id: typeof data?.id === 'string' && data.id ? data.id : id,
-      query,
-      answer,
-      citations: citationsOf(data),
-      source: 'truth-service',
-      key: 'service:truth',
-    };
-  } catch {
-    return null; // bound but failing is a miss, never a failed turn
+      const data = await res.json().catch(() => null);
+      // A miss is a 200 with status "miss", layer "none" and a null answer.
+      if (data && data.status === 'miss') return null;
+
+      // "none" is the console's own miss: let the local layers answer instead.
+      const answer = answerOf(data);
+      const layer = data?.layer === 'master' ? 'master' : data?.layer === 'provisional' ? 'provisional' : null;
+      if (!answer || !layer) continue;
+
+      return {
+        layer,
+        id: typeof data?.id === 'string' && data.id ? data.id : id,
+        query,
+        answer,
+        citations: citationsOf(data),
+        source: 'truth-service',
+        key: 'service:truth',
+      };
+    } catch {
+      // Network error or timeout: fall through to the retry.
+    }
   }
+
+  return null; // bound but unreachable is a miss, never a failed turn
 }
 
 /**
