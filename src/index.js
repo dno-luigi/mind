@@ -261,17 +261,23 @@ async function chat(request, env, ctx) {
     });
   }
 
+  // There is no preset-less mode: the client always sends one, defaulting to
+  // truth. That default must not outrank the decision, so clef may steer past
+  // it — but a preset the user deliberately picked does outrank the decision.
+  const pinned = Boolean(requestedPreset) && requestedPreset.id !== DEFAULT_PRESET;
+
   const gate = await charge(env, clientIp(request), 300);
   if (!gate.ok) {
     return fail(429, 'budget_exhausted', `Daily budget reached (${gate.used}/${gate.limit} neurons). Resets at 00:00 UTC.`);
   }
 
   // A preset the user picked wins; decide() only fills the gap.
-  const decision = await decide(env, { messages, images, presetId: requested });
-  const preset =
-    requestedPreset ||
-    (decision.preset && findPreset(decision.preset)) ||
-    findPreset(DEFAULT_PRESET);
+  const decision = await decide(env, { messages, images, presetId: pinned ? requested : null });
+  // A deliberate pick wins outright. Otherwise the decision steers, and the
+  // preset the client sent (truth, normally) is the fallback prompt.
+  const preset = pinned
+    ? requestedPreset
+    : (decision.preset && findPreset(decision.preset)) || requestedPreset || findPreset(DEFAULT_PRESET);
 
   // Report the preset that actually ran, not the one the decision model named:
   // they diverge whenever it suggests a preset that no longer exists.
@@ -289,7 +295,7 @@ async function chat(request, env, ctx) {
       images,
       preset,
       decision: reported,
-      explicit: Boolean(requestedPreset),
+      explicit: pinned,
     });
     let text = '';
     for await (const data of sseData(stream)) {
@@ -305,7 +311,7 @@ async function chat(request, env, ctx) {
         messages: system,
         images,
         temperature: preset?.temperature,
-        maxTokens: budgetFor(preset, reported, Boolean(requestedPreset)),
+        maxTokens: budgetFor(preset, reported, pinned),
       });
     }
     if (!text) return fail(502, 'empty_upstream', `${route} (${model}) returned no text.`);
@@ -318,7 +324,7 @@ async function chat(request, env, ctx) {
     images,
     preset,
     decision: reported,
-    explicit: Boolean(requestedPreset),
+    explicit: pinned,
   });
 
   const out = new ReadableStream({
@@ -345,7 +351,7 @@ async function chat(request, env, ctx) {
             messages: system,
             images,
             temperature: preset?.temperature,
-            maxTokens: budgetFor(preset, reported, Boolean(requestedPreset)),
+            maxTokens: budgetFor(preset, reported, pinned),
           });
           if (text) {
             answer += text;

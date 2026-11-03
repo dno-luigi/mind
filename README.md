@@ -59,13 +59,17 @@ skips its stage instead of failing the request. Each `meta` event carries a
 3. **browse** — `AGENT-BROWSING` is consulted for `extract`/`compare` intents and
    for `deep` depth. A failed lookup is recorded as `browse:error` and ignored.
 4. **user** — the intent is handed back and the answer is generated on…
-5. **operator** — `@preset/operator`, unless you pinned a preset.
+5. **rung** — the preset the answer runs on: your pick, else the decision's, else
+   `truth`.
 6. **review** — the exchange is appended to `MASTER` with a 30-day TTL: preset,
    route, model, sizes, and the first 500/1500 characters of prompt and answer.
 
-Clef first: with nothing pinned, its `task` selects the Cloudflare model
-(`chat`/`generate` → gemma, `transform`/`extract`/`compare` → qwen) and its
-`depth` sets the output budget. A pinned preset overrides both.
+There is no preset-less mode: the client always sends one, and `truth` is the
+default because the Cloudflare rung needs a prompt either way. That default does
+not outrank the decision — clef's `task` selects the Cloudflare model
+(`chat`/`generate` → gemma, `transform`/`extract`/`compare` → qwen), its `depth`
+sets the output budget, and its `preset` can steer past `truth`. A preset chosen
+deliberately outranks all three.
 
 ## Presets
 

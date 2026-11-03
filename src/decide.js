@@ -1,6 +1,6 @@
 import { sha256Hex } from './util.js';
 import { stateKv } from './bindings.js';
-import { OPERATOR_PRESET } from './presets.js';
+import { DEFAULT_PRESET } from './presets.js';
 
 /**
  * The clef ladder: smallest window first, escalate only when the state does not
@@ -186,10 +186,11 @@ export async function decide(env, { messages, images = [], presetId = null } = {
           : 'browse:error',
   );
 
-  // 4. user, then 5. operator — the rung the answer is generated on.
-  const preset = presetId || intent.preset || OPERATOR_PRESET;
+  // 4. user, then 5. the generation rung. A preset is always in effect — truth
+  // is the default, not the absence of one — so this never resolves to null.
+  const preset = presetId || intent.preset || DEFAULT_PRESET;
   trace.push('user:handoff');
-  trace.push(`operator:${preset}`);
+  trace.push(`rung:${preset}`);
 
   const decision = { ...intent, preset, browse: browse?.ok ? browse.text : null, trace, cacheKey };
 

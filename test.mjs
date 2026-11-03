@@ -93,7 +93,7 @@ test('chat streams meta, deltas and [DONE]', async () => {
   // No preset pinned: clef's intent names the preset, and its task names the
   // model, so the rung follows the decision rather than the preset's own model.
   assert.equal(events[0].decision.preset, 'operator');
-  assert.ok(events[0].decision.trace.includes('operator:operator'));
+  assert.ok(events[0].decision.trace.includes('rung:operator'));
   assert.equal(events[0].model, '@cf/google/gemma-4-26b-a4b-it');
 
   const text = events.filter((e) => e.type === 'delta').map((e) => e.text).join('');
@@ -128,7 +128,7 @@ test('an explicit preset beats the decision model', async () => {
   const env = makeEnv({
     AI: fakeAI({
       async run(model, body = {}) {
-        if (model === '@cf/cloudflare/clef-flash') return { response: '{"preset":"operator"}' };
+        if (model === '@cf/cloudflare/clef-flash') return { response: '{"preset":"mnl"}' };
         seen.push({ model, system: body.messages?.[0]?.role });
         if (body.stream) return sse(['ok']);
         return { response: 'ok' };
@@ -139,11 +139,12 @@ test('an explicit preset beats the decision model', async () => {
   await call(env, '/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth', stream: false }),
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'operator', stream: false }),
   });
 
   const generation = seen.at(-1);
-  assert.equal(generation.model, '@cf/google/gemma-4-26b-a4b-it');
+  // clef said mnl; the deliberate pick wins, model and prompt both.
+  assert.equal(generation.model, '@cf/qwen/qwen3.8-27b');
   assert.equal(generation.system, 'system');
 });
 
@@ -495,9 +496,10 @@ test('the pipeline traces cache, intent, browse, user and operator in order', as
   // extract is browse-worthy, so the service binding is consulted.
   assert.ok(trace.includes('browse:ok'));
   assert.ok(trace.indexOf('browse:ok') < trace.indexOf('user:handoff'));
-  // user hands back, then the operator rung generates.
-  assert.ok(trace.indexOf('user:handoff') < trace.indexOf('operator:operator'));
-  assert.equal(body.decision.preset, 'operator');
+  // user hands back, then the generation rung runs. Truth is the default when
+  // the intent names no preset.
+  assert.ok(trace.indexOf('user:handoff') < trace.indexOf('rung:truth'));
+  assert.equal(body.decision.preset, 'truth');
   assert.equal(body.decision.browse, 'browsed material');
   // extract -> qwen, deep -> large budget.
   assert.equal(body.model, '@cf/qwen/qwen3.8-27b');
@@ -586,6 +588,29 @@ test('clef decides the model and output budget when no preset is pinned', async 
   const generation = seen.at(-1);
   assert.equal(generation.model, '@cf/qwen/qwen3.8-27b');
   assert.equal(generation.body.max_tokens, 1024);
+});
+
+test('sending the default preset still lets clef steer the rung', async () => {
+  const env = makeEnv({
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"preset":"mnl"}' };
+        if (body.stream) return sse(['steered']);
+        return { response: 'steered' };
+      },
+    }),
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth' }),
+  });
+
+  const events = await readSSE(res);
+  // truth is the default rather than a choice, so the decision still routes.
+  assert.equal(events[0].preset, 'mnl');
+  assert.equal(events.filter((e) => e.type === 'delta').map((e) => e.text).join(''), 'steered');
 });
 
 test('the worker serves static assets when it has no API route', async () => {
