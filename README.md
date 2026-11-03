@@ -55,6 +55,8 @@ skips its stage instead of failing the request. Each `meta` event carries a
 
 1. **cache** — `MEM` lookup keyed on the last user turn; a hit ends the chain
    before any model runs. This check is first, ahead of the decision itself.
+   Hits come from a per-isolate memory layer in front of `MEM`, because a KV read
+   can stay stale for up to 60s after the write that created it.
 2. **intent** — clef starts the decision: the ladder (`clef-flash` → `clef-omni`
    → `clef`) classifies task, depth, tone and preset, escalating only when a
    window refuses.

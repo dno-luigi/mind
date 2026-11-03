@@ -33,6 +33,38 @@ const RUNG_TIMEOUT_MS = 5000;
 const BROWSE_TIMEOUT_MS = 4000;
 
 /**
+ * Per-isolate L1 in front of KV.
+ *
+ * KV reads are served from an edge cache and a freshly written key can stay
+ * invisible for up to 60s, so repeating the same turn immediately misses every
+ * time — which looks exactly like "the cache does not work". This layer is a
+ * plain module-scope Map because `env` is a per-request object in Workers, so
+ * keying by it would give each request its own empty cache. Losing the Map on
+ * recycle costs one lookup, never a wrong answer.
+ */
+const L1 = new Map();
+const L1_MAX = 500;
+
+/** Exported for tests: a fresh suite must never inherit a previous decision. */
+export function _resetDecisionCache() {
+  L1.clear();
+}
+
+function cacheHit(cached, via, cacheKey) {
+  return {
+    ...cached,
+    source: 'cache',
+    // The trace describes this request. Replaying the cached run's stages would
+    // claim clef and browse ran again when they did not; keep that under its own
+    // name instead.
+    trace: ['cache:hit'],
+    cacheSource: via,
+    cachedTrace: cached.trace || [],
+    cacheKey,
+  };
+}
+
+/**
  * Bound any upstream call. Without this a stalled engine holds the whole request
  * open — the client sees a spinner, then a blank card, and never learns why.
  */
@@ -175,15 +207,20 @@ export async function decide(env, { messages, images = [], presetId = null, allo
   const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
 
   const kv = stateKv(env);
+  const memo = kv ? L1 : null;
   const cacheKey = `decision:${await sha256Hex(`${lastUser.slice(-4000)}|${images.length}|${presetId || ''}`)}`;
 
-  // 1. cache
+  // 1. cache. Memory first: a KV read can lag the write that produced it.
   if (kv) {
+    const local = memo?.get(cacheKey);
+    if (local) return cacheHit(local, 'memory', cacheKey);
+
     try {
       const hit = await kv.get(cacheKey);
       if (hit) {
         const cached = JSON.parse(hit);
-        return { ...cached, source: 'cache', trace: [...(cached.trace || []), 'cache:hit'], cacheKey };
+        memo?.set(cacheKey, cached);
+        return cacheHit(cached, 'kv', cacheKey);
       }
       trace.push('cache:miss');
     } catch {
@@ -218,6 +255,10 @@ export async function decide(env, { messages, images = [], presetId = null, allo
 
   const decision = { ...intent, preset, browse: browse?.ok ? browse.text : null, trace, cacheKey };
 
+  if (memo) {
+    if (memo.size >= L1_MAX) memo.clear();
+    memo.set(cacheKey, decision);
+  }
   if (kv) {
     try {
       await kv.put(cacheKey, JSON.stringify(decision), { expirationTtl: 3600 });

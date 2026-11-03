@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import worker from './src/index.js';
 import { wrapWav, wavInfo, wavChunks } from './src/audio.js';
 import { _resetBudget } from './src/budget.js';
-import { LADDER, within } from './src/decide.js';
+import { LADDER, within, decide, _resetDecisionCache } from './src/decide.js';
 import { upsertBody, upsertPath, syncPlan } from './src/preset-sync.js';
 import { PRESETS, findPreset } from './src/presets.js';
 import { stateKv, objects, bindingReport } from './src/bindings.js';
@@ -39,6 +39,7 @@ function fakeAI(overrides = {}) {
 
 function makeEnv(over = {}) {
   _resetBudget();
+  _resetDecisionCache();
   return { AI: fakeAI(), ...over };
 }
 
@@ -717,4 +718,69 @@ test('frameShape names what arrived when no text was found', () => {
   assert.equal(frameShape('{"response":"hi"}'), 'response');
   assert.equal(frameShape('{"choices":[{"delta":{"content":"hi"}}]}'), 'choices');
   assert.equal(frameShape('not json'), null);
+});
+
+// KV reads are edge-cached and lag a fresh write by up to 60s, so a repeat of the
+// same turn misses unless something sits in front of KV.
+test('a repeat decision is served from memory while KV still reports nothing', async () => {
+  const env = makeEnv({
+    MEM: {
+      async get() {
+        return null; // the write is real, the read is still stale
+      },
+      async put() {},
+    },
+  });
+  const messages = [{ role: 'user', content: 'explain the decision cache' }];
+
+  const first = await decide(env, { messages });
+  assert.equal(first.source, 'clef-flash');
+  assert.ok(first.trace.includes('cache:miss'));
+
+  const second = await decide(env, { messages });
+  assert.equal(second.source, 'cache');
+  assert.equal(second.cacheSource, 'memory');
+  // The trace is this request's: a hit is one step, not a replay of the first
+  // run's intent and browse stages.
+  assert.deepEqual(second.trace, ['cache:hit']);
+  assert.ok(second.cachedTrace.includes('intent:clef-flash'));
+});
+
+test('a KV hit is labelled as such and seeds the memory layer', async () => {
+  const store = new Map();
+  const kv = {
+    async get(key) {
+      return store.get(key) ?? null;
+    },
+    async put(key, value) {
+      store.set(key, value);
+    },
+  };
+  const messages = [{ role: 'user', content: 'seeded from kv' }];
+
+  const warm = await decide(makeEnv({ MEM: kv }), { messages });
+  assert.equal(warm.source, 'clef-flash');
+
+  // A new env (a different isolate) shares the KV but starts with empty memory.
+  const cold = await decide(makeEnv({ MEM: kv }), { messages });
+  assert.equal(cold.source, 'cache');
+  assert.equal(cold.cacheSource, 'kv');
+  assert.equal(cold.preset, warm.preset);
+});
+
+test('the cache key follows the prompt, the images and the pinned preset', async () => {
+  const store = new Map();
+  const kv = {
+    async get(key) {
+      return store.get(key) ?? null;
+    },
+    async put(key, value) {
+      store.set(key, value);
+    },
+  };
+  const env = makeEnv({ MEM: kv });
+  const a = await decide(env, { messages: [{ role: 'user', content: 'first' }] });
+  const b = await decide(env, { messages: [{ role: 'user', content: 'second' }] });
+  const c = await decide(env, { messages: [{ role: 'user', content: 'first' }], presetId: 'mnl' });
+  assert.equal(new Set([a.cacheKey, b.cacheKey, c.cacheKey]).size, 3);
 });
