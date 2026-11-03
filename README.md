@@ -74,6 +74,23 @@ One asymmetry worth knowing: a preset's prompt lives in your OpenRouter account,
 so the Workers AI rung cannot read it. If a preset has no system prompt set on
 OpenRouter and the escalation rung answers, no preset prompt applies.
 
+### Promoting presets from code
+
+To stop the repo and the dashboard drifting, push the local table into the
+account. Dry run is the default because applying overwrites the designated
+version of any preset with the same slug:
+
+```bash
+npm run presets:sync -- --model google/gemini-2.5-flash            # print bodies
+npm run presets:sync -- --model google/gemini-2.5-flash --apply    # write versions
+```
+
+`--model` is required until you set `or` on each preset, because guessing an
+OpenRouter model would quietly repin a preset you tuned by hand. Two fields do
+not survive the round trip: `max_tokens` is not part of preset config, so it
+stays request-level, and on the preset rung we send none — the preset's own cap
+applies.
+
 ## Bindings
 
 `AI` is bound already and needs no key or id. The rest are optional: the Worker

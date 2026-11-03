@@ -5,6 +5,8 @@ import worker from './src/index.js';
 import { wrapWav, wavInfo, wavChunks } from './src/audio.js';
 import { _resetBudget } from './src/budget.js';
 import { LADDER } from './src/decide.js';
+import { upsertBody, upsertPath, syncPlan } from './src/preset-sync.js';
+import { PRESETS, findPreset } from './src/presets.js';
 
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 
@@ -329,6 +331,31 @@ test('uploads are refused without R2 instead of failing open', async () => {
   });
   assert.equal(res.status, 503);
   assert.equal((await res.json()).error.code, 'no_storage');
+});
+
+test('preset upserts send the prompt as a system message', () => {
+  const body = upsertBody(findPreset('truth-engine'), { model: 'openai/gpt-4o' });
+  assert.equal(body.model, 'openai/gpt-4o');
+  assert.equal(body.temperature, 0.1);
+  // messages is ignored for storage, but a system message is extracted as system_prompt
+  assert.equal(body.messages[0].role, 'system');
+  assert.match(body.messages[0].content, /verified fact/);
+  // Not part of preset config, so it must not be sent
+  assert.equal(body.max_tokens, undefined);
+});
+
+test('preset upserts refuse to invent a model', () => {
+  const noModel = PRESETS.find((p) => !p.or && p.orPreset);
+  assert.ok(noModel, 'expected a preset with a slug but no explicit model');
+  assert.throws(() => upsertBody(noModel), /No OpenRouter model/);
+});
+
+test('the sync plan covers every slugged preset and skips local-only ones', () => {
+  const plan = syncPlan({ model: 'openai/gpt-4o' });
+  const slugged = PRESETS.filter((p) => p.orPreset);
+  assert.equal(plan.length, slugged.length);
+  assert.equal(plan.some((item) => item.slug === 'default'), false);
+  assert.equal(upsertPath('truth-engine'), '/presets/truth-engine/chat/completions');
 });
 
 test('the worker serves static assets when it has no API route', async () => {
