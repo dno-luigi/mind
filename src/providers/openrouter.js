@@ -24,7 +24,12 @@ function headers(env) {
   };
 }
 
+/**
+ * A preset slug is referenced as `@preset/<slug>` — a bare slug is ignored by
+ * OpenRouter, which would silently fall back to the plain model.
+ */
 export function modelFor(env, preset) {
+  if (preset?.orPreset) return `@preset/${preset.orPreset}`;
   return preset?.or || env.OPENROUTER_MODEL || DEFAULT_MODEL;
 }
 

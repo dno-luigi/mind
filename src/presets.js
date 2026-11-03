@@ -1,10 +1,17 @@
 /**
- * Presets are server data: prompt + model + params. The client only sends a
- * preset id, so an unknown id is an error instead of a silent fallback to some
- * other model (the old worker quietly answered with Gemma).
+ * Presets are server data: prompt + model + params, one rung per provider.
  *
- * `cf` is the Cloudflare-first rung, `or` the escalation. Leaving `or` null
- * lets OPENROUTER_MODEL from wrangler.jsonc decide.
+ * `orPreset` is the slug of an OpenRouter preset
+ * (https://openrouter.ai/settings/presets). When the OpenRouter rung answers,
+ * the request references `@preset/<slug>` and sends no prompt, model or
+ * sampling params — the preset owns those. OpenRouter shallow-merges request
+ * fields over preset fields, so sending ours would quietly undo the preset and
+ * make the reference pointless.
+ *
+ * `cf`, `system` and `temperature` therefore describe the Workers AI rung only.
+ * The consequence worth knowing: if a preset has no system prompt configured on
+ * OpenRouter and the escalation rung answers, no preset prompt applies. The
+ * Cloudflare rung always has one.
  */
 
 export const PRESETS = [
@@ -12,6 +19,7 @@ export const PRESETS = [
     id: 'default',
     name: 'Default',
     cf: '@cf/google/gemma-4-26b-a4b-it',
+    orPreset: null,
     or: null,
     temperature: 0.7,
     maxTokens: 4096,
@@ -21,6 +29,7 @@ export const PRESETS = [
     id: 'truth-engine',
     name: 'Truth Engine',
     cf: '@cf/google/gemma-4-26b-a4b-it',
+    orPreset: 'truth-engine',
     or: null,
     temperature: 0.1,
     maxTokens: 4096,
@@ -31,6 +40,7 @@ export const PRESETS = [
     id: 'coding',
     name: 'Coding',
     cf: '@cf/qwen/qwen3.8-27b',
+    orPreset: 'coding',
     or: null,
     temperature: 0.2,
     maxTokens: 8192,
@@ -41,6 +51,7 @@ export const PRESETS = [
     id: 'legal',
     name: 'Legal',
     cf: '@cf/google/gemma-4-26b-a4b-it',
+    orPreset: 'legal',
     or: null,
     temperature: 0.2,
     maxTokens: 4096,
@@ -51,6 +62,7 @@ export const PRESETS = [
     id: 'creative',
     name: 'Creative',
     cf: '@cf/google/gemma-4-26b-a4b-it',
+    orPreset: 'creative',
     or: null,
     temperature: 1.0,
     maxTokens: 4096,
@@ -60,6 +72,7 @@ export const PRESETS = [
     id: 'analysis',
     name: 'Analysis',
     cf: '@cf/qwen/qwen3.8-27b',
+    orPreset: 'analysis',
     or: null,
     temperature: 0.4,
     maxTokens: 6144,
@@ -76,7 +89,12 @@ export function findPreset(id) {
   return BY_ID.get(String(id).toLowerCase().replace(/_/g, '-')) || null;
 }
 
-/** What the client is allowed to see — no prompts, no model slugs. */
+/** What the client is allowed to see — no prompts, no slugs. */
 export function publicPresets() {
   return PRESETS.map(({ id, name }) => ({ id, name }));
+}
+
+/** Presets bound to an OpenRouter preset, for /api/health diagnostics. */
+export function openRouterBackedPresets() {
+  return PRESETS.filter((p) => p.orPreset).map((p) => p.id);
 }

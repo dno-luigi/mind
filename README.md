@@ -47,6 +47,33 @@ data: [DONE]
 
 Switching providers therefore needs no frontend change.
 
+## Presets
+
+Each preset has two rungs: a Cloudflare model with a local prompt and sampling
+params, and an OpenRouter preset slug. On the Workers AI rung the local
+configuration applies. On the OpenRouter rung the request sends
+`model: "@preset/<slug>"` and nothing else, because OpenRouter shallow-merges
+request fields over preset fields — sending our temperature or system prompt
+would override the preset and defeat the point of having one.
+
+| Preset | Workers AI | OpenRouter preset |
+|---|---|---|
+| `default` | gemma-4-26b-a4b-it | — |
+| `truth-engine` | gemma-4-26b-a4b-it | `@preset/truth-engine` |
+| `coding` | qwen3.8-27b | `@preset/coding` |
+| `legal` | gemma-4-26b-a4b-it | `@preset/legal` |
+| `creative` | gemma-4-26b-a4b-it | `@preset/creative` |
+| `analysis` | qwen3.8-27b | `@preset/analysis` |
+
+A bare slug is ignored by OpenRouter, so the `@preset/` prefix is required. Point
+the slugs in `src/presets.js` at your own presets at
+<https://openrouter.ai/settings/presets>; `/api/health` lists which ones are
+preset-backed under `models.openrouterPresets`.
+
+One asymmetry worth knowing: a preset's prompt lives in your OpenRouter account,
+so the Workers AI rung cannot read it. If a preset has no system prompt set on
+OpenRouter and the escalation rung answers, no preset prompt applies.
+
 ## Bindings
 
 `AI` is bound already and needs no key or id. The rest are optional: the Worker

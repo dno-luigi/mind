@@ -1,6 +1,6 @@
 import { json, fail, has, options, b64FromBytes, bytesFromB64, clientIp } from './util.js';
 import { charge } from './budget.js';
-import { publicPresets, findPreset } from './presets.js';
+import { publicPresets, findPreset, openRouterBackedPresets } from './presets.js';
 import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
 import { decide } from './decide.js';
@@ -93,6 +93,8 @@ function health(env) {
       asr: cf.ASR_MODEL,
       tts: cf.TTS_MODEL,
       openrouter: env.OPENROUTER_MODEL || or.DEFAULT_MODEL,
+      // On the OpenRouter rung these resolve to @preset/<slug> instead.
+      openrouterPresets: openRouterBackedPresets(),
     },
     // Features disable themselves rather than failing the whole service.
     features: {
@@ -162,17 +164,22 @@ async function openUpstream(env, { messages, images, preset }) {
   }
 
   if (has(env, 'OPENROUTER_API_KEY')) {
+    // A referenced OpenRouter preset owns its model, prompt and sampling params.
+    // Request fields shallow-merge over preset fields, so sending ours here
+    // would override the configuration the preset exists to hold.
+    const usesPreset = Boolean(preset?.orPreset);
     const model = or.modelFor(env, preset);
-    const payload = messages.map((message, index) =>
-      index === messages.length - 1 && images.length
+    const base = usesPreset ? messages.filter((message) => message.role !== 'system') : messages;
+    const payload = base.map((message, index) =>
+      index === base.length - 1 && images.length
         ? { ...message, content: or.withImages(message.content, images) }
         : message,
     );
     const res = await or.chat(env, {
       model,
       messages: payload,
-      temperature: preset?.temperature,
-      maxTokens: preset?.maxTokens,
+      temperature: usesPreset ? undefined : preset?.temperature,
+      maxTokens: usesPreset ? undefined : preset?.maxTokens,
     });
     return { route: 'openrouter', model, stream: res.body, extract: fromOpenRouterChat };
   }

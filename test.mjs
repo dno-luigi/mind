@@ -192,6 +192,62 @@ test('chat falls back to OpenRouter when the AI binding is absent', async () => 
   }
 });
 
+test('the openrouter rung references the preset and leaves its config alone', async () => {
+  const original = globalThis.fetch;
+  let sent = null;
+  globalThis.fetch = async (url, init) => {
+    sent = JSON.parse(init.body);
+    return new Response('data: [DONE]\n\n', { status: 200 });
+  };
+
+  try {
+    const res = await call(
+      { OPENROUTER_API_KEY: 'test-key' },
+      '/api/chat',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'coding', stream: false }),
+      },
+    );
+    await res.text();
+
+    // Bare slugs are ignored upstream, so the @preset/ prefix is load-bearing.
+    assert.equal(sent.model, '@preset/coding');
+    // Request fields shallow-merge over the preset, so ours must be absent.
+    assert.equal(sent.temperature, undefined);
+    assert.equal(sent.max_tokens, undefined);
+    assert.equal(sent.messages.some((m) => m.role === 'system'), false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('the workers-ai rung still uses the local prompt and sampling', async () => {
+  const seen = [];
+  const env = makeEnv({
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{}' };
+        seen.push(body);
+        if (body.stream) return sse(['ok']);
+        return { response: 'ok' };
+      },
+    }),
+  });
+
+  await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth-engine', stream: false }),
+  });
+
+  const body = seen.at(-1);
+  assert.equal(body.messages[0].role, 'system');
+  assert.match(body.messages[0].content, /verified fact/);
+  assert.equal(body.temperature, 0.1);
+});
+
 test('no engine at all is a 503, not a hang', async () => {
   const res = await call({}, '/api/chat', {
     method: 'POST',
