@@ -1,0 +1,52 @@
+name: deploy
+
+# A build that hangs is worse than one that fails: this job is capped at ten
+# minutes, so a missing token or a command that waits for input shows up as a red
+# run with a log instead of a spinner that never stops.
+#
+# Needs two repository secrets:
+#   CLOUDFLARE_API_TOKEN   Workers Scripts:Edit
+#   CLOUDFLARE_ACCOUNT_ID  the account that owns the `mind` worker
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI: 'true'
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy

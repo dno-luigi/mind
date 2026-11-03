@@ -137,6 +137,24 @@ clef decision cache survive isolate restarts. `/api/health` answers
 `features.sharedBudget: true` once they are attached; `false` means the worker
 fell back to per-isolate memory and the budget will reset.
 
+## Building and deploying
+
+```sh
+npm ci          # install exactly what the lockfile pins
+npm test        # the whole suite, no network needed
+npm run build   # wrangler deploy --dry-run; exits cleanly with no credentials
+npm run ci      # test + build, the pair a pipeline needs to pass
+npm run deploy  # the real deploy, needs a logged-in wrangler
+```
+
+A build that never finishes is almost always a command that does not exit:
+`npm run dev` and `wrangler dev` watch forever by design, and `wrangler deploy`
+stops to ask which account to use when it has no token. For Workers Builds, set
+the build command to `npm ci` and the deploy command to `npx wrangler deploy`.
+`.github/workflows/deploy.yml` does the same from GitHub, caps the job at ten
+minutes, and takes its credentials from the `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` repository secrets.
+
 ## Truth layers
 
 Every generated answer is written to `MEM` as a candidate with a `hits` count,
