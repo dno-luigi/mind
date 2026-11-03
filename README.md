@@ -163,9 +163,28 @@ so nothing has to be retyped to promote it. The key is a blunt normalization of
 the query — lower case, collapsed spacing, trailing punctuation removed — because
 a fuzzy match would promote the wrong answer.
 
-The console is a standalone page — `public/admin.html`, served at `/admin.html` —
-that posts to its own Worker. `mind` still exposes no route that writes a truth,
-so nothing reachable through this app's API can change one. Promotion is a script
+The console is `public/admin.html`, served at `/admin.html`. It is gated by the
+`ADMIN_KEY` secret: the page asks for the key, keeps it in `sessionStorage` for the
+tab, and sends it as `x-admin-key` (or as a bearer token). With `ADMIN_KEY` unset
+every console route answers `503 admin_key_unset`; a wrong key is `401
+admin_key_required`. `mind` still exposes no route that writes a truth, so nothing
+reachable through this app's API can change one.
+
+```bash
+npx wrangler secret put ADMIN_KEY   # once; then paste it into the console
+```
+
+| Route | What it does |
+| --- | --- |
+| `POST /api/admin/unlock` | checks the key, names the bound stores |
+| `GET /api/admin/keys?store=MEM&limit=200&cursor=` | one page of keys: question, answer preview, length, kind, hits |
+| `GET /api/admin/key?store=MEM&name=<key>` | the full value behind one row |
+
+The page walks those pages until the store runs out and sorts in the browser by key
+name, question, answer length, kind or newest — a store of a couple of thousand keys
+is browsable and filterable instead of one key at a time. Clicking a row opens the
+pair in the editor; master records are saved back to master, everything else through
+the provisional route, exactly as this console has always worked. Promotion is a script
 calling `promote()` in `src/truth.js`: `master` records go to the `MASTER`
 namespace, `provisional` ones to `MEM`, and the id is the SHA-256 of the
 normalized query. A master truth answers its query straight out of KV without

@@ -468,36 +468,82 @@
       .module-stack-row select { width: 100%; }
       .audit-fields { grid-template-columns: 1fr; }
     }
+
+    /* STORE BROWSER */
+    .keys-intro { font-size: .95em; opacity: .8; margin: 0 0 10px; }
+    .keys-panel { border: 1px solid #3377ff44; border-radius: 9px; padding: 12px; margin-bottom: 22px; background: rgba(0,90,255,.07); }
+    .keys-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .keys-controls input, .keys-controls select, .keys-controls button { margin: 0; flex: unset; }
+    .keys-controls input[type="search"] { flex: 1 1 220px; min-width: 150px; }
+    .keys-controls select { min-width: 128px; }
+    .keys-controls button { padding: 9px 13px; font-size: .9em; background: #1c2e4a; color: #00eaff; border: 1px solid #00eaff44; }
+    .keys-table-wrap { max-height: 340px; overflow: auto; margin-top: 10px; border-radius: 7px; }
+    .keys-table { width: 100%; border-collapse: collapse; font-size: .88em; }
+    .keys-table th { position: sticky; top: 0; background: #16233a; color: #00eaff; text-align: left; padding: 7px 9px; font-weight: 600; white-space: nowrap; }
+    .keys-table td { padding: 6px 9px; border-top: 1px solid #ffffff12; vertical-align: top; }
+    .keys-table tbody tr { cursor: pointer; }
+    .keys-table tbody tr:hover { background: #00eaff1a; }
+    .keys-table .k-key { font-family: ui-monospace, Menlo, monospace; color: #9fb4d0; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .keys-table .k-answer { color: #cfe6ff; }
+    .keys-table .k-num { text-align: right; color: #8fa7c4; white-space: nowrap; }
+    .keys-table .k-kind { color: #5a8bff; white-space: nowrap; }
+    #admin-container { display: none; }
+    .keys-empty { padding: 10px; color: #8fa7c4; font-style: italic; }
   </style>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/github-dark.min.css">
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/highlight.min.js"></script>
 </head>
 <body data-output-mode="silvery">
-  <div class="glasscard" id="melody-lock">
-    <h2>🔒 Admin Melody Lock</h2>
+    <div class="glasscard" id="admin-gate">
+    <h2>🔑 Admin Console</h2>
     <div class="melody-instructions">
-      <b>Step 1:</b> Play your secret melody or paste its pattern.<br>
-      <b>Step 2:</b> Click <b>Unlock Admin</b>.<br>
-      <div style="font-size:0.95em;margin-top:7px;opacity:0.87;">
-        (To share access: use <code>Export Pattern</code> from your melody tool)
-      </div>
+      This console lists every stored pair and edits truths through the truth worker.
+      It needs the <code>ADMIN_KEY</code> secret from the worker environment.<br>
+      Every request carries it, and the worker refuses everything when it is not set.
     </div>
-    <div id="melody-piano"></div>
+    <label for="adminKey">ADMIN_KEY</label>
+    <input type="password" id="adminKey" placeholder="the value you set with wrangler secret put ADMIN_KEY" autocomplete="current-password">
     <div class="melody-btns">
-      <button id="melody-clear">Clear Melody</button>
-      <button id="melody-unlock">Unlock Admin</button>
+      <button id="adminUnlockBtn">Unlock Console</button>
+      <button id="adminForgetBtn">Forget Key</button>
     </div>
-    <div id="melody-bar"></div>
-    <div class="import-group">
-      <input type="text" id="importMelodyInput" placeholder="Pattern e.g. 40-43-45">
-      <button id="importMelodyBtn">Import</button>
-    </div>
-    <div id="melody-status"></div>
+    <div id="adminStatus" class="status-message"></div>
   </div>
 
   <div class="admin-container" id="admin-container">
     <h2>Truth Engine Admin Console</h2>
+    <p class="keys-intro">
+      Every key in the store, with the question it answers. Filter or sort, then click
+      a row to open it in the editor — no need to remember a key to find it.
+    </p>
+    <div class="keys-panel">
+      <div class="keys-controls">
+        <input type="search" id="keySearch" placeholder="Filter by key, question or answer…">
+        <select id="keySort" aria-label="Sort the list">
+          <option value="key">Sort: key name</option>
+          <option value="question">Sort: question A–Z</option>
+          <option value="length">Sort: answer length</option>
+          <option value="kind">Sort: kind</option>
+          <option value="saved">Sort: newest</option>
+        </select>
+        <select id="keyStore" aria-label="Which store"></select>
+        <button id="keysLoadAll">Load all</button>
+        <button id="keysStop">Stop</button>
+        <button id="keysExport">Export JSON</button>
+      </div>
+      <div id="keysStatus" class="status-message">Locked.</div>
+      <div class="keys-table-wrap">
+        <table class="keys-table">
+          <thead>
+            <tr><th>Key</th><th>Question</th><th>Answer</th><th>Chars</th><th>Kind</th></tr>
+          </thead>
+          <tbody id="keysBody"></tbody>
+        </table>
+      </div>
+    </div>
+
 
     <div id="editor-tab" class="tab-content active">
       <label for="query">Query (exact):</label>
@@ -550,110 +596,252 @@
 
   <script>
     // MARKED/HIGHLIGHT CONFIG
-    marked.setOptions({
-      highlight: function(code, lang) {
-        if (lang && hljs.getLanguage(lang)) {
-          return hljs.highlight(code, { language: lang }).value;
+    if (window.marked && window.hljs) {
+      marked.setOptions({
+        highlight: function(code, lang) {
+          if (lang && hljs.getLanguage(lang)) {
+            return hljs.highlight(code, { language: lang }).value;
+          }
+          return hljs.highlightAuto(code).value;
         }
-        return hljs.highlightAuto(code).value;
-      }
-    });
-
-    // ========= Melody Lock (unchanged logic, just gating UI) =========
-    const allowedMelodyHash = "e4a25ba5b1c669414746d9efdc533019e14bf8a86c288165de44bdcf791d4cfa";
-    let melody = [];
-
-    function renderPiano() {
-      const notes = [60,62,64,65,67,69,71];
-      const names = ['C','D','E','F','G','A','B'];
-      const piano = document.getElementById('melody-piano');
-      piano.innerHTML = '';
-      notes.forEach((note, i) => {
-        const btn = document.createElement('div');
-        btn.className = 'melody-key';
-        btn.dataset.note = note;
-        btn.textContent = names[i];
-        btn.onclick = () => {
-          playNote(note);
-          melody.push(note);
-          updateMelodyBar();
-          btn.classList.add('active');
-          setTimeout(()=>btn.classList.remove('active'),120);
-        };
-        piano.appendChild(btn);
       });
     }
 
-    function playNote(midi) {
+    // A stored answer is model output and this page holds the admin key, so it
+    // is sanitised before it is rendered; without DOMPurify it is shown as text.
+    function renderPreview(text) {
+      if (!window.marked) { previewDiv.textContent = text; return; }
+      const htmlText = marked.parse(text || '');
+      if (window.DOMPurify) previewDiv.innerHTML = DOMPurify.sanitize(htmlText);
+      else previewDiv.textContent = text || '';
+    }
+
+    // ========= Admin gate =========
+    // The console ships without a lock of its own: ADMIN_KEY is checked by the
+    // worker, so the page and the store behind it open to nobody without it. The
+    // key is kept in sessionStorage, so closing the tab forgets it.
+    const gateEl = document.getElementById('admin-gate');
+    const containerEl = document.getElementById('admin-container');
+    const keyInput = document.getElementById('adminKey');
+    const adminStatus = document.getElementById('adminStatus');
+    const keyStoreEl = document.getElementById('keyStore');
+    const keysBody = document.getElementById('keysBody');
+    const keysStatus = document.getElementById('keysStatus');
+    const searchInput = document.getElementById('keySearch');
+    const sortSelect = document.getElementById('keySort');
+
+    let adminKey = sessionStorage.getItem('mind-admin-key') || '';
+    let storeRows = [];
+    let scanning = false;
+    const loaded = {};       // store -> { cursor, done, seen }
+
+    function say(el, text, bad) {
+      el.textContent = text;
+      el.style.color = bad ? 'var(--truth-warning)' : '';
+    }
+
+    async function adminFetch(path, init = {}) {
+      const res = await fetch(path, {
+        ...init,
+        headers: { ...(init.headers || {}), 'x-admin-key': adminKey },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error?.message || ('HTTP ' + res.status));
+      return data;
+    }
+
+    async function unlock() {
+      const typed = (keyInput.value || '').trim();
+      if (!typed) { say(adminStatus, 'Enter the ADMIN_KEY first.', true); return; }
+      adminKey = typed;
+      say(adminStatus, 'Checking…');
       try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const freq = 440 * Math.pow(2, (midi-69)/12);
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.type = 'sine';
-        o.frequency.value = freq;
-        g.gain.setValueAtTime(0.12, ctx.currentTime);
-        g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.21);
-        o.connect(g).connect(ctx.destination);
-        o.start();
-        o.stop(ctx.currentTime + 0.21);
-        o.onended = () => ctx.close();
-      } catch(e) {}
-    }
-
-    function updateMelodyBar() {
-      const bar = document.getElementById('melody-bar');
-      bar.innerHTML = '';
-      melody.forEach(m => {
-        const span = document.createElement('span');
-        span.className = 'melody-pill';
-        span.textContent = noteName(m);
-        bar.appendChild(span);
-      });
-    }
-
-    function noteName(midi) {
-      const n=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-      return n[midi%12]+Math.floor(midi/12-1);
-    }
-
-    document.getElementById('melody-clear').onclick = () => {
-      melody = [];
-      updateMelodyBar();
-      document.getElementById('melody-status').textContent = '';
-    };
-
-    document.getElementById('melody-unlock').onclick = async () => {
-      if (!melody.length) {
-        document.getElementById('melody-status').textContent = 'Play or import your melody!';
-        return;
-      }
-      const bytes = new Uint8Array(melody);
-      const hashBuf = await crypto.subtle.digest('SHA-256', bytes);
-      const hashFull = Array.from(new Uint8Array(hashBuf))
-        .map(b=>b.toString(16).padStart(2,'0')).join('');
-      if (hashFull === allowedMelodyHash) {
-        document.getElementById('melody-lock').style.display = 'none';
-        document.getElementById('admin-container').style.display = 'block';
-        // The console exists to read one key at a time: opening it loads the key
-        // already in the box instead of asking for the same click again.
+        const data = await adminFetch('/api/admin/unlock', { method: 'POST' });
+        sessionStorage.setItem('mind-admin-key', adminKey);
+        const stores = data.stores && data.stores.length ? data.stores : ['MEM'];
+        keyStoreEl.innerHTML = '';
+        for (const name of stores) {
+          const option = document.createElement('option');
+          option.value = name;
+          option.textContent = name;
+          keyStoreEl.appendChild(option);
+        }
+        gateEl.style.display = 'none';
+        containerEl.style.display = 'block';
+        adminStatus.textContent = '';
+        // Opening the console should show the store, not an empty box, and the
+        // editor's key should already be loaded.
+        clearRows();
+        loadAll();
         if (document.getElementById('query').value.trim()) {
           document.getElementById('loadBtn').click();
         }
-      } else {
-        document.getElementById('melody-status').textContent = 'Incorrect melody, try again.';
+      } catch (err) {
+        adminKey = '';
+        sessionStorage.removeItem('mind-admin-key');
+        say(adminStatus, 'Locked: ' + err.message, true);
       }
-    };
+    }
 
-    document.getElementById('importMelodyBtn').onclick = () => {
-      const pat = document.getElementById('importMelodyInput').value.trim();
-      if (!pat) return;
-      melody = pat.split('-').map(x=>parseInt(x, 36)).filter(x=>!isNaN(x));
-      updateMelodyBar();
-      document.getElementById('melody-status').textContent = '';
-    };
+    function clearRows() {
+      storeRows = [];
+      keysBody.innerHTML = '';
+      say(keysStatus, 'Nothing loaded yet — press Load all.');
+    }
 
-    renderPiano();
+    async function loadAll() {
+      if (scanning || !adminKey) return;
+      const store = keyStoreEl.value || 'MEM';
+      scanning = true;
+      if (!loaded[store]) loaded[store] = { cursor: undefined, done: false, seen: new Set() };
+      const state = loaded[store];
+      say(keysStatus, 'Loading ' + store + '…');
+      try {
+        while (scanning && !state.done) {
+          const params = new URLSearchParams({ store: store, limit: '200' });
+          if (state.cursor) params.set('cursor', state.cursor);
+          const data = await adminFetch('/api/admin/keys?' + params.toString());
+          for (const row of data.rows) storeRows.push(row);
+          renderRows();
+          const mine = storeRows.filter((row) => row.store === store).length;
+          say(keysStatus, mine + ' keys loaded from ' + store + '…');
+          if (data.cursor) {
+            // A cursor that repeats would loop forever; a store that keeps handing
+            // one back is treated as finished.
+            if (state.seen.has(data.cursor)) { state.done = true; break; }
+            state.seen.add(data.cursor);
+            state.cursor = data.cursor;
+          } else {
+            state.done = true;
+          }
+        }
+        if (state.done) {
+          const mine = storeRows.filter((row) => row.store === store).length;
+          say(keysStatus, mine + ' keys in ' + store + ' — all loaded.');
+        }
+      } catch (err) {
+        say(keysStatus, 'Stopped: ' + err.message, true);
+      } finally {
+        scanning = false;
+      }
+    }
+
+    function sortValue(row, sort) {
+      if (sort === 'question') return (row.question || '').toLowerCase();
+      if (sort === 'length') return row.chars;
+      if (sort === 'kind') return (row.kind || '') + '\u0000' + row.key;
+      if (sort === 'saved') return row.saved || '';
+      return row.key;
+    }
+
+    function visibleRows() {
+      const needle = (searchInput.value || '').trim().toLowerCase();
+      const sort = sortSelect.value;
+      const filtered = needle
+        ? storeRows.filter((row) => (row.key + ' ' + row.question + ' ' + row.preview).toLowerCase().includes(needle))
+        : storeRows.slice();
+      filtered.sort((a, b) => {
+        const av = sortValue(a, sort);
+        const bv = sortValue(b, sort);
+        if (sort === 'saved') return String(bv).localeCompare(String(av));
+        if (typeof av === 'number' && typeof bv === 'number') return av - bv || a.key.localeCompare(b.key);
+        return String(av).localeCompare(String(bv));
+      });
+      return filtered;
+    }
+
+    const RENDER_LIMIT = 500;
+
+    function renderRows() {
+      const visible = visibleRows();
+      const frag = document.createDocumentFragment();
+      for (const row of visible.slice(0, RENDER_LIMIT)) {
+        const tr = document.createElement('tr');
+        tr.title = row.store + ' · ' + row.key;
+        const cells = [
+          ['k-key', row.key],
+          ['', row.question],
+          ['k-answer', row.preview],
+          ['k-num', String(row.chars)],
+          ['k-kind', row.kind],
+        ];
+        for (const [cls, text] of cells) {
+          const td = document.createElement('td');
+          if (cls) td.className = cls;
+          td.textContent = text == null ? '' : String(text);
+          tr.appendChild(td);
+        }
+        tr.onclick = () => openRow(row);
+        frag.appendChild(tr);
+      }
+      keysBody.innerHTML = '';
+      if (!visible.length) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 5;
+        td.className = 'keys-empty';
+        td.textContent = storeRows.length ? 'Nothing matches that filter.' : 'Nothing loaded yet — press Load all.';
+        tr.appendChild(td);
+        frag.appendChild(tr);
+      }
+      keysBody.appendChild(frag);
+      if (visible.length > RENDER_LIMIT) {
+        say(keysStatus, 'Showing the first ' + RENDER_LIMIT + ' of ' + visible.length + ' — filter to narrow it.');
+      }
+    }
+
+    async function openRow(row) {
+      document.getElementById('query').value = row.question || row.key;
+      say(document.getElementById('loadMsg'), 'Opening ' + row.key + ' (' + row.store + ')…');
+      try {
+        const data = await adminFetch('/api/admin/key?store=' + encodeURIComponent(row.store) + '&name=' + encodeURIComponent(row.key));
+        const value = data.value;
+        let text;
+        if (typeof value === 'string') text = value;
+        else text = (value && (value.answer || value.html || value.content || value.text || value.response)) || data.raw;
+        answerInput.value = typeof text === 'string' ? text : data.raw;
+        answerInput.dispatchEvent(new Event('input'));
+        // A master record is saved back to master; everything else is saved the
+        // way this console always has, through the provisional route.
+        currentLayer = row.kind === 'master' ? 'master' : null;
+        currentId = typeof value === 'object' && value ? (value.id || null) : null;
+        say(
+          document.getElementById('loadMsg'),
+          'Loaded ' + row.key + ' from ' + row.store + ' (' + data.chars + ' chars)' + (data.truncated ? ' — truncated' : ''),
+        );
+      } catch (err) {
+        say(document.getElementById('loadMsg'), 'Could not open ' + row.key + ': ' + err.message, true);
+      }
+    }
+
+    document.getElementById('adminUnlockBtn').onclick = unlock;
+    keyInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') unlock(); });
+    document.getElementById('adminForgetBtn').onclick = () => {
+      sessionStorage.removeItem('mind-admin-key');
+      adminKey = '';
+      clearRows();
+      containerEl.style.display = 'none';
+      gateEl.style.display = 'block';
+      say(adminStatus, 'Key forgotten.', false);
+    };
+    document.getElementById('keysLoadAll').onclick = loadAll;
+    document.getElementById('keysStop').onclick = () => { scanning = false; };
+    document.getElementById('keysExport').onclick = () => {
+      if (!storeRows.length) { say(keysStatus, 'Nothing loaded to export.', true); return; }
+      const blob = new Blob([JSON.stringify(storeRows, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'mind-store.json';
+      link.click();
+      URL.revokeObjectURL(url);
+      say(keysStatus, 'Exported ' + storeRows.length + ' rows as JSON.');
+    };
+    searchInput.addEventListener('input', renderRows);
+    sortSelect.addEventListener('change', renderRows);
+    keyStoreEl.addEventListener('change', () => { clearRows(); loadAll(); });
+    if (adminKey) { keyInput.value = adminKey; unlock(); }
+
 
     // ========= Preview / Theme =========
     function setMode(mode) {
@@ -699,10 +887,12 @@
 
     answerInput.addEventListener('input', () => {
       const content = answerInput.value || '';
-      previewDiv.innerHTML = marked.parse(content);
-      document.querySelectorAll('#preview pre code').forEach(block => {
-        hljs.highlightElement(block);
-      });
+      renderPreview(content);
+      if (window.hljs) {
+        document.querySelectorAll('#preview pre code').forEach(block => {
+          hljs.highlightElement(block);
+        });
+      }
       const charCount = content.length;
       const contentLengthDiv = document.getElementById('contentLength');
       contentLengthDiv.textContent = `Character count: ${charCount}`;

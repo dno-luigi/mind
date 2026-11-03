@@ -1095,22 +1095,182 @@ test('a generated answer is stored as a candidate', async () => {
   assert.equal(list[0].answer, 'Hello world');
 });
 
-test('the admin is gone: nothing over HTTP writes a truth', async () => {
-  const env = makeEnv({ MEM: kvStore().kv, ADMIN_KEY: 'was-once-set' });
-  const headers = { 'x-admin-key': 'was-once-set' };
+const ADMIN_KEY = 'console-secret';
+const adminHeaders = { 'x-admin-key': ADMIN_KEY };
 
-  for (const [path, method] of [
-    ['/api/admin/unlock', 'POST'],
-    ['/api/truth/candidates', 'GET'],
-    ['/api/truth/resolve', 'POST'],
-    ['/api/truth/save', 'POST'],
-  ]) {
-    const res = await call(env, path, { method, headers });
-    assert.equal(res.status, 404, `${method} ${path} must not exist`);
+function pagedKv(entries, pageSize = 2) {
+  const store = new Map(entries);
+  return {
+    store,
+    kv: {
+      async get(key) { return store.get(key) ?? null; },
+      async put(key, value) { store.set(key, value); },
+      async delete(key) { store.delete(key); },
+      async list({ prefix = '', limit = 1000, cursor } = {}) {
+        const all = [...store.keys()].filter((k) => k.startsWith(prefix));
+        const start = Number.parseInt(cursor || '0', 10) || 0;
+        const size = Math.min(limit, pageSize);
+        const keys = all.slice(start, start + size).map((name) => ({ name }));
+        const next = start + size;
+        return next < all.length
+          ? { keys, list_complete: false, cursor: String(next) }
+          : { keys, list_complete: true };
+      },
+    },
+  };
+}
+
+const ADMIN_ROUTES = [
+  ['/api/admin/unlock', 'POST'],
+  ['/api/admin/keys', 'GET'],
+  ['/api/admin/key?name=x', 'GET'],
+];
+
+test('the console is locked without ADMIN_KEY', async () => {
+  const { kv } = kvStore();
+
+  // Unset fails closed: the console would otherwise hand out the whole store.
+  const unset = makeEnv({ MEM: kv });
+  for (const [path, method] of ADMIN_ROUTES) {
+    const res = await call(unset, path, { method, headers: adminHeaders });
+    assert.equal(res.status, 503, method + ' ' + path + ' must fail closed');
+    assert.equal((await res.json()).error.code, 'admin_key_unset');
+  }
+
+  const env = makeEnv({ MEM: kv, ADMIN_KEY });
+  for (const [path, method] of ADMIN_ROUTES) {
+    const anon = await call(env, path, { method });
+    assert.equal(anon.status, 401, method + ' ' + path + ' must need the key');
+    assert.equal((await anon.json()).error.code, 'admin_key_required');
+
+    const wrong = await call(env, path, { method, headers: { 'x-admin-key': 'not-the-key' } });
+    assert.equal(wrong.status, 401);
   }
 });
 
-test('candidates keep accumulating with no admin route at all', async () => {
+test('the key unlocks the console and names the stores', async () => {
+  const env = makeEnv({ MEM: kvStore().kv, MASTER: kvStore().kv, ADMIN_KEY });
+
+  const res = await call(env, '/api/admin/unlock', { method: 'POST', headers: adminHeaders });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(body.stores, ['MASTER', 'MEM']);
+  assert.equal(body.limit, 200);
+
+  // Only MEM bound is still one store, not the same one listed twice.
+  const single = await (
+    await call(makeEnv({ MEM: kvStore().kv, ADMIN_KEY }), '/api/admin/unlock', { method: 'POST', headers: adminHeaders })
+  ).json();
+  assert.deepEqual(single.stores, ['MEM']);
+
+  const bearer = await call(env, '/api/admin/unlock', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + ADMIN_KEY },
+  });
+  assert.equal(bearer.status, 200);
+});
+
+test('the console lists stored pairs with their question and a preview', async () => {
+  const { kv, store } = kvStore();
+  store.set('candidate:abc', JSON.stringify({ query: 'what is a cache', answer: 'A store of answers.', hits: 3 }));
+  store.set('truth:master:def', JSON.stringify({ query: 'who are you', answer: 'mind' }));
+  store.set('settings:engine', JSON.stringify({ cloudflare: false }));
+  const env = makeEnv({ MEM: kv, ADMIN_KEY });
+
+  const res = await call(env, '/api/admin/keys?store=MEM', { method: 'GET', headers: adminHeaders });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.done, true);
+  assert.equal(body.cursor, null);
+  const byKey = Object.fromEntries(body.rows.map((row) => [row.key, row]));
+
+  // A key name alone cannot be curated, so the row carries what it answers.
+  assert.equal(byKey['candidate:abc'].question, 'what is a cache');
+  assert.equal(byKey['candidate:abc'].preview, 'A store of answers.');
+  assert.equal(byKey['candidate:abc'].kind, 'candidate');
+  assert.equal(byKey['candidate:abc'].chars, 'A store of answers.'.length);
+  assert.equal(byKey['candidate:abc'].hits, 3);
+  assert.equal(byKey['truth:master:def'].kind, 'master');
+  // A record with no answer field still lists, by its own key.
+  assert.equal(byKey['settings:engine'].question, 'settings:engine');
+  assert.equal(byKey['settings:engine'].chars, 0);
+
+  const filtered = await (
+    await call(env, '/api/admin/keys?store=MEM&q=candidate', { headers: adminHeaders })
+  ).json();
+  assert.equal(filtered.rows.length, 1);
+  assert.equal(filtered.rows[0].key, 'candidate:abc');
+
+  const unknown = await call(env, '/api/admin/keys?store=NOPE', { headers: adminHeaders });
+  assert.equal(unknown.status, 404);
+});
+
+test('the console reads one key in full', async () => {
+  const { kv, store } = kvStore();
+  const raw = JSON.stringify({ query: 'who are you', answer: 'mind', citations: [] });
+  store.set('truth:master:def', raw);
+  const env = makeEnv({ MEM: kv, ADMIN_KEY });
+
+  const res = await call(env, '/api/admin/key?store=MEM&name=truth%3Amaster%3Adef', {
+    headers: adminHeaders,
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.value.answer, 'mind');
+  assert.match(body.raw, /who are you/);
+  assert.equal(body.chars, raw.length);
+  assert.equal(body.truncated, false);
+
+  assert.equal((await call(env, '/api/admin/key?store=MEM&name=nope', { headers: adminHeaders })).status, 404);
+  assert.equal((await call(env, '/api/admin/key?store=MEM', { headers: adminHeaders })).status, 400);
+});
+
+test('the console pages through a store larger than one page', async () => {
+  const entries = Array.from({ length: 5 }, (_, i) => [
+    'candidate:k' + i,
+    JSON.stringify({ query: 'q' + i, answer: 'a' + i }),
+  ]);
+  const { kv } = pagedKv(entries, 2);
+  const env = makeEnv({ MEM: kv, ADMIN_KEY });
+
+  const seen = new Set();
+  let cursor = null;
+  let pages = 0;
+  do {
+    const qs = 'store=MEM&limit=2' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : '');
+    const res = await call(env, '/api/admin/keys?' + qs, { headers: adminHeaders });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    for (const row of body.rows) {
+      assert.ok(!seen.has(row.key), row.key + ' must not repeat across pages');
+      seen.add(row.key);
+    }
+    cursor = body.cursor;
+    pages += 1;
+    if (body.done) break;
+    assert.ok(cursor, 'a page that is not done names the next cursor');
+    assert.ok(pages < 10, 'paging must terminate');
+  } while (true);
+
+  assert.equal(seen.size, 5);
+  assert.equal(pages, 3);
+});
+
+test('nothing over HTTP can still write a truth', async () => {
+  const env = makeEnv({ MEM: kvStore().kv, ADMIN_KEY });
+  for (const [path, method] of [
+    ['/api/truth/save', 'POST'],
+    ['/api/truth/candidates', 'GET'],
+    ['/api/truth/resolve', 'POST'],
+    ['/api/admin/save', 'POST'],
+    ['/api/admin/put', 'POST'],
+  ]) {
+    const res = await call(env, path, { method, headers: adminHeaders });
+    assert.equal(res.status, 404, method + ' ' + path + ' must not exist');
+  }
+});
+
+test('candidates keep accumulating with no write route at all', async () => {
   const { kv } = kvStore();
   const env = makeEnv({ MEM: kv });
 
