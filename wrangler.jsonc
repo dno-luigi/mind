@@ -54,10 +54,9 @@
     }
   ],
 
-  "vars": {
-    // Neurons per IP per UTC day across chat + stt + tts (free allowance is 10000).
-    "DAILY_NEURONS": "8000",
-    "OPENROUTER_MODEL": "google/gemini-2.5-flash",
-    "OPENROUTER_STT_MODEL": "openai/whisper-large-v3"
-  }
+  // Empty to match the deployed Worker. Every value this block used to carry is
+  // also the code default — 8000 neurons/IP/day in budget.js, gemini-2.5-flash
+  // and whisper-large-v3 in providers/openrouter.js — so nothing changes, and
+  // the dashboard stops reporting drift on each deploy.
+  "vars": {}
 }
