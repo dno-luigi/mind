@@ -4,11 +4,11 @@ import assert from 'node:assert/strict';
 import worker from './src/index.js';
 import { wrapWav, wavInfo, wavChunks } from './src/audio.js';
 import { _resetBudget } from './src/budget.js';
-import { LADDER } from './src/decide.js';
+import { LADDER, within } from './src/decide.js';
 import { upsertBody, upsertPath, syncPlan } from './src/preset-sync.js';
 import { PRESETS, findPreset } from './src/presets.js';
 import { stateKv, objects, bindingReport } from './src/bindings.js';
-import { upstreamError } from './src/normalize.js';
+import { upstreamError, sseData } from './src/normalize.js';
 
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 
@@ -674,4 +674,29 @@ test('the worker serves static assets when it has no API route', async () => {
   const env = makeEnv({ ASSETS: { fetch: async () => new Response('<h1>ai-Ncards</h1>') } });
   const res = await worker.fetch(new Request('https://example.com/'), env, ctx);
   assert.equal(await res.text(), '<h1>ai-Ncards</h1>');
+});
+
+// A stalled engine must fail as a named timeout, not as an empty card after a minute.
+test('a stalled upstream stream is reported as a timeout', async () => {
+  const stalled = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"response":"Hi"}\n\n'));
+      // Deliberately never closes: this is the shape of a hung model.
+    },
+  });
+
+  const seen = [];
+  await assert.rejects(async () => {
+    for await (const data of sseData(stalled, { timeoutMs: 30 })) seen.push(data);
+  }, /stalled/i);
+
+  assert.deepEqual(seen, ['{"response":"Hi"}']);
+});
+
+test('within rejects anything that never settles', async () => {
+  await assert.rejects(() => within(20, 'some-model', () => new Promise(() => {})), /timed out after/);
+});
+
+test('within leaves a slow call that finishes in time alone', async () => {
+  assert.equal(await within(200, 'some-model', async () => 'ok'), 'ok');
 });

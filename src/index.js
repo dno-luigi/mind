@@ -4,7 +4,7 @@ import { stateKv, objects, bindingReport } from './bindings.js';
 import { publicPresets, findPreset, openRouterBackedPresets, DEFAULT_PRESET } from './presets.js';
 import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
-import { decide, recordReview } from './decide.js';
+import { decide, recordReview, within } from './decide.js';
 import { wavInfo, wavChunks } from './audio.js';
 import { DONE, delta, errorEvent, meta, sseData, upstreamError, fromOpenRouterChat, fromWorkersAI } from './normalize.js';
 
@@ -38,6 +38,14 @@ const MAX_MESSAGES_CHARS = 200000;
 const MAX_IMAGES = 4;
 const MAX_AUDIO_BYTES = 12 * 1024 * 1024;
 const MAX_TTS_CHARS = 2000;
+
+/**
+ * An idle budget, restarted on every chunk: a slow but flowing answer survives,
+ * a dead one becomes an error naming the model instead of a 58-second silence.
+ */
+const STREAM_IDLE_MS = 15000;
+/** How long opening a connection — not answering — may take. */
+const UPSTREAM_OPEN_MS = 20000;
 
 export default {
   async fetch(request, env, ctx = {}) {
@@ -179,13 +187,15 @@ async function openUpstream(env, { messages, images, preset, decision, explicit 
   if (has(env, 'AI')) {
     const model = pickCfModel(preset, images, { decision, explicit });
     try {
-      const stream = await cf.streamChat(env, {
-        model,
-        messages,
-        images,
-        temperature: preset?.temperature,
-        maxTokens: budgetFor(preset, decision, explicit),
-      });
+      const stream = await within(UPSTREAM_OPEN_MS, `workers-ai ${model}`, () =>
+        cf.streamChat(env, {
+          model,
+          messages,
+          images,
+          temperature: preset?.temperature,
+          maxTokens: budgetFor(preset, decision, explicit),
+        }),
+      );
       return { route: 'workers-ai', model, stream, extract: fromWorkersAI };
     } catch (err) {
       failures.push(`workers-ai: ${err?.message || err}`);
@@ -204,12 +214,14 @@ async function openUpstream(env, { messages, images, preset, decision, explicit 
         ? { ...message, content: or.withImages(message.content, images) }
         : message,
     );
-    const res = await or.chat(env, {
-      model,
-      messages: payload,
-      temperature: usesPreset ? undefined : preset?.temperature,
-      maxTokens: usesPreset ? undefined : preset?.maxTokens,
-    });
+    const res = await within(UPSTREAM_OPEN_MS, `openrouter ${model}`, () =>
+      or.chat(env, {
+        model,
+        messages: payload,
+        temperature: usesPreset ? undefined : preset?.temperature,
+        maxTokens: usesPreset ? undefined : preset?.maxTokens,
+      }),
+    );
     return { route: 'openrouter', model, stream: res.body, extract: fromOpenRouterChat };
   }
 
@@ -312,7 +324,7 @@ async function chat(request, env, ctx) {
       explicit: pinned,
     });
     let text = '';
-    for await (const data of sseData(stream)) {
+    for await (const data of sseData(stream, { timeoutMs: STREAM_IDLE_MS })) {
       const problem = upstreamError(data);
       if (problem) throw explain(problem);
       text += extract(data);
@@ -320,13 +332,15 @@ async function chat(request, env, ctx) {
     // An empty answer is not a valid answer. Retry once without streaming so a
     // shape mismatch reads as recovered text instead of a blank card.
     if (!text && route === 'workers-ai') {
-      text = await cf.chat(env, {
-        model,
-        messages: system,
-        images,
-        temperature: preset?.temperature,
-        maxTokens: budgetFor(preset, reported, pinned),
-      });
+      text = await within(UPSTREAM_OPEN_MS, `workers-ai ${model}`, () =>
+        cf.chat(env, {
+          model,
+          messages: system,
+          images,
+          temperature: preset?.temperature,
+          maxTokens: budgetFor(preset, reported, pinned),
+        }),
+      );
     }
     if (!text) return fail(502, 'empty_upstream', `${route} (${model}) returned no text.`);
     await recordReview(env, ctx, reviewOf({ preset, decision: reported, route, model, lastUser, text }));
@@ -349,7 +363,7 @@ async function chat(request, env, ctx) {
       let answer = '';
       try {
         send(meta({ route, model, preset: preset?.id, decision: reported }));
-        for await (const data of sseData(stream)) {
+        for await (const data of sseData(stream, { timeoutMs: STREAM_IDLE_MS })) {
           const problem = upstreamError(data);
           if (problem) throw explain(problem);
           const text = extract(data);
@@ -360,13 +374,15 @@ async function chat(request, env, ctx) {
           }
         }
         if (!emitted && route === 'workers-ai') {
-          const text = await cf.chat(env, {
-            model,
-            messages: system,
-            images,
-            temperature: preset?.temperature,
-            maxTokens: budgetFor(preset, reported, pinned),
-          });
+          const text = await within(UPSTREAM_OPEN_MS, `workers-ai ${model}`, () =>
+            cf.chat(env, {
+              model,
+              messages: system,
+              images,
+              temperature: preset?.temperature,
+              maxTokens: budgetFor(preset, reported, pinned),
+            }),
+          );
           if (text) {
             answer += text;
             send(delta(text));

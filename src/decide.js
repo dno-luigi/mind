@@ -28,6 +28,27 @@ const BROWSE_WORTHY = new Set(['extract', 'compare']);
 
 const REVIEW_TTL = 60 * 60 * 24 * 30;
 
+/** A rung that never answers is a failed rung; escalating is cheaper than waiting. */
+const RUNG_TIMEOUT_MS = 5000;
+const BROWSE_TIMEOUT_MS = 4000;
+
+/**
+ * Bound any upstream call. Without this a stalled engine holds the whole request
+ * open — the client sees a spinner, then a blank card, and never learns why.
+ */
+export function within(ms, label, run) {
+  let timer;
+  const expiry = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`${label} timed out after ${Math.round(ms / 1000)}s`);
+      err.code = 'upstream_timeout';
+      err.status = 504;
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([run(), expiry]).finally(() => clearTimeout(timer));
+}
+
 function budgetState(messages, context) {
   const budget = Math.floor(context * SAFETY * CHARS_PER_TOKEN);
   const joined = messages
@@ -82,7 +103,7 @@ async function intentFor(env, { messages, images, presetId }) {
       // clef reads images itself, but only as data URIs, never remote URLs.
       if (images.length) payload.images = images.slice(0, 4);
 
-      const out = await env.AI.run(rung.id, payload);
+      const out = await within(RUNG_TIMEOUT_MS, rung.model, () => env.AI.run(rung.id, payload));
       const parsed = parseDecision(out);
       if (parsed) return { ...fallback, ...parsed, source: rung.model };
     } catch {
@@ -103,12 +124,14 @@ async function browseFor(env, { intent, query }) {
   if (!BROWSE_WORTHY.has(intent.task) && intent.depth !== 'deep') return { skipped: true };
 
   try {
-    const res = await binding.fetch(
-      new Request('https://agent-browsing/', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ task: intent.task, query: String(query || '').slice(0, 2000) }),
-      }),
+    const res = await within(BROWSE_TIMEOUT_MS, 'agent-browsing', () =>
+      binding.fetch(
+        new Request('https://agent-browsing/', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ task: intent.task, query: String(query || '').slice(0, 2000) }),
+        }),
+      ),
     );
     if (!res.ok) return { ok: false, status: res.status };
     return { ok: true, text: (await res.text()).slice(0, 4000) };

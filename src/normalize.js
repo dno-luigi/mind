@@ -14,16 +14,36 @@ export const delta = (text) => (text ? event({ type: 'delta', text }) : '');
 
 export const errorEvent = (code, message) => event({ type: 'error', error: { code, message } });
 
-/** Iterate the `data:` payloads of an SSE stream, whatever produced them. */
-export async function* sseData(stream) {
+/**
+ * Iterate the `data:` payloads of an SSE stream, whatever produced them.
+ *
+ * `timeoutMs` is an idle budget, restarted on every chunk: a slow but living
+ * stream is never cut off, while a stalled one is cancelled and reported instead
+ * of holding the request open until the platform gives up on it.
+ */
+export async function* sseData(stream, { timeoutMs = 0 } = {}) {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let timer = null;
+  let timedOut = false;
+
+  const arm = () => {
+    if (!timeoutMs) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timedOut = true;
+      // Cancelling resolves the pending read as done, so the loop can exit.
+      reader.cancel().catch(() => {});
+    }, timeoutMs);
+  };
 
   try {
+    arm();
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      arm();
       buffer += decoder.decode(value, { stream: true });
       const frames = buffer.split('\n\n');
       buffer = frames.pop() || '';
@@ -38,8 +58,19 @@ export async function* sseData(stream) {
         if (line.startsWith('data:')) yield line.slice(5).trim();
       }
     }
+    if (timedOut) {
+      const err = new Error(`Upstream stalled: no data for ${Math.round(timeoutMs / 1000)}s.`);
+      err.code = 'upstream_timeout';
+      err.status = 504;
+      throw err;
+    }
   } finally {
-    reader.releaseLock?.();
+    if (timer) clearTimeout(timer);
+    try {
+      reader.releaseLock?.();
+    } catch {
+      /* the stream may already be cancelled */
+    }
   }
 }
 
