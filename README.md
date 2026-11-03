@@ -163,7 +163,8 @@ so nothing has to be retyped to promote it. The key is a blunt normalization of
 the query — lower case, collapsed spacing, trailing punctuation removed — because
 a fuzzy match would promote the wrong answer.
 
-The console is `public/admin.html`, served at `/admin.html`. It is gated by the
+The console is `public/admin.html`, served at `/admin` (the assets layer
+redirects `/admin.html` to it). It is gated by the
 `ADMIN_KEY` secret: the page asks for the key, keeps it in `sessionStorage` for the
 tab, and sends it as `x-admin-key` (or as a bearer token). With `ADMIN_KEY` unset
 every console route answers `503 admin_key_unset`; a wrong key is `401
