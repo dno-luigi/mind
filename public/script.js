@@ -106,6 +106,7 @@ class App {
         // makes it read like a reply instead of appearing all at once.
         this.reveal = null;
         this.revealTimer = null;
+        this.pendingFinalize = null;
     }
 
     loadPresets() {
@@ -1274,6 +1275,16 @@ class App {
             }
             if (reveal.shown >= reveal.target.length) {
                 clearInterval(this.revealTimer);
+                reveal.done = true;
+                // A finalise that arrived mid-reveal is applied now, so the exact
+                // text lands on the frame after the last one, not on top of it.
+                const pending = this.pendingFinalize;
+                this.pendingFinalize = null;
+                if (pending) {
+                    this.applyFinalResponse(pending.fullText);
+                } else {
+                    this.reveal = null;
+                }
                 return;
             }
 
@@ -1292,6 +1303,7 @@ class App {
         // The first event of a cached answer carries the whole reply. Start a
         // reveal and let later events retarget it instead of jumping.
         if (replace && visible.length > 160) {
+            this.pendingFinalize = null;
             this.reveal = { target: visible, shown: 0 };
             this.runReveal();
             return;
@@ -1330,6 +1342,21 @@ class App {
     }
 
     finalizeResponse(fullText) {
+        const id = this.streamingId;
+        if (!id) return;
+
+        // A cached answer is complete in one delta, so this lands in the same tick
+        // the reveal starts. Defer it: finalising now would erase the animation
+        // before a single frame of it is seen, which is exactly what happened.
+        if (this.reveal && !this.reveal.done) {
+            this.pendingFinalize = { fullText };
+            return;
+        }
+
+        this.applyFinalResponse(fullText);
+    }
+
+    applyFinalResponse(fullText) {
         const id = this.streamingId;
         if (!id) return;
 
