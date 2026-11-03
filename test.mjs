@@ -854,6 +854,81 @@ test('truth resolves master, then provisional, then the candidate', async () => 
   assert.equal(hit.answer, 'master answer');
 });
 
+test('a pair stored under an opaque key name is found by that name', async () => {
+  const { store, kv } = kvStore();
+  const env = { MEM: kv };
+  store.set('ranger1189', JSON.stringify({ query: 'ranger1189', answer: 'curated' }));
+
+  const hit = await resolveTruth(env, 'ranger1189');
+  assert.equal(hit.layer, 'master');
+  assert.equal(hit.answer, 'curated');
+});
+
+test('a stored pair in another key shape and another field is still read', async () => {
+  const { store, kv } = kvStore();
+  const env = { MEM: kv };
+  store.set('truth:master:what is truth', JSON.stringify({ html: '<p>hand written</p>' }));
+
+  const hit = await resolveTruth(env, 'What is truth?');
+  assert.equal(hit.layer, 'master');
+  assert.equal(hit.answer, '<p>hand written</p>');
+});
+
+test('a second opinion never replaces the stored answer and is reported', async () => {
+  const { kv } = kvStore();
+  const notices = [];
+  const waits = [];
+  const env = {
+    MEM: kv,
+    ALERTS: {
+      async fetch(request) {
+        notices.push(await request.json());
+        return { ok: true };
+      },
+    },
+  };
+  const waiter = { waitUntil(promise) { waits.push(promise); } };
+
+  await recordCandidate(env, { input: 'what is truth', answer: 'first' }, waiter);
+  const second = await recordCandidate(env, { input: 'what is truth', answer: 'second' }, waiter);
+  await Promise.all(waits);
+
+  assert.equal(second.answer, 'first');
+  assert.equal(second.hits, 2);
+  assert.equal(second.alternatives.length, 1);
+  assert.equal(second.alternatives[0].answer, 'second');
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].type, 'candidate_divergence');
+  assert.equal(notices[0].existing, 'first');
+});
+
+test('promotion reports a clash instead of overwriting a truth', async () => {
+  const { kv } = kvStore();
+  const notices = [];
+  const waits = [];
+  const env = {
+    MEM: kv,
+    ALERTS: {
+      async fetch(request) {
+        notices.push(await request.json());
+        return { ok: true };
+      },
+    },
+  };
+  const waiter = { waitUntil(promise) { waits.push(promise); } };
+
+  const first = await promote(env, { input: 'who are you', answer: 'mind' }, waiter);
+  const second = await promote(env, { input: 'who are you', answer: 'not mind' }, waiter);
+  await Promise.all(waits);
+
+  assert.equal(first.saved, true);
+  assert.equal(second.saved, false);
+  assert.equal(second.conflict, true);
+  assert.equal((await resolveTruth(env, 'who are you')).answer, 'mind');
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].type, 'promote_conflict');
+});
+
 test('a promoted truth answers the chat without calling a model', async () => {
   const { kv } = kvStore();
   let calls = 0;

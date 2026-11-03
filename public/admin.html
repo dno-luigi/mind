@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Truth Engine Admin Console - Creator Edition</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+   <style>
+    /* --- MODE VARIABLES (Adapted from stable.html) --- */
+    :root {
+      /* Base Admin Theme (Default: Silvery/Light for the Admin UI) */
+      --admin-bg: linear-gradient(135deg, #11192e 0%, #212d46 100%);
+      --admin-text: white;
+      --admin-input-bg: #17223a;
+      --admin-input-color: #e5f7ff;
+
+      /* Truth Engine Output Theme Variables (for Preview) */
+      --output-bg-color: #f8f8ff; /* Silvery Default */
+      --output-text-color: #1a1a1a;
+      --output-secondary-text: #6c757d;
+      --output-accent-color: #1a2a3a;
+
+      /* Existing Melody/Admin Controls */
+      --truth-black: #010b14;
+      --truth-dark: #0a1723;
+      --truth-accent: #0055ff;
+      --truth-accent-light: #0cf;
+      --truth-highlight: #5a8bff;
+      --truth-positive: #00ff8c;
+      --truth-warning: #ff5050;
+      --truth-border: rgba(0, 71, 171, 0.5);
+      --glass-blur: blur(16px);
+      --glass-alpha: 0.62;
+      --melody-note: #00eaff;
+      --melody-note-active: #ffe600;
+
+      /* NEW BLOCK STYLES (Adapted) */
+      --block-source-bg: rgba(26, 42, 58, 0.5);
+      --block-memo-bg: rgba(0, 71, 171, 0.2);
+      --block-blueprint-bg: rgba(0, 255, 136, 0.1);
+      --block-logic-bg: #111b2c;
+      --block-spy-ink-bg: #000000;
+      --block-text-normal: #e5f7ff;
+    }
+
+    /* OUTPUT THEME MODES */
+    [data-output-mode="dark"] {
+        --output-bg-color: #1a1a1a;
+        --output-text-color: #f0f0f0;
+        --output-secondary-text: #9fa8da;
+        --output-accent-color: #c7a17a;
+    }
+    [data-output-mode="neo"] {
+        --output-bg-color: #000000;
+        --output-text-color: #00FF00;
+        --output-secondary-text: #00AA00;
+        --output-accent-color: #00FF00;
+    }
+
+    /* --- BASE STYLES --- */
+    html,body {
+      background: var(--admin-bg);
+      min-height: 100vh;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'Segoe UI', Roboto, Arial, sans-serif;
+      color: var(--admin-text);
+      min-height: 100vh;
+    }
+    .glasscard {
+      background: rgba(10,23,35,var(--glass-alpha));
+      border-radius: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.20), 0 1.5px 8px 0 #0032aa33;
+      backdrop-filter: var(--glass-blur);
+      padding: 35px 18px 30px 18px;
+      margin: 40px auto 24px auto;
+      max-width: 480px;
+      text-align: center;
+      border: 1px solid var(--truth-border);
+      animation: fadein 0.9s cubic-bezier(.2,1.1,.6,.98);
+    }
+    @keyframes fadein {
+      from { opacity: 0; transform: translateY(32px);}
+      to { opacity: 1; transform: translateY(0);}
+    }
+    .glasscard h2 {
+      margin-top: 0;
+      color: var(--truth-accent);
+      font-weight: 700;
+      font-size: 1.65em;
+      letter-spacing: 0.04em;
+    }
+    .melody-instructions {
+      background: rgba(0,90,255,0.09);
+      color: #afe9ff;
+      font-size: 1.08em;
+      border-radius: 7px;
+      padding: 10px 14px;
+      margin-bottom: 16px;
+      margin-top: 10px;
+      border-left: 4px solid var(--truth-accent-light);
+      text-align: left;
+      max-width: 420px;
+      margin-left: auto; margin-right: auto;
+    }
+    #melody-piano {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin: 16px 0 7px 0;
+      flex-wrap: wrap;
+    }
+    .melody-key {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      background: linear-gradient(145deg,#eaf6ff 70%,#b4e2fa 100%);
+      box-shadow: 0 2px 8px #0032a922;
+      border: 2.3px solid #3377ff;
+      color: #222;
+      font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.13em;
+      cursor: pointer;
+      transition: background 0.16s, box-shadow 0.09s, transform 0.08s;
+      user-select: none;
+      margin: 0 2px;
+    }
+    .melody-key.active, .melody-key:active {
+      background: var(--melody-note-active);
+      box-shadow: 0 0 0 3px #0055ff44;
+      color: #0055ff;
+      transform: scale(1.08);
+    }
+    #melody-bar {
+      margin: 10px 0 10px 0;
+      min-height: 22px;
+    }
+    .melody-pill {
+      display: inline-block;
+      background: var(--melody-note);
+      color: #014;
+      font-weight: 700;
+      font-size: 1em;
+      padding: 3px 10px;
+      border-radius: 18px;
+      margin: 0 2px;
+      margin-bottom: 2px;
+      box-shadow: 0 1px 5px #00eaff33;
+      transition: background 0.15s;
+    }
+    .import-group {
+      margin: 0.8em 0 0.5em 0;
+    }
+    .import-group input[type="text"] {
+      width: 140px;
+      font-size: 1em;
+      margin-right: 5px;
+      padding: 7px 8px;
+      border-radius: 6px;
+      border: 1.5px solid #00eaff88;
+      outline: none;
+      background: var(--admin-input-bg);
+      color: var(--admin-input-color);
+    }
+    .import-group button {
+      padding: 7px 15px;
+      font-size: 1em;
+      margin-left: 2px;
+      margin-top: 0;
+      border-radius: 6px;
+      background: var(--truth-accent-light);
+      color: #011;
+      border: none;
+      font-weight: 500;
+      transition: background 0.15s;
+    }
+    .import-group button:hover { background: #00aaff; }
+    .melody-btns button {
+      margin-top: 8px;
+      margin-right: 8px;
+      border-radius: 6px;
+      padding: 9px 18px;
+      background: linear-gradient(90deg, #00eaff 0%, #3377ff 100%);
+      color: #011;
+      font-size: 1.09em;
+      font-weight: 500;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 2px 8px #0032aa19;
+      transition: background 0.15s, color 0.09s;
+    }
+    .melody-btns button:last-child { margin-right: 0;}
+    .melody-btns button:hover { background: #00aaff; color: #fff;}
+    #melody-status {
+      font-weight: bold;
+      margin-top: 10px;
+      min-height: 22px;
+      color: var(--truth-warning);
+      letter-spacing: 0.02em;
+    }
+    .admin-container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: rgba(10, 23, 35, 0.90);
+      backdrop-filter: blur(10px);
+      border: 1.5px solid var(--truth-border);
+      border-radius: 18px;
+      box-shadow: 0 10px 32px rgba(0,0,0,0.23);
+      padding: 28px 28px 18px 28px;
+      margin-bottom: 24px;
+      display: none;
+      animation: fadein 0.9s cubic-bezier(.2,1.1,.6,.98);
+    }
+    .admin-container h2 {
+      margin-top: 0;
+      font-size: 1.45em;
+      color: var(--truth-accent-light);
+      letter-spacing: 0.04em;
+    }
+    .tabs {
+      display: none;
+      gap: 10px;
+      margin-bottom: 20px;
+      border-bottom: 2px solid rgba(0, 234, 255, 0.3);
+    }
+    .tab {
+      padding: 10px 20px;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: #88c6ff;
+      border-bottom: 2px solid transparent;
+      transition: all 0.3s ease;
+      font-weight: 500;
+    }
+    .tab.active {
+      color: #00eaff;
+      border-bottom-color: #00eaff;
+    }
+    label {
+      display: block;
+      margin-top: 20px;
+      margin-bottom: 6px;
+      font-weight: 600;
+      color: #88c6ff;
+      font-size: 1.07em;
+      letter-spacing: 0.01em;
+    }
+    input[type="text"], textarea, select {
+      width: 100%;
+      padding: 12px 12px;
+      border: 1.5px solid #3377ff44;
+      border-radius: 7px;
+      background: var(--admin-input-bg);
+      color: var(--admin-input-color);
+      font-size: 1em;
+      box-sizing: border-box;
+      margin-bottom: 3px;
+      outline: none;
+      transition: border 0.15s;
+      font-family: 'Segoe UI', Roboto, Arial, sans-serif;
+    }
+    input[type="text"]:focus, textarea:focus, select:focus {
+      border: 2px solid #00eaff;
+      background: #111b2c;
+    }
+    textarea {
+      min-height: 150px;
+      resize: vertical;
+      transition: min-height 0.3s;
+    }
+    button {
+      margin-top: 16px;
+      background: linear-gradient(90deg,#0055ff 40%,#0cf 100%);
+      color: white;
+      border: none;
+      border-radius: 7px;
+      padding: 11px 28px;
+      font-size: 1em;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 2px 8px #0032aa23;
+      transition: background 0.15s, color 0.09s;
+    }
+    button:hover {
+      background: linear-gradient(90deg,#0cf 40%,#0055ff 100%);
+      color: #fff;
+    }
+    button:disabled {
+      background: #4f545c;
+      cursor: not-allowed;
+    }
+    .button-group {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+    .button-group button {
+      margin-top: 0;
+      flex: 1;
+      min-width: 120px;
+    }
+    .status-message {
+      margin: 15px 0 6px 0;
+      padding: 9px 13px;
+      background: #1c2e4a;
+      border-radius: 5px;
+      color: var(--truth-highlight);
+      font-size: 1.01em;
+      min-height: 20px;
+    }
+
+    /* PREVIEW STYLES (Dynamic Theming) */
+    .preview-wrapper {
+        display: block; /* Default to visible */
+        transition: all 0.3s;
+    }
+    .preview {
+      width: 100%;
+      min-height: 100px;
+      padding: 18px;
+      margin-top: 12px;
+      background: var(--output-bg-color);
+      border: 1.5px solid var(--output-accent-color);
+      border-radius: 9px;
+      color: var(--output-text-color);
+      font-size: 1.09em;
+      overflow-y: auto;
+      box-shadow: 0 2px 13px #001b2a0c;
+      transition: background 0.3s, border-color 0.3s, color 0.3s;
+    }
+    .preview.hidden {
+        display: none;
+    }
+    .content-length {
+      color: var(--truth-highlight);
+      font-size: 0.93em;
+      margin-top: 8px;
+      text-align: right;
+      opacity: 0.75;
+    }
+
+    /* PREVIEW TOGGLE BUTTON */
+    #togglePreviewBtn {
+        background: #4f545c;
+        color: white;
+        margin-top: 0;
+        min-width: unset;
+        flex: 1;
+    }
+    #togglePreviewBtn:hover {
+        background: #677bc4;
+    }
+
+    /* Output Mode Select */
+    .mode-select-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 12px;
+    }
+    .mode-select-row label {
+        margin-top: 0;
+        font-weight: 500;
+        font-size: 1em;
+    }
+
+    .warning {
+      color: var(--truth-warning);
+    }
+    .citations-container {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 10px;
+      margin: 12px 0 0 0;
+    }
+    .admin-footer {
+      text-align: center;
+      margin-top: 35px;
+      color: rgba(255,255,255,0.24);
+      font-size: 12px;
+      letter-spacing: 0.02em;
+    }
+    .creation-helpers-section {
+        background: rgba(0, 90, 255, 0.08);
+        padding: 15px;
+        border-radius: 9px;
+        margin-top: 15px;
+        border-left: 4px solid #00eaff;
+    }
+    .creation-helpers-section h4 {
+        color: #00eaff;
+        margin-top: 0;
+        margin-bottom: 10px;
+        font-weight: 600;
+    }
+    .creation-button-row {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+    }
+    .creation-button-row button {
+        flex: unset;
+        min-width: 0;
+        padding: 7px 12px;
+        font-size: 0.9em;
+        background: #1c2e4a;
+        color: #00eaff;
+        border: 1px solid #00eaff44;
+        transition: background-color 0.1s;
+    }
+    .creation-button-row button:hover {
+        background: #00eaff;
+        color: #1c2e4a;
+    }
+    .module-stack-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-top: 10px;
+    }
+    .module-stack-row select {
+        flex-grow: 1;
+        margin-bottom: 0;
+        min-height: 40px;
+    }
+    .module-stack-row button {
+        margin-top: 0;
+        flex: unset;
+        padding: 10px 18px;
+        background: var(--truth-positive);
+        color: var(--truth-black);
+    }
+    .module-stack-row button:hover {
+        background: #00c46e;
+    }
+    .audit-fields {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-top: 20px;
+        padding-top: 10px;
+        border-top: 1px solid #3377ff44;
+    }
+    .audit-fields input {
+        margin-top: 0;
+    }
+    .audit-fields label {
+        margin-top: 0;
+        font-size: 0.9em;
+        opacity: 0.8;
+    }
+
+    /* MEDIA QUERIES */
+    @media (max-width: 600px) {
+      .glasscard,.admin-container { padding: 12px 4vw 10px 4vw;}
+      #melody-piano { gap: 3px;}
+      .melody-key { width: 37px; height: 37px; font-size: .95em;}
+      .melody-pill { font-size: .92em; padding: 2px 7px;}
+      .admin-container { padding: 9px 2vw 8px 2vw;}
+      .preview { padding: 10px;}
+      .button-group { gap: 5px;}
+      .creation-button-row button { padding: 5px 8px; font-size: 0.8em;}
+      .module-stack-row { flex-direction: column; }
+      .module-stack-row select { width: 100%; }
+      .audit-fields { grid-template-columns: 1fr; }
+    }
+  </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/github-dark.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/highlight.min.js"></script>
+</head>
+<body data-output-mode="silvery">
+  <div class="glasscard" id="melody-lock">
+    <h2>🔒 Admin Melody Lock</h2>
+    <div class="melody-instructions">
+      <b>Step 1:</b> Play your secret melody or paste its pattern.<br>
+      <b>Step 2:</b> Click <b>Unlock Admin</b>.<br>
+      <div style="font-size:0.95em;margin-top:7px;opacity:0.87;">
+        (To share access: use <code>Export Pattern</code> from your melody tool)
+      </div>
+    </div>
+    <div id="melody-piano"></div>
+    <div class="melody-btns">
+      <button id="melody-clear">Clear Melody</button>
+      <button id="melody-unlock">Unlock Admin</button>
+    </div>
+    <div id="melody-bar"></div>
+    <div class="import-group">
+      <input type="text" id="importMelodyInput" placeholder="Pattern e.g. 40-43-45">
+      <button id="importMelodyBtn">Import</button>
+    </div>
+    <div id="melody-status"></div>
+  </div>
+
+  <div class="admin-container" id="admin-container">
+    <h2>Truth Engine Admin Console</h2>
+
+    <div id="editor-tab" class="tab-content active">
+      <label for="query">Query (exact):</label>
+      <input type="text" id="query" placeholder="e.g. what is this?" value="ranger1189">
+      <div class="button-group">
+        <button id="loadBtn">Load</button>
+        <button id="clearEditorBtn">Clear</button>
+      </div>
+      <div id="loadMsg" class="status-message"></div>
+
+      <label for="answer">Answer (Markdown, HTML, CSS, and iFrames supported):</label>
+
+      <!-- helpers unchanged -->
+      <div class="creation-helpers-section">
+        <!-- ... your helper UI unchanged ... -->
+      </div>
+
+      <textarea id="answer" placeholder="Write your truth here..."></textarea>
+
+      <div class="audit-fields">
+        <label for="editor">Your Name (for audit):</label>
+        <input type="text" id="editor" placeholder="admin">
+        <div style="grid-column: 1 / span 2; margin-top: 5px;">
+          <label>Citations (Title & URL):</label>
+          <div class="citations-container" style="margin-top: 0;">
+            <input type="text" placeholder="Title 1" class="citation-title">
+            <input type="text" placeholder="URL 1" class="citation-url">
+            <input type="text" placeholder="Title 2" class="citation-title">
+            <input type="text" placeholder="URL 2" class="citation-url">
+          </div>
+        </div>
+      </div>
+
+      <div class="button-group">
+        <button id="saveBtn">Save</button>
+        <button id="copyPreviewBtn">Copy Output</button>
+        <button id="togglePreviewBtn" onclick="togglePreview()">Toggle Preview</button>
+      </div>
+      <div id="saveMsg" class="status-message"></div>
+
+      <div class="preview-wrapper" id="previewWrapper">
+        <label>Preview (Live Render):</label>
+        <div class="preview" id="preview"></div>
+        <div class="content-length" id="contentLength">Character count: 0</div>
+      </div>
+    </div>
+
+    <div class="admin-footer">© 2025 truth-network admin console</div>
+  </div>
+
+  <script>
+    // MARKED/HIGHLIGHT CONFIG
+    marked.setOptions({
+      highlight: function(code, lang) {
+        if (lang && hljs.getLanguage(lang)) {
+          return hljs.highlight(code, { language: lang }).value;
+        }
+        return hljs.highlightAuto(code).value;
+      }
+    });
+
+    // ========= Melody Lock (unchanged logic, just gating UI) =========
+    const allowedMelodyHash = "e4a25ba5b1c669414746d9efdc533019e14bf8a86c288165de44bdcf791d4cfa";
+    let melody = [];
+
+    function renderPiano() {
+      const notes = [60,62,64,65,67,69,71];
+      const names = ['C','D','E','F','G','A','B'];
+      const piano = document.getElementById('melody-piano');
+      piano.innerHTML = '';
+      notes.forEach((note, i) => {
+        const btn = document.createElement('div');
+        btn.className = 'melody-key';
+        btn.dataset.note = note;
+        btn.textContent = names[i];
+        btn.onclick = () => {
+          playNote(note);
+          melody.push(note);
+          updateMelodyBar();
+          btn.classList.add('active');
+          setTimeout(()=>btn.classList.remove('active'),120);
+        };
+        piano.appendChild(btn);
+      });
+    }
+
+    function playNote(midi) {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const freq = 440 * Math.pow(2, (midi-69)/12);
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'sine';
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(0.12, ctx.currentTime);
+        g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.21);
+        o.connect(g).connect(ctx.destination);
+        o.start();
+        o.stop(ctx.currentTime + 0.21);
+        o.onended = () => ctx.close();
+      } catch(e) {}
+    }
+
+    function updateMelodyBar() {
+      const bar = document.getElementById('melody-bar');
+      bar.innerHTML = '';
+      melody.forEach(m => {
+        const span = document.createElement('span');
+        span.className = 'melody-pill';
+        span.textContent = noteName(m);
+        bar.appendChild(span);
+      });
+    }
+
+    function noteName(midi) {
+      const n=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+      return n[midi%12]+Math.floor(midi/12-1);
+    }
+
+    document.getElementById('melody-clear').onclick = () => {
+      melody = [];
+      updateMelodyBar();
+      document.getElementById('melody-status').textContent = '';
+    };
+
+    document.getElementById('melody-unlock').onclick = async () => {
+      if (!melody.length) {
+        document.getElementById('melody-status').textContent = 'Play or import your melody!';
+        return;
+      }
+      const bytes = new Uint8Array(melody);
+      const hashBuf = await crypto.subtle.digest('SHA-256', bytes);
+      const hashFull = Array.from(new Uint8Array(hashBuf))
+        .map(b=>b.toString(16).padStart(2,'0')).join('');
+      if (hashFull === allowedMelodyHash) {
+        document.getElementById('melody-lock').style.display = 'none';
+        document.getElementById('admin-container').style.display = 'block';
+        // The console exists to read one key at a time: opening it loads the key
+        // already in the box instead of asking for the same click again.
+        if (document.getElementById('query').value.trim()) {
+          document.getElementById('loadBtn').click();
+        }
+      } else {
+        document.getElementById('melody-status').textContent = 'Incorrect melody, try again.';
+      }
+    };
+
+    document.getElementById('importMelodyBtn').onclick = () => {
+      const pat = document.getElementById('importMelodyInput').value.trim();
+      if (!pat) return;
+      melody = pat.split('-').map(x=>parseInt(x, 36)).filter(x=>!isNaN(x));
+      updateMelodyBar();
+      document.getElementById('melody-status').textContent = '';
+    };
+
+    renderPiano();
+
+    // ========= Preview / Theme =========
+    function setMode(mode) {
+      document.body.setAttribute('data-output-mode', mode);
+      answerInput.dispatchEvent(new Event('input'));
+    }
+
+    function togglePreview() {
+      const previewWrapper = document.getElementById('previewWrapper');
+      const textareaEl = document.getElementById('answer');
+      const toggleBtn = document.getElementById('togglePreviewBtn');
+      const isHidden = previewWrapper.style.display === 'none';
+      if (isHidden) {
+        previewWrapper.style.display = 'block';
+        textareaEl.style.minHeight = '150px';
+        toggleBtn.textContent = 'Toggle Preview';
+      } else {
+        previewWrapper.style.display = 'none';
+        textareaEl.style.minHeight = '350px';
+        toggleBtn.textContent = 'Show Preview';
+      }
+    }
+
+    // ========= Admin Editor Logic (wired to TRUTH worker) =========
+
+    // CHANGE THIS to your actual TRUTH orchestrator URL
+    const API_BASE = "https://truth.ai-n.workers.dev";
+
+    const queryInput = document.getElementById('query');
+    const answerInput = document.getElementById('answer');
+    const editorInput = document.getElementById('editor');
+    const loadBtn = document.getElementById('loadBtn');
+    const saveBtn = document.getElementById('saveBtn');
+    const loadMsg = document.getElementById('loadMsg');
+    const saveMsg = document.getElementById('saveMsg');
+    const previewDiv = document.getElementById('preview');
+    const citationTitles = document.querySelectorAll('.citation-title');
+    const citationUrls = document.querySelectorAll('.citation-url');
+
+    // Track current record metadata so Save knows which endpoint to use
+    let currentLayer = null;    // "master" | "provisional" | null
+    let currentId = null;       // normalized id
+
+    answerInput.addEventListener('input', () => {
+      const content = answerInput.value || '';
+      previewDiv.innerHTML = marked.parse(content);
+      document.querySelectorAll('#preview pre code').forEach(block => {
+        hljs.highlightElement(block);
+      });
+      const charCount = content.length;
+      const contentLengthDiv = document.getElementById('contentLength');
+      contentLengthDiv.textContent = `Character count: ${charCount}`;
+      if (charCount > 8000) {
+        contentLengthDiv.classList.add('warning');
+        contentLengthDiv.textContent += " (Very long content may be truncated)";
+      } else {
+        contentLengthDiv.classList.remove('warning');
+      }
+    });
+
+    document.getElementById('copyPreviewBtn').onclick = () => {
+      const preview = document.getElementById('preview');
+      const range = document.createRange();
+      range.selectNodeContents(preview);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      try {
+        document.execCommand('copy');
+        selection.removeAllRanges();
+        alert('Output copied!');
+      } catch (err) {
+        alert('Copy failed');
+      }
+    };
+
+    document.getElementById('clearEditorBtn').onclick = () => {
+      if (confirm('Clear all editor content?')) {
+        answerInput.value = '';
+        queryInput.value = '';
+        previewDiv.innerHTML = '';
+        citationTitles.forEach(e => e.value = '');
+        citationUrls.forEach(e => e.value = '');
+        loadMsg.textContent = '';
+        saveMsg.textContent = '';
+        currentLayer = null;
+        currentId = null;
+        answerInput.dispatchEvent(new Event('input'));
+      }
+    };
+
+    // Load: use TRUTH /api/truth/resolve
+    loadBtn.onclick = async () => {
+      loadMsg.textContent = '';
+      saveMsg.textContent = '';
+      currentLayer = null;
+      currentId = null;
+      const input = queryInput.value.trim();
+      if (!input) {
+        loadMsg.textContent = "Enter a query.";
+        return;
+      }
+      loadMsg.textContent = "Loading...";
+      answerInput.value = '';
+      previewDiv.innerHTML = '';
+      citationTitles.forEach(e => e.value = '');
+      citationUrls.forEach(e => e.value = '');
+
+      try {
+        const resp = await fetch(`${API_BASE}/api/truth/resolve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ input })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          loadMsg.textContent = `Error: ${data.error || resp.status}`;
+          return;
+        }
+
+        if (data.answer) {
+          answerInput.value = data.answer;
+          answerInput.dispatchEvent(new Event('input'));
+
+          // layer: "master"|"provisional"|"none"
+          currentLayer = data.layer || null;
+          currentId = data.id || null;
+
+          // Try to load citations if present
+          if (data.meta && Array.isArray(data.meta.citations)) {
+            data.meta.citations.slice(0, 2).forEach((c, i) => {
+              citationTitles[i].value = c.title || '';
+              citationUrls[i].value = c.url || '';
+            });
+          }
+
+          if (currentLayer === "master") {
+            loadMsg.textContent = `Loaded MASTER truth (${currentId || 'id unknown'})`;
+          } else if (currentLayer === "provisional") {
+            loadMsg.textContent = `Loaded PROVISIONAL truth (${currentId || 'id unknown'})`;
+          } else {
+            loadMsg.textContent = "Loaded candidate/miss. You can create a truth from this.";
+          }
+
+        } else {
+          loadMsg.textContent = "No answer found. You can create one.";
+        }
+
+      } catch (e) {
+        loadMsg.textContent = "Error loading: " + e.message;
+      }
+    };
+
+    // Save: route to master/provisional endpoints based on currentLayer
+    saveBtn.onclick = async () => {
+      saveMsg.textContent = '';
+      const input = queryInput.value.trim();
+      const answer = answerInput.value;
+      const editor = (editorInput.value.trim() || "admin");
+      localStorage.setItem('lastEditorName', editor);
+
+      if (!input || !answer) {
+        saveMsg.textContent = "Query and answer required.";
+        return;
+      }
+
+      // collect citations
+      const citations = [];
+      for (let i = 0; i < 2; i++) {
+        const title = citationTitles[i].value.trim();
+        const url = citationUrls[i].value.trim();
+        if (title && url) citations.push({ title, url });
+      }
+
+      saveMsg.textContent = "Saving...";
+
+      try {
+        let endpoint = "";
+        let body = {};
+
+        // Decide: if loaded from master → update master.
+        // If loaded from provisional or nothing → update/create provisional.
+        if (currentLayer === "master") {
+          endpoint = `${API_BASE}/api/truth/master/update`;
+          body = {
+            input,
+            answer,
+            editor,
+            meta: {
+              citations
+            }
+          };
+        } else {
+          // provisional create-or-update
+          endpoint = `${API_BASE}/api/truth/provisional/update`;
+          body = {
+            idOrQuery: input,
+            answer,
+            meta: {
+              editor,
+              citations
+            }
+          };
+        }
+
+        const resp = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+
+        const data = await resp.json().catch(() => ({}));
+
+        if (!resp.ok) {
+          saveMsg.textContent = `Save failed: ${data.error || resp.status}`;
+          return;
+        }
+
+        if (currentLayer === "master") {
+          saveMsg.textContent = "MASTER truth updated successfully.";
+        } else {
+          saveMsg.textContent = "PROVISIONAL truth saved/updated successfully.";
+          currentLayer = "provisional";
+          currentId = data.id || currentId;
+        }
+
+      } catch (e) {
+        saveMsg.textContent = "Error saving: " + e.message;
+      }
+    };
+
+    // Markdown helpers (unchanged from your version)
+    function insertMarkdown(text, before, after) {
+      const start = answerInput.selectionStart;
+      const end = answerInput.selectionEnd;
+      const selected = answerInput.value.substring(start, end);
+      const replacement = before + (selected || text) + after;
+      answerInput.value =
+        answerInput.value.substring(0, start) +
+        replacement +
+        answerInput.value.substring(end);
+      answerInput.focus();
+      answerInput.selectionStart = start + before.length;
+      answerInput.selectionEnd = start + before.length + (selected || text).length;
+      answerInput.dispatchEvent(new Event('input'));
+    }
+
+    function insertIframe() {
+      const iframeCode =
+        '\n<iframe src="https://example.com" style="border:1px solid var(--truth-accent-light); width:100%; height:300px;"></iframe>\n';
+      answerInput.value += iframeCode;
+      answerInput.dispatchEvent(new Event('input'));
+      answerInput.focus();
+    }
+
+    function removeExtraWhitespace() {
+      const content = answerInput.value;
+      const cleaned = content
+        .split('\n').map(l => l.trim()).join('\n')
+        .replace(/\n\n\n+/g, '\n\n');
+      answerInput.value = cleaned;
+      answerInput.dispatchEvent(new Event('input'));
+      alert('Whitespace cleaned!');
+    }
+
+    function addBlock() {
+      const style = document.getElementById('style-select').value;
+      let htmlSnippet = '';
+      // Append snippet:
+      answerInput.value += htmlSnippet;
+      answerInput.dispatchEvent(new Event('input'));
+      answerInput.focus();
+    }
+
+    // Initialize editor
+    (function initializeEditor() {
+      const lastEditor = localStorage.getItem('lastEditorName');
+      if (lastEditor) editorInput.value = lastEditor;
+      answerInput.dispatchEvent(new Event('input'));
+    })();
+  </script>
+</body>
+</html>

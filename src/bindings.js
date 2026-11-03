@@ -14,6 +14,12 @@ export const stateKv = (env) => env?.MEM || env?.KV || null;
  * instead, so promotion never fails for want of a second binding.
  */
 export const masterKv = (env) => env?.MASTER || stateKv(env) || null;
+
+/**
+ * Optional: the namespace a standalone admin writes to. Binding it here means the
+ * pairs written there are read here, without copying anything between stores.
+ */
+export const truthKv = (env) => env?.TRUTH || null;
 export const objects = (env) => env?.BUCKET || env?.R2 || null;
 
 /** What is actually attached, by its deployed name, for /api/health. */
@@ -24,6 +30,7 @@ export function bindingReport(env) {
     kv: {
       mem: Boolean(env?.MEM),
       master: Boolean(env?.MASTER),
+      truth: Boolean(env?.TRUTH),
       legacy: Boolean(env?.KV),
     },
     r2: {

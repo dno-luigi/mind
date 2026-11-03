@@ -390,7 +390,7 @@ async function chat(request, env, ctx) {
     }
     await recordReview(env, ctx, reviewOf({ preset, decision: reported, route, model, lastUser, text }));
     // Every answer becomes a candidate, so nothing has to be retyped to promote it.
-    await recordCandidate(env, { input: lastUser, answer: text, preset: preset?.id, route, model });
+    await recordCandidate(env, { input: lastUser, answer: text, preset: preset?.id, route, model }, ctx);
     return json({ text, route, model, decision: reported });
   }
 
@@ -451,7 +451,7 @@ async function chat(request, env, ctx) {
         reviewOf({ preset, decision: reported, route, model, lastUser, text: answer }),
       );
       // Stored whether or not it is good: promotion is a later decision.
-      await recordCandidate(env, { input: lastUser, answer, preset: preset?.id, route, model });
+      await recordCandidate(env, { input: lastUser, answer, preset: preset?.id, route, model }, ctx);
       send(DONE);
       controller.close();
     },

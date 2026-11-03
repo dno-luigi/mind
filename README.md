@@ -162,12 +162,47 @@ so nothing has to be retyped to promote it. The key is a blunt normalization of
 the query — lower case, collapsed spacing, trailing punctuation removed — because
 a fuzzy match would promote the wrong answer.
 
-There is no admin page and no admin route. Nothing reachable over HTTP can write
-a truth — the console that did was removed after it failed to launch, and the
-candidate store it depended on is not. Promotion is a script calling `promote()`
-in `src/truth.js`: `master` records go to the `MASTER` namespace, `provisional`
-ones to `MEM`, and the id is the SHA-256 of the normalized query. A master truth
-answers its query straight out of KV without running clef or any model.
+The console is a standalone page — `public/admin.html`, served at `/admin.html` —
+that posts to its own Worker. `mind` still exposes no route that writes a truth,
+so nothing reachable through this app's API can change one. Promotion is a script
+calling `promote()` in `src/truth.js`: `master` records go to the `MASTER`
+namespace, `provisional` ones to `MEM`, and the id is the SHA-256 of the
+normalized query. A master truth answers its query straight out of KV without
+running clef or any model.
+
+### Reading what is already stored
+
+The first cache check is a read, and it is deliberately generous, because a pair
+that is already stored is the truth even when this app did not write it. In order
+it tries:
+
+1. `truth:master:<sha256>`, `truth:provisional:<sha256>`, `candidate:<sha256>`
+2. `<layer>:<id>`, `truth:<layer>:<query>`, `<layer>:<query>`, `truth:<id>`, `truth:<query>`
+3. the key name itself — an opaque slug such as `ranger1189` is the query
+4. a bounded scan (500 keys listed, 30 read) for a record whose `query` or `input`
+   says it answers the question
+
+Every store bound to the Worker is searched: `TRUTH` when you bind it, then
+`MASTER`, then `MEM`. The answer may sit under `answer`, `html`, `text`,
+`content`, `body`, `response`, or be the stored value itself.
+
+Writes never replace a stored pair. A different answer is kept beside the first as
+an `alternatives[]` entry; `promote()` returns `{ saved: false, conflict: true }`
+instead of overwriting unless called with `overwrite: true`; master records carry
+no TTL, so a curated answer cannot quietly expire; and promoting a master no
+longer deletes the provisional underneath it — master wins by precedence.
+
+Clashes are reported to a separate Worker. Bind one as `ALERTS` (or set a
+`TRUTH_ALERTS_URL` var) and it receives a JSON POST:
+
+```json
+{ "service": "mind", "type": "candidate_divergence", "query": "ranger1189",
+  "id": "<sha256>", "key": "candidate:<sha256>", "layer": "candidate",
+  "existing": "the stored answer", "incoming": "the new one", "at": "<iso>" }
+```
+
+`type` is `candidate_divergence` or `promote_conflict`. Unbound means no notice:
+a chat never fails over one.
 
 Only the escalation rung needs a secret:
 
@@ -175,10 +210,9 @@ Only the escalation rung needs a secret:
 npx wrangler secret put OPENROUTER_API_KEY
 ```
 
-`MASTER` and `AGENT-BROWSING` are bound to match the account but are not called:
-no route reads the `master truths` namespace yet, and `AGENT-BROWSING` is a
-browsing tool this app does not use. The Worker reaches OpenRouter directly with
-`OPENROUTER_API_KEY`.
+`MASTER` holds the promoted truths the first cache check reads. `AGENT-BROWSING`
+is bound to match the account and is a browsing tool this app does not use. The
+Worker reaches OpenRouter directly with `OPENROUTER_API_KEY`.
 
 Configuration lives in `wrangler.jsonc` **only**. With both a `wrangler.toml` and
 a `wrangler.jsonc` in the repo, wrangler 4.157 silently uses the `.jsonc` and
