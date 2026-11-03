@@ -193,7 +193,12 @@ class App {
                         <strong>${this.escapeHtml(preset.name)}</strong>
                         ${isDefault ? '<span style="font-size: 11px; opacity: 0.6; margin-left: 6px;">(default)</span>' : ''}
                     </div>
-                    ${!isProtected ? `<button class="btn btn-danger" onclick="app.deletePreset('${key}')" style="padding: 4px 8px; font-size: 12px;">Delete</button>` : ''}
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        ${key === this.currentPresetKey
+                            ? '<span style="font-size: 11px; opacity: 0.6;">selected</span>'
+                            : `<button class="btn btn-ghost" onclick="app.selectPresetForNextQuery('${key}')" style="padding: 4px 8px; font-size: 12px;">Select</button>`}
+                        ${!isProtected ? `<button class="btn btn-danger" onclick="app.deletePreset('${key}')" style="padding: 4px 8px; font-size: 12px;">Delete</button>` : ''}
+                    </div>
                 </div>
             `;
         });
@@ -323,7 +328,6 @@ class App {
     selectPresetForNextQuery(presetKey) {
         if (!this.presets[presetKey]) return;
         
-        const wasDefault = this.currentPresetKey === FALLBACK_PRESET_KEY;
         this.currentPresetKey = presetKey;
         
         // Update button label
@@ -337,10 +341,13 @@ class App {
             btn.classList.add('active');
         }
         
+        // Always confirm: selecting No preset changes nothing visible otherwise,
+        // which reads as the option being unselectable.
         const preset = this.presets[presetKey];
-        if (wasDefault) {
-            this.showToast(`Preset set: ${preset.name}`);
-        }
+        this.updatePresetButtonLabel();
+        this.saveState();
+        this.renderPresetsList();
+        this.showToast(`Preset set: ${preset.name}`);
     }
 
     openPresetSelectModal() {
