@@ -90,9 +90,11 @@ test('chat streams meta, deltas and [DONE]', async () => {
   const events = await readSSE(res);
   assert.equal(events[0].type, 'meta');
   assert.equal(events[0].route, 'workers-ai');
-  // No explicit preset, so the decision model picked one and its cf model follows.
+  // No preset pinned: clef's intent names the preset, and its task names the
+  // model, so the rung follows the decision rather than the preset's own model.
   assert.equal(events[0].decision.preset, 'operator');
-  assert.equal(events[0].model, '@cf/qwen/qwen3.8-27b');
+  assert.ok(events[0].decision.trace.includes('operator:operator'));
+  assert.equal(events[0].model, '@cf/google/gemma-4-26b-a4b-it');
 
   const text = events.filter((e) => e.type === 'delta').map((e) => e.text).join('');
   assert.equal(text, 'Hello world');
@@ -453,6 +455,137 @@ test('an empty stream retries without streaming instead of returning nothing', a
   assert.equal(text, 'recovered');
   assert.equal(streamed, 1);
   assert.equal(events.some((e) => e.type === 'error'), false);
+});
+
+test('the pipeline traces cache, intent, browse, user and operator in order', async () => {
+  const cached = [];
+  const env = makeEnv({
+    MEM: {
+      async get() {
+        return null;
+      },
+      async put(key, value) {
+        cached.push(key);
+      },
+    },
+    'AGENT-BROWSING': {
+      async fetch() {
+        return new Response('browsed material');
+      },
+    },
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"extract","depth":"deep"}' };
+        if (body.stream) return sse(['ok']);
+        return { response: 'ok' };
+      },
+    }),
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'compare these two' }], stream: false }),
+  });
+  const body = await res.json();
+  const { trace } = body.decision;
+
+  assert.equal(trace[0], 'cache:miss');
+  assert.match(trace[1], /^intent:clef-/);
+  // extract is browse-worthy, so the service binding is consulted.
+  assert.ok(trace.includes('browse:ok'));
+  assert.ok(trace.indexOf('browse:ok') < trace.indexOf('user:handoff'));
+  // user hands back, then the operator rung generates.
+  assert.ok(trace.indexOf('user:handoff') < trace.indexOf('operator:operator'));
+  assert.equal(body.decision.preset, 'operator');
+  assert.equal(body.decision.browse, 'browsed material');
+  // extract -> qwen, deep -> large budget.
+  assert.equal(body.model, '@cf/qwen/qwen3.8-27b');
+  assert.ok(cached.some((key) => key.startsWith('decision:')), 'the decision should be cached in MEM');
+});
+
+test('a failing browse stage is recorded, not fatal', async () => {
+  const env = makeEnv({
+    'AGENT-BROWSING': {
+      async fetch() {
+        throw new Error('browser offline');
+      },
+    },
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"compare"}' };
+        if (body.stream) return sse(['still works']);
+        return { response: 'still works' };
+      },
+    }),
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], stream: false }),
+  });
+
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(body.decision.trace.includes('browse:error'));
+  assert.equal(body.text, 'still works');
+});
+
+test('review records are written to MASTER', async () => {
+  const reviews = [];
+  const env = makeEnv({
+    MASTER: {
+      async put(key, value) {
+        reviews.push({ key, record: JSON.parse(value) });
+      },
+    },
+  });
+
+  const pending = [];
+  const localCtx = { waitUntil(promise) { pending.push(promise); } };
+  const res = await worker.fetch(
+    new Request('https://example.com/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'remember this' }], stream: false }),
+    }),
+    env,
+    localCtx,
+  );
+
+  assert.equal(res.status, 200);
+  await Promise.all(pending);
+
+  assert.equal(reviews.length, 1);
+  assert.match(reviews[0].key, /^review:/);
+  assert.equal(reviews[0].record.preset, 'operator');
+  assert.equal(reviews[0].record.route, 'workers-ai');
+  assert.equal(reviews[0].record.prompt, 'remember this');
+});
+
+test('clef decides the model and output budget when no preset is pinned', async () => {
+  const seen = [];
+  const env = makeEnv({
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"transform","depth":"terse"}' };
+        seen.push({ model, body });
+        if (body.stream) return sse(['ok']);
+        return { response: 'ok' };
+      },
+    }),
+  });
+
+  await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], stream: false }),
+  });
+
+  const generation = seen.at(-1);
+  assert.equal(generation.model, '@cf/qwen/qwen3.8-27b');
+  assert.equal(generation.body.max_tokens, 1024);
 });
 
 test('the worker serves static assets when it has no API route', async () => {

@@ -15,6 +15,9 @@
 /** Used when no preset is picked and the decision model declines to route. */
 export const DEFAULT_PRESET = 'truth';
 
+/** The rung the decision pipeline generates on when nothing was pinned. */
+export const OPERATOR_PRESET = 'operator';
+
 export const PRESETS = [
   {
     id: 'truth',

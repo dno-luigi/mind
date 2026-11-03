@@ -45,6 +45,9 @@ class App {
         this.sessionId = "sess_" + Date.now();
         this.presets = this.loadPresets();
         this.currentPresetKey = FALLBACK_PRESET_KEY;
+        // Nothing is pinned until the user picks a preset, so the Worker's
+        // decision pipeline runs first and picks the rung itself.
+        this.presetPinned = false;
         this.theme = {
             name: 'ai-Ncards',
             primary: '#c41e3a',
@@ -317,6 +320,7 @@ class App {
         
         const wasDefault = this.currentPresetKey === FALLBACK_PRESET_KEY;
         this.currentPresetKey = presetKey;
+        this.presetPinned = true;
         
         // Update button label
         const label = document.getElementById('currentPresetLabel');
@@ -1069,7 +1073,7 @@ class App {
 
         // Get preset for this request
         const preset = this.getCurrentPreset();
-        const usePreset = Boolean(preset && preset.key);
+        const usePreset = this.presetPinned && Boolean(preset && preset.key);
         
         console.log("sendRequest - currentPresetKey:", this.currentPresetKey);
         console.log("sendRequest - preset:", preset);
@@ -1649,7 +1653,7 @@ class App {
             
             // Get preset for this request
             const preset = this.getCurrentPreset();
-            const usePreset = Boolean(preset && preset.key);
+            const usePreset = this.presetPinned && Boolean(preset && preset.key);
 
             const sysPrompt = this.getCurrentSystemPrompt();
             const fullPrompt = sysPrompt ? sysPrompt + "\n\nUser: " + prompt : prompt;
@@ -1705,7 +1709,7 @@ Do not output any other text.`;
         this.showToast("Generating Theme...");
         
         const preset = this.getCurrentPreset();
-        const usePreset = Boolean(preset && preset.key);
+        const usePreset = this.presetPinned && Boolean(preset && preset.key);
 
         this.streamChat(
             { messages: [{ role: 'user', content: prompt }], preset: usePreset ? preset.key : null },

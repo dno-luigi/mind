@@ -4,7 +4,7 @@ import { stateKv, objects, bindingReport } from './bindings.js';
 import { publicPresets, findPreset, openRouterBackedPresets, DEFAULT_PRESET } from './presets.js';
 import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
-import { decide } from './decide.js';
+import { decide, recordReview } from './decide.js';
 import { wavInfo, wavChunks } from './audio.js';
 import { DONE, delta, errorEvent, meta, sseData, upstreamError, fromOpenRouterChat, fromWorkersAI } from './normalize.js';
 
@@ -67,7 +67,7 @@ async function route(request, env, ctx, url) {
 
   if (path === '/api/health' && method === 'GET') return health(env);
   if (path === '/api/presets' && method === 'GET') return json({ presets: publicPresets() });
-  if (path === '/api/chat' && method === 'POST') return chat(request, env);
+  if (path === '/api/chat' && method === 'POST') return chat(request, env, ctx);
   if (path === '/api/stt' && method === 'POST') return stt(request, env);
   if (path === '/api/tts' && method === 'GET') return tts(url, env, ctx);
   if (path === '/api/upload' && method === 'POST') return upload(request, env);
@@ -140,25 +140,45 @@ function normalizeMessages(raw) {
   return { messages, images };
 }
 
-function pickCfModel(preset, images) {
-  const model = preset?.cf || cf.TEXT_MODEL;
+/** Task -> model. Used when clef decides, rather than the user pinning a preset. */
+const TASK_CF = {
+  chat: '@cf/google/gemma-4-26b-a4b-it',
+  transform: '@cf/qwen/qwen3.8-27b',
+  generate: '@cf/google/gemma-4-26b-a4b-it',
+  extract: '@cf/qwen/qwen3.8-27b',
+  compare: '@cf/qwen/qwen3.8-27b',
+};
+
+/** The depth the decision model reports becomes an output budget. */
+const DEPTH_TOKENS = { terse: 1024, deep: 8192 };
+
+function budgetFor(preset, decision, explicit) {
+  if (explicit) return preset?.maxTokens;
+  return DEPTH_TOKENS[decision?.depth] ?? preset?.maxTokens ?? null;
+}
+
+function pickCfModel(preset, images, { decision, explicit } = {}) {
+  // clef first: with nothing pinned, its task picks the model and the preset only
+  // supplies the prompt. A pinned preset overrides both.
+  const chosen = explicit ? preset?.cf : TASK_CF[decision?.task] || preset?.cf;
+  const model = chosen || cf.TEXT_MODEL;
   if (!images.length) return model;
   return VISION_CF.has(model) ? model : cf.TEXT_MODEL;
 }
 
 /** The provider ladder: Cloudflare first, OpenRouter when CF cannot serve it. */
-async function openUpstream(env, { messages, images, preset }) {
+async function openUpstream(env, { messages, images, preset, decision, explicit }) {
   const failures = [];
 
   if (has(env, 'AI')) {
-    const model = pickCfModel(preset, images);
+    const model = pickCfModel(preset, images, { decision, explicit });
     try {
       const stream = await cf.streamChat(env, {
         model,
         messages,
         images,
         temperature: preset?.temperature,
-        maxTokens: preset?.maxTokens,
+        maxTokens: budgetFor(preset, decision, explicit),
       });
       return { route: 'workers-ai', model, stream, extract: fromWorkersAI };
     } catch (err) {
@@ -201,13 +221,28 @@ function explain(problem) {
   return err;
 }
 
-async function chat(request, env) {
+/** The review record: enough to reconstruct a session, capped so KV stays small. */
+function reviewOf({ preset, decision, route, model, lastUser, text }) {
+  return {
+    preset: preset?.id,
+    task: decision?.task,
+    route,
+    model,
+    charsIn: String(lastUser).length,
+    charsOut: String(text).length,
+    prompt: String(lastUser).slice(0, 500),
+    answer: String(text).slice(0, 1500),
+  };
+}
+
+async function chat(request, env, ctx) {
   const body = await request.json().catch(() => null);
   if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
     return fail(400, 'messages_required', 'Send { messages: [{ role, content }], preset, stream }.');
   }
 
   const { messages, images } = normalizeMessages(body.messages);
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
   if (!messages.length) return fail(400, 'messages_required', 'No usable messages were provided.');
 
   const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
@@ -249,7 +284,13 @@ async function chat(request, env) {
   const wantsStream = body.stream !== false;
 
   if (!wantsStream) {
-    const { route, model, stream, extract } = await openUpstream(env, { messages: system, images, preset });
+    const { route, model, stream, extract } = await openUpstream(env, {
+      messages: system,
+      images,
+      preset,
+      decision: reported,
+      explicit: Boolean(requestedPreset),
+    });
     let text = '';
     for await (const data of sseData(stream)) {
       const problem = upstreamError(data);
@@ -264,27 +305,37 @@ async function chat(request, env) {
         messages: system,
         images,
         temperature: preset?.temperature,
-        maxTokens: preset?.maxTokens,
+        maxTokens: budgetFor(preset, reported, Boolean(requestedPreset)),
       });
     }
     if (!text) return fail(502, 'empty_upstream', `${route} (${model}) returned no text.`);
+    await recordReview(env, ctx, reviewOf({ preset, decision: reported, route, model, lastUser, text }));
     return json({ text, route, model, decision: reported });
   }
 
-  const { route, model, stream, extract } = await openUpstream(env, { messages: system, images, preset });
+  const { route, model, stream, extract } = await openUpstream(env, {
+    messages: system,
+    images,
+    preset,
+    decision: reported,
+    explicit: Boolean(requestedPreset),
+  });
 
   const out = new ReadableStream({
     async start(controller) {
       const send = (chunk) => chunk && controller.enqueue(encoder.encode(chunk));
+      // Declared outside the try: the review call after it still needs them.
+      let emitted = 0;
+      let answer = '';
       try {
         send(meta({ route, model, preset: preset?.id, decision: reported }));
-        let emitted = 0;
         for await (const data of sseData(stream)) {
           const problem = upstreamError(data);
           if (problem) throw explain(problem);
           const text = extract(data);
           if (text) {
             emitted += 1;
+            answer += text;
             send(delta(text));
           }
         }
@@ -294,9 +345,12 @@ async function chat(request, env) {
             messages: system,
             images,
             temperature: preset?.temperature,
-            maxTokens: preset?.maxTokens,
+            maxTokens: budgetFor(preset, reported, Boolean(requestedPreset)),
           });
-          if (text) send(delta(text));
+          if (text) {
+            answer += text;
+            send(delta(text));
+          }
           else send(errorEvent('empty_upstream', `${model} returned no text.`));
         } else if (!emitted) {
           send(errorEvent('empty_upstream', `${route} (${model}) returned no text.`));
@@ -304,6 +358,11 @@ async function chat(request, env) {
       } catch (err) {
         send(errorEvent(err?.code || 'stream_failed', err?.message || String(err)));
       }
+      await recordReview(
+        env,
+        ctx,
+        reviewOf({ preset, decision: reported, route, model, lastUser, text: answer }),
+      );
       send(DONE);
       controller.close();
     },

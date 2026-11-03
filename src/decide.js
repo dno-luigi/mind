@@ -1,6 +1,6 @@
 import { sha256Hex } from './util.js';
 import { stateKv } from './bindings.js';
-import { DEFAULT_PRESET } from './presets.js';
+import { OPERATOR_PRESET } from './presets.js';
 
 /**
  * The clef ladder: smallest window first, escalate only when the state does not
@@ -18,13 +18,15 @@ const SAFETY = 0.8;
 
 export const QUESTIONS = {
   task: { type: 'choice', choices: ['chat', 'transform', 'generate', 'extract', 'compare'] },
-  preset: {
-    type: 'choice',
-    choices: ['truth', 'operator', 'mnl'],
-  },
+  preset: { type: 'choice', choices: ['truth', 'operator', 'mnl'] },
   depth: { type: 'choice', choices: ['terse', 'normal', 'deep'] },
   tone: { type: 'choice', choices: ['plain', 'precise', 'playful'] },
 };
+
+/** Intents that need material from outside the conversation pay for a lookup. */
+const BROWSE_WORTHY = new Set(['extract', 'compare']);
+
+const REVIEW_TTL = 60 * 60 * 24 * 30;
 
 function budgetState(messages, context) {
   const budget = Math.floor(context * SAFETY * CHARS_PER_TOKEN);
@@ -65,26 +67,10 @@ function parseDecision(out) {
   return null;
 }
 
-/**
- * A decision is an optimisation, never a single point of failure: any missing
- * binding, refusal, or unparseable answer falls back to a static decision.
- */
-export async function decide(env, { messages, images = [], presetId = null } = {}) {
-  const fallback = { preset: presetId || DEFAULT_PRESET, depth: 'normal', tone: 'plain', task: 'chat', source: 'fallback' };
+/** Stage 2 — intent. A decision is an optimisation, never a single point of failure. */
+async function intentFor(env, { messages, images, presetId }) {
+  const fallback = { preset: presetId, depth: 'normal', tone: 'plain', task: 'chat', source: 'fallback' };
   if (!env?.AI || env.DECIDE === 'off') return fallback;
-
-  const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
-  const cacheKey = `decision:${await sha256Hex(`${lastUser.slice(-4000)}|${images.length}|${presetId || ''}`)}`;
-
-  const kv = stateKv(env);
-  if (kv) {
-    try {
-      const hit = await kv.get(cacheKey);
-      if (hit) return { ...JSON.parse(hit), source: 'cache' };
-    } catch {
-      /* cache is optional */
-    }
-  }
 
   for (const rung of LADDER) {
     try {
@@ -98,21 +84,122 @@ export async function decide(env, { messages, images = [], presetId = null } = {
 
       const out = await env.AI.run(rung.id, payload);
       const parsed = parseDecision(out);
-      if (parsed) {
-        const decision = { ...fallback, ...parsed, source: rung.model };
-        if (kv) {
-          try {
-            await kv.put(cacheKey, JSON.stringify(decision), { expirationTtl: 3600 });
-          } catch {
-            /* ignore */
-          }
-        }
-        return decision;
-      }
+      if (parsed) return { ...fallback, ...parsed, source: rung.model };
     } catch {
       // Window refused or model unavailable — escalate to the next rung.
     }
   }
 
   return fallback;
+}
+
+/**
+ * Stage 3 — browse. A missing binding is normal, and a failing one must never
+ * take the request down: the intent is still good without the material.
+ */
+async function browseFor(env, { intent, query }) {
+  const binding = env?.['AGENT-BROWSING'];
+  if (!binding || typeof binding.fetch !== 'function') return null;
+  if (!BROWSE_WORTHY.has(intent.task) && intent.depth !== 'deep') return { skipped: true };
+
+  try {
+    const res = await binding.fetch(
+      new Request('https://agent-browsing/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ task: intent.task, query: String(query || '').slice(0, 2000) }),
+      }),
+    );
+    if (!res.ok) return { ok: false, status: res.status };
+    return { ok: true, text: (await res.text()).slice(0, 4000) };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+}
+
+/**
+ * Stage 6 — review. Records go to MASTER so a session can be read back later;
+ * the payload is capped so a long conversation cannot bloat the namespace.
+ */
+export async function recordReview(env, ctx, record) {
+  const master = env?.MASTER;
+  if (!master || typeof master.put !== 'function') return false;
+
+  const at = new Date().toISOString();
+  const key = `review:${at}:${crypto.randomUUID().slice(0, 8)}`;
+  const write = master.put(key, JSON.stringify({ at, ...record }), { expirationTtl: REVIEW_TTL }).catch(
+    () => {},
+  );
+
+  if (ctx?.waitUntil) ctx.waitUntil(write);
+  else await write;
+  return true;
+}
+
+/**
+ * The decision pipeline, in order:
+ *
+ *   1. cache    MEM lookup; a hit ends the chain
+ *   2. intent   clef ladder classifies task / preset / depth / tone
+ *   3. browse   AGENT-BROWSING, only when the intent needs outside material
+ *   4. user     hand the intent back so the answer can be built
+ *   5. operator the rung it runs on: @preset/operator unless a preset was pinned
+ *
+ * Stage 6 (review) runs after generation, since it records the answer too.
+ */
+export async function decide(env, { messages, images = [], presetId = null } = {}) {
+  const trace = [];
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
+
+  const kv = stateKv(env);
+  const cacheKey = `decision:${await sha256Hex(`${lastUser.slice(-4000)}|${images.length}|${presetId || ''}`)}`;
+
+  // 1. cache
+  if (kv) {
+    try {
+      const hit = await kv.get(cacheKey);
+      if (hit) {
+        const cached = JSON.parse(hit);
+        return { ...cached, source: 'cache', trace: [...(cached.trace || []), 'cache:hit'], cacheKey };
+      }
+      trace.push('cache:miss');
+    } catch {
+      trace.push('cache:error');
+    }
+  } else {
+    trace.push('cache:unbound');
+  }
+
+  // 2. intent
+  const intent = await intentFor(env, { messages, images, presetId });
+  trace.push(`intent:${intent.source}`);
+
+  // 3. browse
+  const browse = await browseFor(env, { intent, query: lastUser });
+  trace.push(
+    browse === null
+      ? 'browse:unbound'
+      : browse.skipped
+        ? 'browse:skipped'
+        : browse.ok
+          ? 'browse:ok'
+          : 'browse:error',
+  );
+
+  // 4. user, then 5. operator — the rung the answer is generated on.
+  const preset = presetId || intent.preset || OPERATOR_PRESET;
+  trace.push('user:handoff');
+  trace.push(`operator:${preset}`);
+
+  const decision = { ...intent, preset, browse: browse?.ok ? browse.text : null, trace, cacheKey };
+
+  if (kv) {
+    try {
+      await kv.put(cacheKey, JSON.stringify(decision), { expirationTtl: 3600 });
+    } catch {
+      /* the cache is an optimisation, never a requirement */
+    }
+  }
+
+  return decision;
 }

@@ -47,6 +47,26 @@ data: [DONE]
 
 Switching providers therefore needs no frontend change.
 
+## Decision pipeline
+
+`decide()` is an ordered chain, and every stage is optional: a missing binding
+skips its stage instead of failing the request. Each `meta` event carries a
+`trace` naming the stages that actually ran.
+
+1. **cache** — `MEM` lookup keyed on the last user turn; a hit ends the chain.
+2. **intent** — the clef ladder (`clef-flash` → `clef-omni` → `clef`) classifies
+   task, depth, tone and preset, escalating only when a window refuses.
+3. **browse** — `AGENT-BROWSING` is consulted for `extract`/`compare` intents and
+   for `deep` depth. A failed lookup is recorded as `browse:error` and ignored.
+4. **user** — the intent is handed back and the answer is generated on…
+5. **operator** — `@preset/operator`, unless you pinned a preset.
+6. **review** — the exchange is appended to `MASTER` with a 30-day TTL: preset,
+   route, model, sizes, and the first 500/1500 characters of prompt and answer.
+
+Clef first: with nothing pinned, its `task` selects the Cloudflare model
+(`chat`/`generate` → gemma, `transform`/`extract`/`compare` → qwen) and its
+`depth` sets the output budget. A pinned preset overrides both.
+
 ## Presets
 
 Each preset has two rungs: a Cloudflare model with a local prompt and sampling
