@@ -211,8 +211,12 @@ function bad(status, code, message) {
   return Object.assign(new Error(message), { status, code });
 }
 
-/** A bound service that stops answering must not hold the turn open. */
-const REMOTE_TIMEOUT_MS = 2500;
+/**
+ * A bound service that stops answering must not hold the turn open — but their
+ * resolve is resolve-or-create: on a miss it generates and stores a provisional
+ * before answering, so this cap has to sit above a PROXY round trip, not below it.
+ */
+const REMOTE_TIMEOUT_MS = 12000;
 
 /**
  * The truth worker, when bound as TRUTH, is the store the standalone admin writes
@@ -243,6 +247,8 @@ async function resolveRemoteTruth(env, input, { id, query }) {
     if (!res.ok) return null;
 
     const data = await res.json().catch(() => null);
+    // A miss is a 200 with status "miss", layer "none" and a null answer.
+    if (!data || data.status === 'miss') return null;
     const answer = answerOf(data);
     if (!answer) return null;
 

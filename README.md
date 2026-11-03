@@ -185,10 +185,16 @@ it tries:
 Step 0 is the truth worker itself. Bound as a service — the account uses
 `unsafe.bindings` with `{ "name": "TRUTH", "type": "service", "service":
 "truth" }` — its `/api/truth/resolve` is called with `{ input }`, exactly as the
-console calls it, and `{ answer, layer, id, meta.citations }` comes back. A `none`
-layer or a failed call falls through to the local layers below, so a truth worker
-that is down costs a lookup, never an answer. Nothing is ever posted back to it:
-an answer it did not have is kept as a candidate instead.
+console calls it, and the canonical body comes back: `{ status, layer, id, answer,
+meta.citations }`. A miss is a `200` with `status: "miss"` and `layer: "none"`,
+and so is a failed or slow call (capped at 12s); both fall through to the local
+layers below, so a truth worker that is down costs a lookup, never an answer.
+
+That resolve is resolve-or-create: when neither layer holds the query it generates
+a candidate and stores it as `provisional:<id>` before answering, so a question
+this app has never seen can come back as a `provisional` layer. That is the store
+filling itself with new pairs — and it is the only way this app adds to it, since
+no write route is ever called from here. A curated master cannot be replaced.
 
 Every bound KV store is searched as well: `MASTER`, then `MEM`. The answer may sit
 under `answer`, `html`, `text`, `content`, `body`, `response`, or be the stored

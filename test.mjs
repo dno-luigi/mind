@@ -939,10 +939,15 @@ test('the bound truth worker answers the first cache check', async () => {
         paths.push(new URL(request.url).pathname);
         return new Response(
           JSON.stringify({
+            status: 'ok',
             layer: 'master',
             id: 'curated-id',
+            query: 'ranger1189',
             answer: 'from the console',
-            meta: { citations: [{ title: 'Source', url: 'https://example.com' }] },
+            source: 'master_truth',
+            verified: true,
+            provisional: false,
+            meta: { confidence: 0.97, citations: [{ title: 'Source', url: 'https://example.com' }] },
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
@@ -966,7 +971,15 @@ test('a truth worker that misses or fails falls through to the local store', asy
     MEM: kv,
     TRUTH: {
       async fetch() {
-        return new Response(JSON.stringify({ layer: 'none' }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            status: 'miss',
+            layer: 'none',
+            answer: null,
+            meta: { reason: 'no_master_or_provisional' },
+          }),
+          { status: 200 },
+        );
       },
     },
   };
