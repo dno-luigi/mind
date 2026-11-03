@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "build": "wrangler deploy --dry-run --outdir=.wrangler/build",
     "dry-run": "wrangler deploy --dry-run --outdir=.wrangler/dry",
     "test": "node --test test.mjs",
     "presets:sync": "node scripts/sync-presets.mjs",
