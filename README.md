@@ -247,8 +247,8 @@ public/                   index.html, script.js, style.css
 test.mjs                  offline test suite
 ```
 
-`2.html`, `3.html` and `4.html` are earlier prototypes kept for reference; they
-are outside `public/` and are not served.
+The stray `2.html`, `3.html` and `4.html` prototypes are gone; the app is
+`public/index.html` and nothing was serving those files.
 
 ## Status
 
