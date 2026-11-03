@@ -613,6 +613,63 @@ test('sending the default preset still lets clef steer the rung', async () => {
   assert.equal(events.filter((e) => e.type === 'delta').map((e) => e.text).join(''), 'steered');
 });
 
+test('selecting no preset drops the preset prompt but keeps the decision', async () => {
+  const seen = [];
+  const env = makeEnv({
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"transform","depth":"deep"}' };
+        seen.push({ model, body });
+        if (body.stream) return sse(['bare']);
+        return { response: 'bare' };
+      },
+    }),
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'none', stream: false }),
+  });
+  const body = await res.json();
+  const generation = seen.at(-1);
+
+  assert.equal(res.status, 200);
+  assert.equal(body.decision.preset, null);
+  // No preset prompt, but clef still decides the model and the budget.
+  assert.equal(generation.model, '@cf/qwen/qwen3.8-27b');
+  assert.equal(generation.body.messages.some((m) => m.role === 'system'), false);
+  assert.equal(generation.body.max_tokens, 8192);
+  assert.equal(body.text, 'bare');
+});
+
+test('no preset on the openrouter rung never sends a @preset/ slug', async () => {
+  const original = globalThis.fetch;
+  let sent = null;
+  globalThis.fetch = async (url, init) => {
+    sent = JSON.parse(init.body);
+    return new Response('data: [DONE]\n\n', { status: 200 });
+  };
+
+  try {
+    const res = await call(
+      { OPENROUTER_API_KEY: 'test-key' },
+      '/api/chat',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'none', stream: false }),
+      },
+    );
+    await res.text();
+
+    assert.equal(sent.model, 'google/gemini-2.5-flash');
+    assert.equal(String(sent.model).startsWith('@preset/'), false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test('the worker serves static assets when it has no API route', async () => {
   const env = makeEnv({ ASSETS: { fetch: async () => new Response('<h1>ai-Ncards</h1>') } });
   const res = await worker.fetch(new Request('https://example.com/'), env, ctx);

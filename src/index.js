@@ -224,7 +224,7 @@ function explain(problem) {
 /** The review record: enough to reconstruct a session, capped so KV stays small. */
 function reviewOf({ preset, decision, route, model, lastUser, text }) {
   return {
-    preset: preset?.id,
+    preset: preset?.id ?? null,
     task: decision?.task,
     route,
     model,
@@ -254,16 +254,17 @@ async function chat(request, env, ctx) {
   }
 
   const requested = body.preset ? String(body.preset).toLowerCase() : null;
-  const requestedPreset = requested ? findPreset(requested) : null;
-  if (requested && !requestedPreset) {
+  // "none" is a real selection: no preset prompt and no @preset/ reference.
+  const noneSelected = requested === 'none' || requested === 'no-preset';
+  const requestedPreset = requested && !noneSelected ? findPreset(requested) : null;
+  if (requested && !noneSelected && !requestedPreset) {
     return fail(400, 'unknown_preset', `Unknown preset "${requested}".`, {
       available: publicPresets().map((p) => p.id),
     });
   }
 
-  // There is no preset-less mode: the client always sends one, defaulting to
-  // truth. That default must not outrank the decision, so clef may steer past
-  // it — but a preset the user deliberately picked does outrank the decision.
+  // Truth is the default preset, not a user choice, so it must not outrank the
+  // decision. A preset picked deliberately (anything but the default) does.
   const pinned = Boolean(requestedPreset) && requestedPreset.id !== DEFAULT_PRESET;
 
   const gate = await charge(env, clientIp(request), 300);
@@ -272,16 +273,23 @@ async function chat(request, env, ctx) {
   }
 
   // A preset the user picked wins; decide() only fills the gap.
-  const decision = await decide(env, { messages, images, presetId: pinned ? requested : null });
+  const decision = await decide(env, {
+    messages,
+    images,
+    presetId: pinned ? requested : null,
+    allowPreset: !noneSelected,
+  });
   // A deliberate pick wins outright. Otherwise the decision steers, and the
   // preset the client sent (truth, normally) is the fallback prompt.
-  const preset = pinned
-    ? requestedPreset
-    : (decision.preset && findPreset(decision.preset)) || requestedPreset || findPreset(DEFAULT_PRESET);
+  const preset = noneSelected
+    ? null
+    : pinned
+      ? requestedPreset
+      : (decision.preset && findPreset(decision.preset)) || requestedPreset || findPreset(DEFAULT_PRESET);
 
   // Report the preset that actually ran, not the one the decision model named:
   // they diverge whenever it suggests a preset that no longer exists.
-  const reported = { ...decision, preset: preset?.id };
+  const reported = { ...decision, preset: preset?.id ?? null };
 
   const system = preset?.system
     ? [{ role: 'system', content: preset.system }, ...messages]

@@ -19,6 +19,10 @@ User requests are natural language. Be efficient.`;
 // Default presets - these reference OpenRouter presets by their slug
 // Configure your presets at: https://openrouter.ai/presets
 const DEFAULT_PRESETS = {
+    'none': {
+        name: 'No preset',
+        key: null
+    },
     'truth': {
         name: 'Truth',
         key: 'truth' // OpenRouter preset slug
@@ -37,6 +41,9 @@ const DEFAULT_PRESETS = {
 // uses when neither the user nor the decision model picks one, so it is the one
 // entry that cannot be deleted.
 const FALLBACK_PRESET_KEY = 'truth';
+
+// Selecting "No preset" sends this sentinel: no preset prompt, no @preset/ slug.
+const NO_PRESET_KEY = 'none';
 
 class App {
     constructor() {
@@ -179,13 +186,14 @@ class App {
         let html = '';
         Object.entries(this.presets).forEach(([key, preset]) => {
             const isDefault = key === FALLBACK_PRESET_KEY;
+            const isProtected = isDefault || key === NO_PRESET_KEY;
             html += `
                 <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px; background: var(--bg); border-radius: 8px; margin-bottom: 8px;">
                     <div>
                         <strong>${this.escapeHtml(preset.name)}</strong>
                         ${isDefault ? '<span style="font-size: 11px; opacity: 0.6; margin-left: 6px;">(default)</span>' : ''}
                     </div>
-                    ${!isDefault ? `<button class="btn btn-danger" onclick="app.deletePreset('${key}')" style="padding: 4px 8px; font-size: 12px;">Delete</button>` : ''}
+                    ${!isProtected ? `<button class="btn btn-danger" onclick="app.deletePreset('${key}')" style="padding: 4px 8px; font-size: 12px;">Delete</button>` : ''}
                 </div>
             `;
         });
@@ -383,7 +391,7 @@ class App {
         const card = {
             id: id,
             q: `Preset: ${preset.name}`,
-            r: `OpenRouter Preset: ${preset.key}\n\nThis card uses the OpenRouter preset configuration.`,
+            r: `OpenRouter Preset: ${preset.key || 'none'}\n\nThis card uses the OpenRouter preset configuration.`,
             preset: presetKey,
             styles: {},
             isPresetCard: true
@@ -1101,7 +1109,7 @@ class App {
             const accumulated = await this.streamChat(
                 {
                     messages: [{ role: 'user', content: fullPrompt }],
-                    preset: usePreset ? preset.key : null,
+                    preset: usePreset ? preset.key : NO_PRESET_KEY,
                     signal
                 },
                 (text, first) => this.updateStreamingContent(text, first)
@@ -1657,7 +1665,7 @@ class App {
             const accumulated = await this.streamChat(
                 {
                     messages: [{ role: 'user', content: fullPrompt }],
-                    preset: usePreset ? preset.key : null,
+                    preset: usePreset ? preset.key : NO_PRESET_KEY,
                     signal
                 },
                 (text, first) => this.updateStreamingContent(text, first)
@@ -1708,7 +1716,7 @@ Do not output any other text.`;
         const usePreset = Boolean(preset && preset.key);
 
         this.streamChat(
-            { messages: [{ role: 'user', content: prompt }], preset: usePreset ? preset.key : null },
+            { messages: [{ role: 'user', content: prompt }], preset: usePreset ? preset.key : NO_PRESET_KEY },
             () => {}
         )
         .then(fullText => {

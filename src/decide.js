@@ -147,7 +147,7 @@ export async function recordReview(env, ctx, record) {
  *
  * Stage 6 (review) runs after generation, since it records the answer too.
  */
-export async function decide(env, { messages, images = [], presetId = null } = {}) {
+export async function decide(env, { messages, images = [], presetId = null, allowPreset = true } = {}) {
   const trace = [];
   const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
 
@@ -188,7 +188,8 @@ export async function decide(env, { messages, images = [], presetId = null } = {
 
   // 4. user, then 5. the generation rung. A preset is always in effect — truth
   // is the default, not the absence of one — so this never resolves to null.
-  const preset = presetId || intent.preset || DEFAULT_PRESET;
+  const preset =
+    presetId || (allowPreset ? intent.preset : null) || (allowPreset ? DEFAULT_PRESET : null);
   trace.push('user:handoff');
   trace.push(`rung:${preset}`);
 
