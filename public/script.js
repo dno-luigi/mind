@@ -101,6 +101,11 @@ class App {
 
         this.decoder = new TextDecoder();
         this.abortController = null;
+
+        // A stored answer arrives as one large delta; these drive the reveal that
+        // makes it read like a reply instead of appearing all at once.
+        this.reveal = null;
+        this.revealTimer = null;
     }
 
     loadPresets() {
@@ -932,8 +937,12 @@ class App {
         grid.innerHTML = '';
         
         if (this.cards.length === 0) {
-            grid.appendChild(empty);
-            empty.style.display = 'flex';
+            // renderCard removes the empty state when a card appears, so a later
+            // clear-all leaves nothing to re-append.
+            if (empty) {
+                grid.appendChild(empty);
+                empty.style.display = 'flex';
+            }
         } else {
             empty.style.display = 'none';
             this.cards.forEach(c => this.renderCard(c, false));
@@ -1248,10 +1257,55 @@ class App {
         }
     }
 
+    /**
+     * Reveal a burst instead of painting it in one frame. Only a cached answer is
+     * long enough to qualify, and it is already fully downloaded, so this adds the
+     * reading rhythm without adding any waiting on the network.
+     */
+    runReveal() {
+        clearInterval(this.revealTimer);
+        this.revealTimer = setInterval(() => {
+            const reveal = this.reveal;
+            // A finished or abandoned stream must not keep a timer alive.
+            if (!reveal || !this.streamingId) {
+                clearInterval(this.revealTimer);
+                this.reveal = null;
+                return;
+            }
+            if (reveal.shown >= reveal.target.length) {
+                clearInterval(this.revealTimer);
+                return;
+            }
+
+            // About half a second in total, whatever the length.
+            const step = Math.max(3, Math.ceil(reveal.target.length / 25));
+            reveal.shown = Math.min(reveal.target.length, reveal.shown + step);
+
+            this.paintStreaming(reveal.target.slice(0, reveal.shown), false);
+        }, 20);
+    }
+
     updateStreamingContent(text, replace = false) {
         if (!this.streamingId) return;
         const visible = text.replace(/![^!]+!/g, '');
+
+        // The first event of a cached answer carries the whole reply. Start a
+        // reveal and let later events retarget it instead of jumping.
+        if (replace && visible.length > 160) {
+            this.reveal = { target: visible, shown: 0 };
+            this.runReveal();
+            return;
+        }
+        if (this.reveal) {
+            this.reveal.target = visible;
+            return;
+        }
         
+        this.paintStreaming(visible, replace);
+    }
+
+    /** The DOM half of a stream paint, shared by live tokens and the reveal. */
+    paintStreaming(visible, replace) {
         const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`);
         if (el) {
             if (replace) {
@@ -1278,6 +1332,10 @@ class App {
     finalizeResponse(fullText) {
         const id = this.streamingId;
         if (!id) return;
+
+        // The paint below is authoritative: stop any reveal mid-flight.
+        clearInterval(this.revealTimer);
+        this.reveal = null;
 
         const { cleanText, styles, themeUpdate, actions } = this.parseCommands(fullText);
         const card = this.cards.find(c => c.id === id);
