@@ -104,34 +104,41 @@ class App {
     }
 
     loadPresets() {
+        // Storage is the source of truth. Defaults fill in what storage does not
+        // have — they never replace an entry that is already saved, whatever
+        // shape it was saved in.
+        const merged = {};
+
         try {
             const saved = localStorage.getItem(PRESETS_KEY);
             if (saved) {
-                try {
-                    const parsed = JSON.parse(saved);
-                    // Migrate old presets to new format
-                    const migrated = { ...DEFAULT_PRESETS };
-                    for (const [key, preset] of Object.entries(parsed)) {
-                        if (preset.key) {
-                            // Already new format
-                            migrated[key] = preset;
-                        } else if (preset.prompt) {
-                            // Old format - convert prompt to key
-                            migrated[key] = {
-                                name: preset.name || key,
-                                key: key
-                            };
-                        }
+                const parsed = JSON.parse(saved);
+                for (const [key, preset] of Object.entries(parsed || {})) {
+                    if (!preset || typeof preset !== 'object') continue;
+
+                    const copy = { ...preset, name: preset.name || key };
+                    if (copy.key === null) {
+                        // "No preset" is the one entry that deliberately has no slug.
+                    } else if (typeof copy.key === 'string' && copy.key) {
+                        // Already the current shape.
+                    } else if (typeof copy.prompt === 'string' && copy.prompt) {
+                        // Old shape: the map key was the OpenRouter slug.
+                        copy.key = key;
+                    } else {
+                        copy.key = key;
                     }
-                    return migrated;
-                } catch (e) {
-                    return { ...DEFAULT_PRESETS };
+                    delete copy.prompt;
+                    merged[key] = copy;
                 }
             }
         } catch (e) {
-            console.warn("localStorage not available:", e);
+            console.warn("Cannot read saved presets:", e);
         }
-        return { ...DEFAULT_PRESETS };
+
+        for (const [key, preset] of Object.entries(DEFAULT_PRESETS)) {
+            if (!merged[key]) merged[key] = { ...preset };
+        }
+        return merged;
     }
 
     savePresets() {
@@ -500,6 +507,9 @@ class App {
                 cards: this.cards,
                 theme: this.theme,
                 settings: this.settings,
+                // Without this the chosen preset is forgotten on every reload
+                // and the app silently falls back to the default preset.
+                currentPresetKey: this.currentPresetKey,
                 sessionId: this.sessionId
             };
             localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -518,6 +528,14 @@ class App {
                     this.theme = { ...this.theme, ...data.theme };
                     this.settings = { ...this.settings, ...data.settings };
                     this.sessionId = data.sessionId || this.sessionId;
+
+                    // Restore the selected preset, but only if it still exists.
+                    if (data.currentPresetKey && this.presets[data.currentPresetKey]) {
+                        this.currentPresetKey = data.currentPresetKey;
+                    }
+                    if (!this.presets[this.currentPresetKey]) {
+                        this.currentPresetKey = FALLBACK_PRESET_KEY;
+                    }
                 } catch (e) {
                     console.error("Load failed", e);
                 }
