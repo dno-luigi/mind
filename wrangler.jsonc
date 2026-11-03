@@ -44,23 +44,19 @@
     "enabled": true
   },
 
-  // ---------------------------------------------------------------------------
-  // KV: shared daily neuron budget + clef decision cache.
-  //
-  // Both namespaces exist in the account (MEM = "Memoria", MASTER = "master
-  // truths") but wrangler needs the namespace *id*, and ids are not readable
-  // from here without a login. Copy each one from
-  //   Dashboard → Workers & Pages → KV → Memoria / master truths
-  // then uncomment this block.
-  //
-  // Until then the worker falls back to per-isolate memory: correct for one user,
-  // but the budget resets whenever the isolate is recycled.
-  //
-  // "kv_namespaces": [
-  //   { "binding": "MEM", "id": "<Memoria namespace id>" },
-  //   { "binding": "MASTER", "id": "<master truths namespace id>" }
-  // ],
-  // ---------------------------------------------------------------------------
+  // KV: shared daily neuron budget + clef decision cache, so neither resets
+  // when an isolate is recycled. A namespace id is an identifier, not a
+  // credential, so it is safe to version.
+  "kv_namespaces": [
+    {
+      "binding": "MEM",
+      "id": "4a9bfbffb4d440cba86badc508e2045a"
+    },
+    {
+      "binding": "MASTER",
+      "id": "904eff3af4c14f06964e4f651cce9573"
+    }
+  ],
 
   "vars": {
     // Neurons per IP per UTC day across chat + stt + tts (free allowance is 10000).

@@ -105,11 +105,10 @@ The worker is `mind`. These are attached in the deployment:
 | `AGENT-BROWSING` | service `agent-browsing` | reserved — no route uses it | — |
 | `ASSETS` | static assets | serves `public/` | no frontend |
 
-`MEM` and `MASTER` are commented out in `wrangler.jsonc` because wrangler needs
-the namespace **id**, and an id cannot be read without a dashboard login. Copy
-each one from Dashboard → Workers & Pages → KV → *Memoria* / *master truths*,
-then uncomment. Until then `/api/health` answers `features.sharedBudget: false`
-— the honest signal that the budget is per-isolate and resets.
+Both namespaces are wired in `wrangler.jsonc` by id, so the daily budget and the
+clef decision cache survive isolate restarts. `/api/health` answers
+`features.sharedBudget: true` once they are attached; `false` means the worker
+fell back to per-isolate memory and the budget will reset.
 
 Only the escalation rung needs a secret:
 
