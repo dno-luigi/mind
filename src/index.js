@@ -6,7 +6,7 @@ import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
 import { decide } from './decide.js';
 import { wavInfo, wavChunks } from './audio.js';
-import { DONE, delta, errorEvent, meta, sseData, fromOpenRouterChat, fromWorkersAI } from './normalize.js';
+import { DONE, delta, errorEvent, meta, sseData, upstreamError, fromOpenRouterChat, fromWorkersAI } from './normalize.js';
 
 const encoder = new TextEncoder();
 
@@ -193,6 +193,14 @@ async function openUpstream(env, { messages, images, preset }) {
   throw err;
 }
 
+/** An in-stream provider failure still needs to reach the caller as an error. */
+function explain(problem) {
+  const err = new Error(problem);
+  err.code = 'upstream_error';
+  err.status = 502;
+  return err;
+}
+
 async function chat(request, env) {
   const body = await request.json().catch(() => null);
   if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
@@ -243,7 +251,23 @@ async function chat(request, env) {
   if (!wantsStream) {
     const { route, model, stream, extract } = await openUpstream(env, { messages: system, images, preset });
     let text = '';
-    for await (const data of sseData(stream)) text += extract(data);
+    for await (const data of sseData(stream)) {
+      const problem = upstreamError(data);
+      if (problem) throw explain(problem);
+      text += extract(data);
+    }
+    // An empty answer is not a valid answer. Retry once without streaming so a
+    // shape mismatch reads as recovered text instead of a blank card.
+    if (!text && route === 'workers-ai') {
+      text = await cf.chat(env, {
+        model,
+        messages: system,
+        images,
+        temperature: preset?.temperature,
+        maxTokens: preset?.maxTokens,
+      });
+    }
+    if (!text) return fail(502, 'empty_upstream', `${route} (${model}) returned no text.`);
     return json({ text, route, model, decision: reported });
   }
 
@@ -254,9 +278,28 @@ async function chat(request, env) {
       const send = (chunk) => chunk && controller.enqueue(encoder.encode(chunk));
       try {
         send(meta({ route, model, preset: preset?.id, decision: reported }));
+        let emitted = 0;
         for await (const data of sseData(stream)) {
+          const problem = upstreamError(data);
+          if (problem) throw explain(problem);
           const text = extract(data);
+          if (text) {
+            emitted += 1;
+            send(delta(text));
+          }
+        }
+        if (!emitted && route === 'workers-ai') {
+          const text = await cf.chat(env, {
+            model,
+            messages: system,
+            images,
+            temperature: preset?.temperature,
+            maxTokens: preset?.maxTokens,
+          });
           if (text) send(delta(text));
+          else send(errorEvent('empty_upstream', `${model} returned no text.`));
+        } else if (!emitted) {
+          send(errorEvent('empty_upstream', `${route} (${model}) returned no text.`));
         }
       } catch (err) {
         send(errorEvent(err?.code || 'stream_failed', err?.message || String(err)));

@@ -8,6 +8,7 @@ import { LADDER } from './src/decide.js';
 import { upsertBody, upsertPath, syncPlan } from './src/preset-sync.js';
 import { PRESETS, findPreset } from './src/presets.js';
 import { stateKv, objects, bindingReport } from './src/bindings.js';
+import { upstreamError } from './src/normalize.js';
 
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 
@@ -378,6 +379,80 @@ test('health reports the deployment binding names', () => {
   assert.equal(report.kv.master, false);
   assert.equal(report.r2.bucket, true);
   assert.equal(report.services.agentBrowsing, true);
+});
+
+test('in-stream provider errors are detected instead of read as empty text', () => {
+  assert.equal(upstreamError('{"error":"Model not found"}'), 'Model not found');
+  assert.equal(upstreamError('{"error":{"message":"bad model"}}'), 'bad model');
+  assert.equal(upstreamError('{"response":"ok"}'), null);
+  assert.equal(upstreamError('[DONE]'), null);
+  assert.equal(upstreamError('not json'), null);
+});
+
+test('a stream carrying an error frame surfaces it as an error event', async () => {
+  const encoder = new TextEncoder();
+  const env = makeEnv({
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{}' };
+        if (body.stream) {
+          return new ReadableStream({
+            start(controller) {
+              controller.enqueue(encoder.encode('data: {"error":"Model not found"}\n\n'));
+              controller.close();
+            },
+          });
+        }
+        return { response: 'should not be reached' };
+      },
+    }),
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth' }),
+  });
+
+  const events = await readSSE(res);
+  const failure = events.find((e) => e.type === 'error');
+  assert.ok(failure, 'expected an error event, not a silent empty answer');
+  assert.equal(failure.error.code, 'upstream_error');
+  assert.match(failure.error.message, /Model not found/);
+});
+
+test('an empty stream retries without streaming instead of returning nothing', async () => {
+  let streamed = 0;
+  const encoder = new TextEncoder();
+  const env = makeEnv({
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{}' };
+        if (body.stream) {
+          streamed += 1;
+          return new ReadableStream({
+            start(controller) {
+              controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+              controller.close();
+            },
+          });
+        }
+        return { response: 'recovered' };
+      },
+    }),
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth' }),
+  });
+
+  const events = await readSSE(res);
+  const text = events.filter((e) => e.type === 'delta').map((e) => e.text).join('');
+  assert.equal(text, 'recovered');
+  assert.equal(streamed, 1);
+  assert.equal(events.some((e) => e.type === 'error'), false);
 });
 
 test('the worker serves static assets when it has no API route', async () => {

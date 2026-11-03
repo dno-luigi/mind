@@ -43,6 +43,22 @@ export async function* sseData(stream) {
   }
 }
 
+/**
+ * Workers AI can report a failure as a data frame rather than an HTTP status,
+ * so a broken model looks like a successful empty answer unless this is checked.
+ */
+export function upstreamError(data) {
+  if (!data || data === '[DONE]') return null;
+  try {
+    const parsed = JSON.parse(data);
+    const err = parsed?.error ?? parsed?.errors?.[0] ?? parsed?.result?.error;
+    if (!err) return null;
+    return typeof err === 'string' ? err : err.message || JSON.stringify(err);
+  } catch {
+    return null;
+  }
+}
+
 /** Workers AI native stream: {"response":"..."} */
 export function fromWorkersAI(data) {
   if (!data || data === '[DONE]') return '';
