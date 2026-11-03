@@ -190,16 +190,6 @@ class App {
         }
     }
 
-    /**
-     * The gate is a card you unlock by playing your tune, and it lives on the
-     * console page itself — one piano, one place, checked by the Worker.
-     */
-    openAdminCard() {
-        this.closeModal('settingsModal');
-        window.open('/admin', '_blank');
-        this.showToast('Admin card opened');
-    }
-
     managePresets() {
         this.closeModal('settingsModal');
         this.renderPresetsList();

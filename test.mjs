@@ -899,50 +899,36 @@ test('a generated answer is stored as a candidate', async () => {
   assert.equal(list[0].answer, 'Hello world');
 });
 
-test('the truth console is locked without ADMIN_KEY and keyed with it', async () => {
+test('the admin is gone: nothing over HTTP writes a truth', async () => {
+  const env = makeEnv({ MEM: kvStore().kv, ADMIN_KEY: 'was-once-set' });
+  const headers = { 'x-admin-key': 'was-once-set' };
+
+  for (const [path, method] of [
+    ['/api/admin/unlock', 'POST'],
+    ['/api/truth/candidates', 'GET'],
+    ['/api/truth/resolve', 'POST'],
+    ['/api/truth/save', 'POST'],
+  ]) {
+    const res = await call(env, path, { method, headers });
+    assert.equal(res.status, 404, `${method} ${path} must not exist`);
+  }
+});
+
+test('candidates keep accumulating with no admin route at all', async () => {
   const { kv } = kvStore();
-  const locked = makeEnv({ MEM: kv });
-  const unconfigured = await call(locked, '/api/admin/unlock', { method: 'POST' });
-  assert.equal(unconfigured.status, 503);
+  const env = makeEnv({ MEM: kv });
 
-  const env = makeEnv({ MEM: kv, ADMIN_KEY: 'open-sesame' });
-  const denied = await call(env, '/api/admin/unlock', {
-    method: 'POST',
-    headers: { 'x-admin-key': 'nope' },
-  });
-  assert.equal(denied.status, 401);
+  for (let i = 0; i < PROMOTE_AT; i += 1) {
+    await (
+      await call(env, '/api/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'same question' }] }),
+      })
+    ).text();
+  }
 
-  const ok = await call(env, '/api/admin/unlock', {
-    method: 'POST',
-    headers: { 'x-admin-key': 'open-sesame' },
-  });
-  assert.equal(ok.status, 200);
-
-  const saved = await call(env, '/api/truth/save', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-admin-key': 'open-sesame' },
-    body: JSON.stringify({
-      input: 'is this real',
-      answer: 'yes',
-      layer: 'master',
-      editor: 'tester',
-      citations: [{ title: 'source', url: 'https://example.com' }],
-    }),
-  });
-  assert.equal(saved.status, 200);
-  assert.equal((await saved.json()).truth.layer, 'master');
-
-  const listed = await call(env, '/api/truth/candidates', {
-    method: 'GET',
-    headers: { 'x-admin-key': 'open-sesame' },
-  });
-  assert.equal(listed.status, 200);
-  assert.equal((await listed.json()).promoteAt, PROMOTE_AT);
-
-  const resolved = await call(env, '/api/truth/resolve', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-admin-key': 'open-sesame' },
-    body: JSON.stringify({ input: 'Is this real?' }),
-  });
-  assert.equal((await resolved.json()).layer, 'master');
+  const [candidate] = await listCandidates(env);
+  assert.equal(candidate.hits, PROMOTE_AT);
+  assert.equal(candidate.suggested, true);
 });

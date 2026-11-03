@@ -144,28 +144,12 @@ so nothing has to be retyped to promote it. The key is a blunt normalization of
 the query — lower case, collapsed spacing, trailing punctuation removed — because
 a fuzzy match would promote the wrong answer.
 
-`/admin` is the console, entered through a card gate you unlock by playing a
-tune. It is the same piano and the same formula as the old console — SHA-256 over
-the MIDI note bytes — so playing the old melody still works. Only the hash leaves
-the browser: the page sends it as the key and `POST /api/admin/unlock` compares it
-against the `ADMIN_KEY` secret, so the check happens where the page cannot reach
-it. Without that secret every admin route answers 503 rather than opening.
-
-Set the secret to the hash of your tune. A pasted 64-character key is accepted by
-the gate too, so a known hash needs no playing:
-
-```sh
-npx wrangler secret put ADMIN_KEY
-```
-
-To compute a hash yourself — 60, 62, 64 is C, D, E:
-
-```sh
-node -e "console.log(require('crypto').createHash('sha256').update(Buffer.from([60,62,64])).digest('hex'))"
-```
-
-Promotion moves a candidate to `provisional`, then to `master`, and a master
-truth answers its query out of KV without running clef or any model.
+There is no admin page and no admin route. Nothing reachable over HTTP can write
+a truth — the console that did was removed after it failed to launch, and the
+candidate store it depended on is not. Promotion is a script calling `promote()`
+in `src/truth.js`: `master` records go to the `MASTER` namespace, `provisional`
+ones to `MEM`, and the id is the SHA-256 of the normalized query. A master truth
+answers its query straight out of KV without running clef or any model.
 
 Only the escalation rung needs a secret:
 
