@@ -1,5 +1,22 @@
 // Same-origin: the Worker serves this page and /api/chat, so there is no CORS.
 const DEFAULT_PROXY_URL = "/api/chat";
+
+/**
+ * A path-less URL POSTs to "/", which static assets answer with a bare 405 — so
+ * a bare origin saved in Settings looks exactly like a broken app. Anything that
+ * already carries a path is left alone.
+ */
+function normalizeChatUrl(raw) {
+    const value = String(raw || '').trim();
+    if (!value) return '';
+    try {
+        const url = new URL(value, window.location.href);
+        if (url.pathname === '' || url.pathname === '/') url.pathname = '/api/chat';
+        return url.href;
+    } catch {
+        return '';
+    }
+}
 const STORAGE_KEY = "ai_ndraft_data_v2";
 const PRESETS_KEY = "ai_ncards_presets_v1";
 
@@ -413,12 +430,13 @@ class App {
 
     getProxyUrl() {
         const inputVal = document.getElementById('proxyUrlInput')?.value.trim();
-        if (inputVal) {
-            this.settings.proxyUrl = inputVal;
+        const url = normalizeChatUrl(inputVal || this.settings.proxyUrl) || DEFAULT_PROXY_URL;
+        // Persist the normalized form so a bare origin stops being sent as "/".
+        if (url !== this.settings.proxyUrl) {
+            this.settings.proxyUrl = url;
             this.saveState();
-            return inputVal;
         }
-        return this.settings.proxyUrl || DEFAULT_PROXY_URL;
+        return url;
     }
 
     bindEvents() {
@@ -1144,7 +1162,8 @@ class App {
      * between Workers AI and OpenRouter needs no frontend change.
      */
     async streamChat({ messages, preset = null, signal = null }, onText) {
-        const res = await fetch(this.getProxyUrl(), {
+        const url = this.getProxyUrl();
+        const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ messages, preset, stream: true }),
@@ -1152,11 +1171,14 @@ class App {
         });
 
         if (!res.ok || !res.body) {
-            let detail = `HTTP ${res.status}`;
+            let detail = `HTTP ${res.status} from ${url}`;
             try {
                 const body = await res.json();
                 detail = body?.error?.message || detail;
             } catch {}
+            if (res.status === 405) {
+                detail += ' — chat is POST /api/chat; clear the Proxy URL in Settings.';
+            }
             throw new Error(detail);
         }
 

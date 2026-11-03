@@ -56,6 +56,12 @@ export default {
 
     if (url.pathname.startsWith('/f/')) return serveObject(env, url.pathname.slice(3));
 
+    // Static assets answer a POST to "/" with a bare 405, which reads as the
+    // whole app being down. Name the route that was actually wanted instead.
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      return fail(405, 'wrong_route', `${request.method} ${url.pathname} is not an endpoint; chat is POST /api/chat.`);
+    }
+
     if (env?.ASSETS?.fetch) return env.ASSETS.fetch(request);
     return new Response('Not found', { status: 404 });
   },
