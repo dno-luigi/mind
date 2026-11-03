@@ -101,7 +101,6 @@ The worker is `mind`. These are attached in the deployment:
 | `BUCKET` | R2 `r2-explorer-bucket` | `/api/upload`, `/f/:id`, TTS mp3 cache | uploads 503, TTS regenerates |
 | `MEM` | KV `Memoria` | shared daily budget, decision cache | per-isolate memory, resets |
 | `MASTER` | KV `master truths` | reserved — nothing reads it yet | — |
-| `ORPROXY` | service `orproxy` | reserved — see below | direct calls need the key |
 | `AGENT-BROWSING` | service `agent-browsing` | reserved — no route uses it | — |
 | `ASSETS` | static assets | serves `public/` | no frontend |
 
@@ -116,11 +115,14 @@ Only the escalation rung needs a secret:
 npx wrangler secret put OPENROUTER_API_KEY
 ```
 
-`MASTER`, `ORPROXY` and `AGENT-BROWSING` are bound to match the account but are
-not called. `AGENT-BROWSING` has no route yet, and `ORPROXY` speaks the older
-`ai_ncards_format` surface (`/api/openrouter`, `/api/presets`), not
-OpenAI-compatible JSON — routing this client through it would need a translation
-layer, so the Worker talks to OpenRouter directly while a key is present.
+`MASTER` and `AGENT-BROWSING` are bound to match the account but are not called:
+no route reads the `master truths` namespace yet, and `AGENT-BROWSING` is a
+browsing tool this app does not use. The Worker reaches OpenRouter directly with
+`OPENROUTER_API_KEY`.
+
+Configuration lives in `wrangler.jsonc` **only**. With both a `wrangler.toml` and
+a `wrangler.jsonc` in the repo, wrangler 4.157 silently uses the `.jsonc` and
+ignores the `.toml` — no warning — so any `wrangler.toml` here is dead config.
 
 ## Why the voice path looks like this
 

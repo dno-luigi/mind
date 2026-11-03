@@ -27,16 +27,12 @@
   ],
 
   // Bound to match the deployment, and so /api/health can report reachability.
-  // Nothing calls these yet: ORPROXY speaks the older ai_ncards_format surface
-  // (/api/openrouter), and no route needs AGENT-BROWSING.
+  // No route calls it yet: it is a browsing tool this app does not use.
   "services": [
     {
-      "binding": "ORPROXY",
-      "service": "orproxy"
-    },
-    {
       "binding": "AGENT-BROWSING",
-      "service": "agent-browsing"
+      "service": "agent-browsing",
+      "environment": "production"
     }
   ],
 

@@ -61,7 +61,6 @@ test('health reports which rungs and bindings are live', async () => {
   assert.equal(body.service, 'mind');
   assert.equal(body.engine.workersAI, true);
   assert.equal(body.engine.openrouterKey, false);
-  assert.equal(body.engine.openrouterProxy, false);
   assert.equal(body.bindings.kv.mem, false);
   assert.equal(body.bindings.r2.bucket, false);
   assert.equal(body.features.uploads, false);
@@ -373,12 +372,11 @@ test('stores resolve to the deployed names, with the generic ones as fallback', 
 });
 
 test('health reports the deployment binding names', () => {
-  const report = bindingReport({ AI: 1, ASSETS: 1, MEM: 1, BUCKET: 1, ORPROXY: 1 });
+  const report = bindingReport({ AI: 1, ASSETS: 1, MEM: 1, BUCKET: 1, 'AGENT-BROWSING': 1 });
   assert.equal(report.kv.mem, true);
   assert.equal(report.kv.master, false);
   assert.equal(report.r2.bucket, true);
-  assert.equal(report.services.orproxy, true);
-  assert.equal(report.services.agentBrowsing, false);
+  assert.equal(report.services.agentBrowsing, true);
 });
 
 test('the worker serves static assets when it has no API route', async () => {

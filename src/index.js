@@ -86,7 +86,6 @@ function health(env) {
     engine: {
       workersAI: has(env, 'AI'),
       openrouterKey: has(env, 'OPENROUTER_API_KEY'),
-      openrouterProxy: has(env, 'ORPROXY'),
     },
     bindings: bindingReport(env),
     models: {

@@ -24,7 +24,6 @@ export function bindingReport(env) {
       legacy: Boolean(env?.R2),
     },
     services: {
-      orproxy: Boolean(env?.ORPROXY),
       agentBrowsing: Boolean(env?.['AGENT-BROWSING']),
     },
   };
