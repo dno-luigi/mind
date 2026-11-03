@@ -40,7 +40,31 @@
   .gate-card.open { transform: rotateY(180deg); opacity: 0; }
   .gate-card h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: 0.02em; }
   .gate-card p { margin: 0 0 18px; color: var(--dim); font-size: 13px; }
-  .gate-card .lock { font-size: 28px; margin-bottom: 10px; }
+  .gate-card .lock { font-size: 26px; margin-bottom: 8px; }
+
+  /* ---- the piano ------------------------------------------------------- */
+  .melody { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin: 2px 0 12px; }
+  .melody-key {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    aspect-ratio: 1 / 1.35;
+    padding-bottom: 8px;
+    background: linear-gradient(180deg, #223050, #17223a);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--dim);
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.08s ease, background 0.15s ease, color 0.15s ease;
+  }
+  .melody-key:hover { background: #26375c; }
+  .melody-key.active { background: linear-gradient(180deg, #3b82f6, #2563eb); color: #fff; transform: translateY(2px); }
+  .melody-bar { display: flex; gap: 5px; flex-wrap: wrap; min-height: 24px; margin-bottom: 10px; }
+  .pill { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: rgba(59, 130, 246, 0.16); color: #93c5fd; }
+  .pattern-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 10px; }
 
   input, textarea, select {
     width: 100%;
@@ -117,13 +141,19 @@
 
 <div id="gate">
   <div class="gate-card" id="gateCard">
-    <div class="lock">🔒</div>
+    <div class="lock">🎹</div>
     <h1>Truth Admin</h1>
-    <p>This is the card gate. The key is checked by the Worker — the page cannot open itself.</p>
-    <input id="keyInput" type="password" placeholder="Admin key" autocomplete="off">
-    <div class="row">
-      <button class="primary" id="unlockBtn">Unlock</button>
+    <p>Play the tune. Only its hash leaves the browser, and the Worker decides whether it opens.</p>
+    <div class="melody" id="melodyKeys"></div>
+    <div class="melody-bar" id="melodyBar"></div>
+    <div class="row" style="margin-top:0;">
+      <button class="primary" id="melodyUnlock">Unlock</button>
+      <button class="ghost" id="melodyClear">Clear</button>
       <button class="ghost" onclick="location.href='/'">Back to cards</button>
+    </div>
+    <div class="pattern-row">
+      <input id="patternInput" type="text" placeholder="Pattern (60-62-64) or a 64-character key" autocomplete="off">
+      <button class="ghost" id="melodyImport">Import</button>
     </div>
     <div class="status" id="gateStatus"></div>
   </div>
@@ -212,9 +242,102 @@
     loadCandidates();
   }
 
+  // ---- the tune is the key ---------------------------------------------
+  const NOTES = [60, 62, 64, 65, 67, 69, 71];
+  const NAMES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+  let melody = [];
+
+  function renderPiano() {
+    const piano = $('melodyKeys');
+    piano.innerHTML = '';
+    NOTES.forEach((note, i) => {
+      const key = document.createElement('div');
+      key.className = 'melody-key';
+      key.dataset.note = String(note);
+      key.textContent = NAMES[i];
+      key.onclick = () => {
+        playNote(note);
+        melody.push(note);
+        updateBar();
+        key.classList.add('active');
+        setTimeout(() => key.classList.remove('active'), 120);
+      };
+      piano.appendChild(key);
+    });
+  }
+
+  function playNote(midi) {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const freq = 440 * Math.pow(2, (midi - 69) / 12);
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.21);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.21);
+      osc.onended = () => ctx.close();
+    } catch {
+      /* no audio, still a keypad */
+    }
+  }
+
+  function noteName(midi) {
+    const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    return names[midi % 12] + Math.floor(midi / 12 - 1);
+  }
+
+  function updateBar() {
+    const bar = $('melodyBar');
+    bar.innerHTML = '';
+    melody.forEach((note) => {
+      const pill = document.createElement('span');
+      pill.className = 'pill';
+      pill.textContent = noteName(note);
+      bar.appendChild(pill);
+    });
+  }
+
+  /** Decimal MIDI notes, as the old console exported them: 60-62-64. */
+  function parsePattern(text) {
+    return String(text || '')
+      .split(/[^0-9]+/)
+      .filter(Boolean)
+      .map((part) => parseInt(part, 10))
+      .filter((note) => Number.isFinite(note) && note > 0 && note < 128);
+  }
+
+  async function sha256Hex(bytes) {
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  /**
+   * Same formula the old console used: SHA-256 over the MIDI note bytes. A
+   * pasted 64-character key is taken as-is, so a known hash works too.
+   */
+  async function melodyKey() {
+    const typed = $('patternInput').value.trim();
+    if (/^[0-9a-f]{64}$/i.test(typed)) return typed.toLowerCase();
+    if (!melody.length && typed) {
+      melody = parsePattern(typed);
+      updateBar();
+    }
+    if (!melody.length) return '';
+    return sha256Hex(new Uint8Array(melody));
+  }
+
   async function unlock() {
-    const key = $('keyInput').value.trim();
-    if (!key) { status($('gateStatus'), 'Enter the admin key.'); return; }
+    const key = await melodyKey();
+    if (!key) {
+      status($('gateStatus'), 'Play the tune, or paste its pattern.');
+      return;
+    }
     adminKey = key;
     status($('gateStatus'), 'Checking…');
     try {
@@ -355,8 +478,25 @@
     }
   }
 
-  $('unlockBtn').onclick = unlock;
-  $('keyInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') unlock(); });
+  $('melodyUnlock').onclick = unlock;
+  $('melodyClear').onclick = () => {
+    melody = [];
+    updateBar();
+    status($('gateStatus'), '');
+  };
+  $('melodyImport').onclick = () => {
+    const notes = parsePattern($('patternInput').value);
+    if (!notes.length) {
+      status($('gateStatus'), 'Paste a pattern like 60-62-64.');
+      return;
+    }
+    melody = notes;
+    updateBar();
+    status($('gateStatus'), 'Pattern imported. Press Unlock.');
+  };
+  $('patternInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') unlock(); });
+  renderPiano();
+  updateBar();
   $('reloadBtn').onclick = loadCandidates;
   $('loadBtn').onclick = loadTruth;
   $('saveBtn').onclick = () => saveTruth();
@@ -372,10 +512,19 @@
     $('charCount').textContent = ($('answer').value || '').length + ' characters';
   });
 
-  // A key from the app's gate card is reused here, so the card is entered once.
+  // A key from an earlier visit skips the tune; the Worker still verifies it.
   if (adminKey) {
-    $('keyInput').value = adminKey;
-    unlock();
+    $('patternInput').value = adminKey;
+    api('/api/admin/unlock', { method: 'POST' })
+      .then(() => {
+        $('gateCard').classList.add('open');
+        setTimeout(showConsole, 260);
+      })
+      .catch(() => {
+        adminKey = '';
+        sessionStorage.removeItem(KEY_STORE);
+        status($('gateStatus'), 'That saved key no longer unlocks the console.');
+      });
   }
 </script>
 </body>

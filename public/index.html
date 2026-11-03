@@ -151,8 +151,8 @@
                 </div>
                 <div class="style-section">
                     <h4>Admin</h4>
-                    <p style="font-size: 12px; opacity: 0.7; margin-bottom: 10px;">Truth promotion sits behind a gated card. The key is checked by the Worker, not the page.</p>
-                    <button class="btn btn-ghost" onclick="app.openAdminCard()"><i class="fas fa-lock"></i> Admin Card</button>
+                    <p style="font-size: 12px; opacity: 0.7; margin-bottom: 10px;">Truth promotion is behind a card you unlock by playing your tune. The Worker checks it, not this page.</p>
+                    <button class="btn btn-ghost" onclick="app.openAdminCard()"><i class="fas fa-music"></i> Admin Card</button>
                 </div>
                 <div class="style-section">
                     <h4>Presets</h4>
@@ -288,24 +288,6 @@
             <div class="modal-footer">
                 <button class="btn btn-ghost" onclick="app.closeModal('styleModal')">Cancel</button>
                 <button class="btn btn-primary" onclick="app.saveStyles()">Apply Styles</button>
-            </div>
-        </div>
-    </div>
-
-    <div class="modal-overlay" id="adminGateModal">
-        <div class="modal">
-            <div class="modal-header">
-                <h3>Admin Card</h3>
-                <button class="btn btn-ghost" onclick="app.closeModal('adminGateModal')"><i class="fas fa-times"></i></button>
-            </div>
-            <div class="modal-body">
-                <p style="font-size:13px; opacity:0.8; margin-bottom:10px;">This card opens the truth console for this tab. Enter the admin key.</p>
-                <input type="password" id="adminKeyInput" placeholder="Admin key" autocomplete="off" style="width:100%; margin-bottom:8px;">
-                <div id="adminGateStatus" style="font-size:12px; opacity:0.75; min-height:16px;"></div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('adminGateModal')">Cancel</button>
-                <button class="btn btn-primary" onclick="app.unlockAdminCard()">Unlock</button>
             </div>
         </div>
     </div>
