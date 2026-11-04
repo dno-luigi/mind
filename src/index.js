@@ -92,7 +92,7 @@ async function route(request, env, ctx, url) {
   if (path === '/api/engine' && method === 'GET') return engineView(env);
   if (path === '/api/engine' && method === 'POST') return switchEngine(request, env);
   // Headless screenshots. Billed per browser-second, so one page, one shot, closed.
-  if (path === '/api/shot' && method === 'GET') return shot(url, env);
+  if (path === '/api/shot' && method === 'GET') return shot(url, env, ctx);
 
   // The console reads the store; it still cannot write one. Every route below
   // needs ADMIN_KEY, and an unset key fails closed rather than open.

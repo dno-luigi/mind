@@ -393,3 +393,17 @@ and `/api/health` reports `features.screenshots: false`. It is currently
 unauthenticated: `?url=` is validated as http(s) and nothing else, but anyone
 who finds the route can spend browser seconds, so put it behind `ADMIN_KEY`
 before pointing a busy page at it.
+
+## Pages on cards
+
+A card can carry the page it is about. Only the URL is stored; the image is drawn
+from `/api/shot` when the card renders, so a board of twenty pages does not add
+twenty megabytes to localStorage.
+
+- Name a link in a prompt — `summarise https://example.com/report` — and the card
+  it produces shows that page's screenshot, linked to the page.
+- Or use the card menu: **Screenshot Page** attaches or replaces the page on a
+  card that already exists.
+- Tapping the thumbnail opens the page instead of flipping the card.
+- Shots are cached in R2 for ten minutes (`x-screenshot-cache: hit | miss`), which
+  is what stops a grid of cards launching a browser on every render.

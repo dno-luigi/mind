@@ -457,6 +457,32 @@ class App {
         return url;
     }
 
+    /**
+     * The Worker that serves this page also serves /api/shot, so a card's page
+     * image comes from wherever chat comes from — no key, no third party.
+     */
+    shotUrl(raw, full = false) {
+        const base = this.getProxyUrl().replace(/\/api\/chat$/, '');
+        const query = new URLSearchParams({ url: String(raw || '') });
+        if (full) query.set('full', '1');
+        return `${base}/api/shot?${query}`;
+    }
+
+    /** The first http(s) URL in a prompt — the page a card is about, if any. */
+    urlIn(text) {
+        const match = String(text || '').match(/https?:\/\/[^\s<>"']+/i);
+        return match ? match[0].replace(/[),.;:]+$/, '') : '';
+    }
+
+    /** The page as a linking thumbnail, or nothing when the card has no page. */
+    shotHtml(card) {
+        if (!card || !card.url) return '';
+        const href = encodeURI(card.url);
+        return `<a class="card-shot" href="${href}" target="_blank" rel="noopener noreferrer" title="${href}">
+                    <img loading="lazy" src="${this.shotUrl(card.url, card.shotFull)}" alt="Screenshot of ${href}">
+                </a>`;
+    }
+
     bindEvents() {
         const sendBtn = document.getElementById('sendBtn');
         sendBtn.addEventListener('click', () => this.handleSendClick());
@@ -897,14 +923,17 @@ class App {
         }
     }
 
-    addCard(q, r, styles = {}) {
+    addCard(q, r, styles = {}, url = '') {
         const id = crypto.randomUUID();
         const card = { 
             id, 
             q, 
             r, 
             styles,
-            preset: this.currentPresetKey 
+            preset: this.currentPresetKey,
+            // Optional page this card is about. Only the URL is stored; the
+            // screenshot is rendered by /api/shot when the card is drawn.
+            url
         };
         this.cards.push(card);
         this.pushHistory("Add Card");
@@ -995,6 +1024,7 @@ class App {
                         </div>
                     </div>
                     <div class="content">${this.md(card.q)}</div>
+                    ${this.shotHtml(card)}
                 </div>
                 <div class="card-face card-back">
                     <div class="card-header">
@@ -1017,7 +1047,8 @@ class App {
 
     attachCardEvents(div, id) {
         div.addEventListener('click', (e) => {
-            if (e.target.closest('button') || e.target.closest('.card-actions')) return;
+            // Quick filters keep links, and the page shot, working as links.
+            if (e.target.closest('button') || e.target.closest('.card-actions') || e.target.closest('a')) return;
             if (this.selectedIds.size > 0) {
                 e.stopPropagation();
                 this.toggleSelect(id, e);
@@ -1031,14 +1062,14 @@ class App {
             const currentTime = new Date().getTime();
             const tapLength = currentTime - lastTap;
             if (tapLength < 300 && tapLength > 0) {
-                if (e.target.closest('button') || e.target.closest('.card-actions')) return;
+                if (e.target.closest('button') || e.target.closest('.card-actions') || e.target.closest('a')) return;
                 this.openFullscreen(id);
                 e.preventDefault();
             }
             lastTap = currentTime;
         });
         div.addEventListener('dblclick', (e) => {
-            if (!e.target.closest('button')) this.openFullscreen(id);
+            if (!e.target.closest('button') && !e.target.closest('a')) this.openFullscreen(id);
         });
 
         let pressTimer;
@@ -1128,7 +1159,10 @@ class App {
             return;
         }
 
-        this.streamingId = contextCardId ? contextCardId : this.addCard(prompt, '...', {});
+        // Naming a page in the prompt gives the card that page: the thumbnail is
+        // part of the card, so the answer and what it is about stay together.
+        const pageUrl = contextCardId ? '' : this.urlIn(prompt);
+        this.streamingId = contextCardId ? contextCardId : this.addCard(prompt, '...', {}, pageUrl);
         
         const cardEl = document.querySelector(`.flip-card[data-id="${this.streamingId}"]`);
         if(cardEl && !contextCardId) setTimeout(() => cardEl.classList.add('flipped'), 100);
@@ -1581,6 +1615,7 @@ class App {
                 this.exportToPDF();
                 this.clearSelection();
                 break;
+            case 'shot-page': this.attachScreenshot(id); break;
             case 'fullscreen': this.openFullscreen(id); break;
             case 'delete': 
                 if(confirm("Delete this card?")) {
@@ -1602,6 +1637,46 @@ class App {
                 this.openEditor(card.q);
                 break;
         }
+    }
+
+    /**
+     * Give a card a page to show. Free text rather than a picker: the URL is
+     * usually already in the prompt, so the default is whatever that was.
+     */
+    attachScreenshot(id) {
+        const card = this.cards.find(c => c.id === id);
+        if (!card) return;
+
+        const typed = window.prompt('Page URL to screenshot', card.url || this.urlIn(card.q) || 'https://');
+        if (typed === null) return;
+
+        const url = typed.trim();
+        if (!/^https?:\/\//i.test(url)) {
+            this.showToast('Only http and https pages');
+            return;
+        }
+
+        card.url = url;
+        card.shotFull = false;
+        this.saveState();
+        this.paintShot(card);
+        this.showToast('Loading page shot…');
+    }
+
+    /**
+     * Repaint just the thumbnail. renderAll() would drop every card you had
+     * flipped, which is a heavy price for adding one image.
+     */
+    paintShot(card) {
+        const el = document.querySelector(`.flip-card[data-id="${card.id}"]`);
+        const face = el?.querySelector('.card-face:not(.card-back)');
+        if (!face) return;
+
+        face.querySelector('.card-shot')?.remove();
+        if (!card.url) return;
+
+        const request = face.querySelector('.content');
+        if (request) request.insertAdjacentHTML('afterend', this.shotHtml(card));
     }
 
     openModal(id) {
@@ -1937,7 +2012,7 @@ Do not output any other text.`;
 
         const requestPane = document.getElementById('fsRequestPane');
         const requestContent = document.getElementById('fsRequest');
-        requestContent.innerHTML = this.md(card.q);
+        requestContent.innerHTML = this.md(card.q) + this.shotHtml(card);
         requestPane.style.display = 'none';
 
         const responseContent = document.getElementById('fsResponse');

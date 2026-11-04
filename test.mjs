@@ -1566,3 +1566,31 @@ test('health only advertises screenshots when the browser is bound', async () =>
   assert.equal(on.features.screenshots, true);
   assert.equal(on.bindings.browser, true);
 });
+
+function fakeBucket(bytes = new Uint8Array([1, 2, 3]), uploaded = new Date()) {
+  return {
+    async get() {
+      return { uploaded, async arrayBuffer() { return bytes.buffer; } };
+    },
+    async put() {},
+  };
+}
+
+test('a fresh cached shot is served without launching a browser', async () => {
+  // No MYBROWSER in this env, so the answer can only have come from the cache.
+  const res = await call(makeEnv({ BUCKET: fakeBucket() }), '/api/shot?url=https://example.com');
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'image/jpeg');
+  assert.equal(res.headers.get('x-screenshot-cache'), 'hit');
+  assert.deepEqual(new Uint8Array(await res.arrayBuffer()), new Uint8Array([1, 2, 3]));
+});
+
+test('a stale cached shot is not passed off as current', async () => {
+  const old = new Date(Date.now() - 60 * 60 * 1000);
+  const res = await call(
+    makeEnv({ BUCKET: fakeBucket(new Uint8Array([1]), old) }),
+    '/api/shot?url=https://example.com',
+  );
+  assert.equal(res.status, 501);
+  assert.equal((await res.json()).error.code, 'browser_unbound');
+});

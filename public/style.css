@@ -252,3 +252,7 @@ button.btn { padding: 10px 16px; border-radius: 8px; border: none; cursor: point
 #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 
 #emptyState { text-align: center; color: rgba(255,255,255,0.3); margin-top: 50px; font-size: 18px; pointer-events: none; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+
+/* A card that is about a page shows that page, and links out to it. */
+.card-shot { display: block; margin: 10px 0 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #000; }
+.card-shot img { display: block; width: 100%; height: auto; }
