@@ -23,13 +23,20 @@ export const masterKv = (env) => env?.MASTER || stateKv(env) || null;
 export const truthService = (env) => env?.TRUTH || null;
 export const objects = (env) => env?.BUCKET || env?.R2 || null;
 
+/**
+ * Browser Rendering. The account names it BROWSER; MYBROWSER is the name in
+ * Cloudflare's own docs, so it stays supported and a deployment already wired
+ * either way needs no rename. They are the same binding, not two.
+ */
+export const browserBinding = (env) => env?.BROWSER || env?.MYBROWSER || null;
+
 /** What is actually attached, by its deployed name, for /api/health. */
 export function bindingReport(env) {
   return {
     ai: Boolean(env?.AI),
     assets: Boolean(env?.ASSETS),
     // Present only when Browser Rendering is enabled for the account.
-    browser: Boolean(env?.MYBROWSER),
+    browser: Boolean(browserBinding(env)),
     kv: {
       mem: Boolean(env?.MEM),
       master: Boolean(env?.MASTER),

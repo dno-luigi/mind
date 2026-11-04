@@ -381,10 +381,11 @@ bytes. One request launches one browser, navigates once with a 20 second limit,
 shoots, and closes in a `finally` — a failed navigation cannot leave a session
 billing in the background. The answer is JPEG at quality 80, not PNG, on purpose.
 
-The binding is `MYBROWSER` in `wrangler.jsonc`:
+The binding is `BROWSER` in `wrangler.jsonc`. The code accepts `MYBROWSER` as well —
+Cloudflare's docs use that name — so a deployment wired either way needs no rename:
 
 ```jsonc
-"browser": { "binding": "MYBROWSER" }
+"browser": { "binding": "BROWSER" }
 ```
 
 Browser Rendering must be enabled on the account, and it is billed per

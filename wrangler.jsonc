@@ -19,9 +19,10 @@
 
   // Browser Rendering powers /api/shot (headless screenshots). It needs the
   // Browser Rendering entitlement on the account and bills per browser second,
-  // so the route is one page, one shot, one close.
+  // so the route is one page, one shot, one close. BROWSER is the name this
+  // account uses; the code also accepts MYBROWSER (Cloudflare's docs name).
   "browser": {
-    "binding": "MYBROWSER"
+    "binding": "BROWSER"
   },
 
   // Already exists in this account (r2-explorer-bucket). Enabling it turns on

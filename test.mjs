@@ -1594,3 +1594,14 @@ test('a stale cached shot is not passed off as current', async () => {
   assert.equal(res.status, 501);
   assert.equal((await res.json()).error.code, 'browser_unbound');
 });
+
+test('BROWSER is accepted as the browser binding name', async () => {
+  const health = await (await call(makeEnv({ BROWSER: {} }), '/api/health')).json();
+  assert.equal(health.features.screenshots, true);
+  assert.equal(health.bindings.browser, true);
+
+  // A stub is not a browser session, so the route has to fail cleanly, not crash.
+  const res = await call(makeEnv({ BROWSER: {} }), '/api/shot?url=https://example.com');
+  assert.equal(res.status, 502);
+  assert.equal((await res.json()).error.code, 'screenshot_failed');
+});

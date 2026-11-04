@@ -1,6 +1,6 @@
 import puppeteer from '@cloudflare/puppeteer';
 import { fail, sha256Hex } from './util.js';
-import { objects } from './bindings.js';
+import { objects, browserBinding } from './bindings.js';
 
 /**
  * Screenshot a page with Browser Rendering.
@@ -85,18 +85,20 @@ export async function shot(url, env, ctx = {}) {
     }
   }
 
-  if (!env?.MYBROWSER) {
+  // BROWSER on this account, MYBROWSER in Cloudflare's docs — either name works.
+  const browser = browserBinding(env);
+  if (!browser) {
     return fail(
       501,
       'browser_unbound',
-      'Add the Browser Rendering binding (MYBROWSER) to wrangler.jsonc and deploy again.',
+      'Add the Browser Rendering binding (BROWSER) to wrangler.jsonc and deploy again.',
     );
   }
 
-  let browser = null;
+  let session = null;
   try {
-    browser = await puppeteer.launch(env.MYBROWSER);
-    const page = await browser.newPage();
+    session = await puppeteer.launch(browser);
+    const page = await session.newPage();
     await page.setViewport(VIEWPORT);
     await page.goto(parsed.href, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
     const img = await page.screenshot({ type: 'jpeg', quality: JPEG_QUALITY, fullPage });
@@ -119,6 +121,6 @@ export async function shot(url, env, ctx = {}) {
     // worker is fine, the thing it was asked to look at is not.
     return fail(502, 'screenshot_failed', err?.message || String(err), { url: parsed.href });
   } finally {
-    if (browser) await browser.close().catch(() => {});
+    if (session) await session.close().catch(() => {});
   }
 }

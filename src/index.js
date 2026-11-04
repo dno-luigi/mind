@@ -1,6 +1,6 @@
 import { json, fail, has, options, b64FromBytes, bytesFromB64, clientIp, keyMatches } from './util.js';
 import { charge } from './budget.js';
-import { stateKv, objects, bindingReport } from './bindings.js';
+import { stateKv, objects, bindingReport, browserBinding } from './bindings.js';
 import { engineFor, setEngineFor, canUseCloudflare } from './engine.js';
 import { publicPresets, findPreset, openRouterBackedPresets, DEFAULT_PRESET } from './presets.js';
 import * as cf from './providers/workers-ai.js';
@@ -144,7 +144,7 @@ async function health(env) {
       // Candidates are recorded in MEM; truth records are seeded out of band.
       truth: Boolean(kv),
       // Browser Rendering is opt-in: no binding, no /api/shot.
-      screenshots: Boolean(env?.MYBROWSER),
+      screenshots: Boolean(browserBinding(env)),
     },
   });
 }
