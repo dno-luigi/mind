@@ -18,6 +18,12 @@ const NAV_TIMEOUT_MS = 20000;
 const MAX_URL_CHARS = 2000;
 const JPEG_QUALITY = 80;
 
+/**
+ * Puppeteer opens 800x600, which makes every desktop page look like a phone
+ * turned sideways. A real desktop viewport is the whole point of the shot.
+ */
+const VIEWPORT = { width: 1280, height: 800, deviceScaleFactor: 1 };
+
 export async function shot(url, env) {
   const target = url.searchParams.get('url');
 
@@ -54,6 +60,7 @@ export async function shot(url, env) {
   try {
     browser = await puppeteer.launch(env.MYBROWSER);
     const page = await browser.newPage();
+    await page.setViewport(VIEWPORT);
     await page.goto(parsed.href, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
     const img = await page.screenshot({ type: 'jpeg', quality: JPEG_QUALITY, fullPage });
 
