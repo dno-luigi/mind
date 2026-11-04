@@ -1,5 +1,6 @@
 import { sha256Hex } from './util.js';
 import { stateKv, browsingService } from './bindings.js';
+import { readPage, firstUrl } from './page.js';
 import { resolveTruth, questionOf } from './truth.js';
 import { DEFAULT_PRESET } from './presets.js';
 
@@ -167,26 +168,42 @@ async function intentFor(env, { messages, images, presetId, engine = 'cloudflare
  * take the request down: the intent is still good without the material.
  */
 async function browseFor(env, { intent, query, worthy }) {
-  // ABROWSER is this account's name for the agent-browsing worker.
-  const binding = env?.ABROWSER || env?.['AGENT-BROWSING'];
-  if (!binding || typeof binding.fetch !== 'function') return null;
   if (!worthy) return { skipped: true };
 
-  try {
-    const res = await within(BROWSE_TIMEOUT_MS, 'agent-browsing', () =>
-      binding.fetch(
-        new Request('https://agent-browsing/', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ task: intent.task, query: String(query || '').slice(0, 2000) }),
-        }),
-      ),
-    );
-    if (!res.ok) return { ok: false, status: res.status };
-    return { ok: true, text: (await res.text()).slice(0, 4000) };
-  } catch (err) {
-    return { ok: false, error: String(err?.message || err) };
+  // ABROWSER is this account's name for the agent-browsing worker.
+  const service = browsingService(env);
+  const url = firstUrl(query);
+
+  if (service && typeof service.fetch === 'function') {
+    try {
+      const res = await within(BROWSE_TIMEOUT_MS, 'agent-browsing', () =>
+        service.fetch(
+          new Request('https://agent-browsing/', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ task: intent.task, query: String(query || '').slice(0, 2000) }),
+          }),
+        ),
+      );
+      if (res.ok) {
+        const text = (await res.text()).slice(0, 4000);
+        if (text.trim()) return { ok: true, text, via: 'service' };
+      }
+      // A service that answers with nothing useful is not the end of the stage.
+      // Whether the named page can still be read is decided below.
+      if (!url) return { ok: false, status: res.status, via: 'service' };
+      const page = await readPage(env, url);
+      return page.ok ? page : { ok: false, status: res.status, error: page.error, via: 'rendering' };
+    } catch (err) {
+      if (!url) return { ok: false, error: String(err?.message || err), via: 'service' };
+      const page = await readPage(env, url);
+      return page.ok ? page : { ok: false, error: page.error || String(err?.message || err), via: 'rendering' };
+    }
   }
+
+  // No browsing service at all: the named page is still readable here.
+  if (url) return readPage(env, url);
+  return null;
 }
 
 /**
@@ -307,7 +324,16 @@ export async function decide(
   trace.push('user:handoff');
   trace.push(`rung:${preset}`);
 
-  const decision = { ...intent, preset, browse: material, trace, cacheKey };
+  const browseStatus =
+    browse === null
+      ? 'unbound'
+      : browse.skipped
+        ? 'skipped'
+        : browse.ok
+          ? `ok:${browse.via || 'service'}`
+          : `error:${browse.status ? `http ${browse.status}` : browse.error || 'unknown'}`;
+
+  const decision = { ...intent, preset, browse: material, browseStatus, trace, cacheKey };
 
   // Only a decision that got what it went looking for is worth replaying: a
   // browse that ran and failed must be retried, not remembered. An unbound

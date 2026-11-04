@@ -5,6 +5,7 @@ import worker from './src/index.js';
 import { wrapWav, wavInfo, wavChunks } from './src/audio.js';
 import { _resetBudget } from './src/budget.js';
 import { _resetEngine } from './src/engine.js';
+import { readPage } from './src/page.js';
 import { LADDER, within, decide, _resetDecisionCache } from './src/decide.js';
 import { upsertBody, upsertPath, syncPlan } from './src/preset-sync.js';
 import { PRESETS, findPreset } from './src/presets.js';
@@ -1785,4 +1786,13 @@ test('a browse that fails is not cached as if it had succeeded', async () => {
   const second = await (await send()).json();
   assert.ok(second.decision.trace.includes('browse:ok'), second.decision.trace.join(','));
   assert.match(String(second.decision.browse), /SECOND-TRY-MARKER/);
+});
+
+test('reading a page refuses a non-http url and never throws without a browser', async () => {
+  assert.equal((await readPage({}, 'file:///etc/passwd')).error, 'bad_scheme');
+  assert.equal((await readPage({}, 'not a url')).error, 'bad_url');
+  assert.equal((await readPage({}, 'https://example.com')).error, 'no_browser');
+  // A binding that is not a real browser has to fail cleanly, not hang the turn.
+  const stub = await readPage({ BROWSER: {} }, 'https://example.com');
+  assert.equal(stub.ok, false);
 });
