@@ -130,7 +130,9 @@ The worker is `mind`. These are attached in the deployment:
 | `BUCKET` | R2 `r2-explorer-bucket` | `/api/upload`, `/f/:id`, TTS mp3 cache | uploads 503, TTS regenerates |
 | `MEM` | KV `Memoria` | shared daily budget, decision cache, candidates and provisional truths | per-isolate memory, resets |
 | `MASTER` | KV `master truths` | master truths, plus the review records of every exchange | falls back to `MEM` |
-| `AGENT-BROWSING` | service `agent-browsing` | reserved — no route uses it | — |
+| `ABROWSER` | service `agent-browsing` | browse stage for `extract`/`compare` intents | browsing skipped |
+| `AGENT-BROWSING` | service `agent-browsing` | older name for the same service | — |
+| `BROWSER` | Browser Rendering | `/api/shot` screenshots | route answers 501 |
 | `ASSETS` | static assets | serves `public/` | no frontend |
 
 Both namespaces are wired in `wrangler.jsonc` by id, so the daily budget and the

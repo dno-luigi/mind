@@ -154,7 +154,8 @@ async function intentFor(env, { messages, images, presetId, engine = 'cloudflare
  * take the request down: the intent is still good without the material.
  */
 async function browseFor(env, { intent, query }) {
-  const binding = env?.['AGENT-BROWSING'];
+  // ABROWSER is this account's name for the agent-browsing worker.
+  const binding = env?.ABROWSER || env?.['AGENT-BROWSING'];
   if (!binding || typeof binding.fetch !== 'function') return null;
   if (!BROWSE_WORTHY.has(intent.task) && intent.depth !== 'deep') return { skipped: true };
 

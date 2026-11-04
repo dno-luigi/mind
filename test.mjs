@@ -1605,3 +1605,11 @@ test('BROWSER is accepted as the browser binding name', async () => {
   assert.equal(res.status, 502);
   assert.equal((await res.json()).error.code, 'screenshot_failed');
 });
+
+test('ABROWSER is the account name for the browsing service', async () => {
+  const env = makeEnv({ ABROWSER: { fetch: async () => new Response('ok') } });
+  const health = await (await call(env, '/api/health')).json();
+  assert.equal(health.bindings.services.browsing, true);
+  // The rendering binding stays separate: a service binding is not a browser.
+  assert.equal(health.features.screenshots, false);
+});

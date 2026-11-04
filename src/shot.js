@@ -85,7 +85,8 @@ export async function shot(url, env, ctx = {}) {
     }
   }
 
-  // BROWSER on this account, MYBROWSER in Cloudflare's docs — either name works.
+  // BROWSER on this account; MYBROWSER is Cloudflare's docs name for the same
+  // binding. ABROWSER is deliberately not consulted — that one is a service.
   const browser = browserBinding(env);
   if (!browser) {
     return fail(

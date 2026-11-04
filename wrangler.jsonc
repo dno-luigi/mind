@@ -40,6 +40,16 @@
   // does not use. Declared in the shape the account already deploys.
   "unsafe": {
     "bindings": [
+      // The agent-browsing worker: ABROWSER is this account's name for it,
+      // AGENT-BROWSING is the older spelling the code also accepts. This is the
+      // reading half — the rendering half is BROWSER above, and they are not
+      // interchangeable: a service binding cannot launch puppeteer.
+      {
+        "name": "ABROWSER",
+        "type": "service",
+        "service": "agent-browsing",
+        "environment": "production"
+      },
       {
         "name": "AGENT-BROWSING",
         "type": "service",

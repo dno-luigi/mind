@@ -24,11 +24,17 @@ export const truthService = (env) => env?.TRUTH || null;
 export const objects = (env) => env?.BUCKET || env?.R2 || null;
 
 /**
- * Browser Rendering. The account names it BROWSER; MYBROWSER is the name in
- * Cloudflare's own docs, so it stays supported and a deployment already wired
- * either way needs no rename. They are the same binding, not two.
+ * Browser Rendering — the puppeteer host that /api/shot launches. This account
+ * names it BROWSER; MYBROWSER (Cloudflare's docs name) still works. It must stay
+ * separate from ABROWSER below: a service binding cannot drive puppeteer.
  */
 export const browserBinding = (env) => env?.BROWSER || env?.MYBROWSER || null;
+
+/**
+ * The agent-browsing worker, which does the reading rather than the rendering.
+ * ABROWSER is this account's name for it; AGENT-BROWSING is the older spelling.
+ */
+export const browsingService = (env) => env?.ABROWSER || env?.['AGENT-BROWSING'] || null;
 
 /** What is actually attached, by its deployed name, for /api/health. */
 export function bindingReport(env) {
@@ -48,6 +54,7 @@ export function bindingReport(env) {
     },
     services: {
       agentBrowsing: Boolean(env?.['AGENT-BROWSING']),
+      browsing: Boolean(browsingService(env)),
       truth: Boolean(env?.TRUTH),
     },
   };
