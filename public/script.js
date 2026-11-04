@@ -179,7 +179,11 @@ class App {
         this.updatePresetButtonLabel();
         
         const proxyInput = document.getElementById('proxyUrlInput');
-        if (proxyInput && this.settings.proxyUrl) proxyInput.value = this.settings.proxyUrl;
+        if (proxyInput) {
+            // Show the address that will be used, so nobody has to know it or type it:
+            // whatever was saved, else this site's own /api/chat.
+            proxyInput.value = this.settings.proxyUrl || new URL(DEFAULT_PROXY_URL, window.location.href).href;
+        }
 
         document.getElementById('stylePadding').addEventListener('input', (e) => document.getElementById('valPad').textContent = e.target.value + 'px');
         document.getElementById('styleRadius').addEventListener('input', (e) => document.getElementById('valRad').textContent = e.target.value + 'px');
