@@ -8,6 +8,7 @@ import * as or from './providers/openrouter.js';
 import { decide, recordReview, within } from './decide.js';
 import { recordCandidate, questionOf } from './truth.js';
 import { adminUnlock, adminListKeys, adminReadKey } from './admin.js';
+import { shot } from './shot.js';
 import { wavInfo, wavChunks } from './audio.js';
 import { DONE, delta, errorEvent, meta, sseData, upstreamError, frameShape, fromOpenRouterChat, fromWorkersAI } from './normalize.js';
 
@@ -90,6 +91,8 @@ async function route(request, env, ctx, url) {
   if (path === '/api/upload' && method === 'POST') return upload(request, env);
   if (path === '/api/engine' && method === 'GET') return engineView(env);
   if (path === '/api/engine' && method === 'POST') return switchEngine(request, env);
+  // Headless screenshots. Billed per browser-second, so one page, one shot, closed.
+  if (path === '/api/shot' && method === 'GET') return shot(url, env);
 
   // The console reads the store; it still cannot write one. Every route below
   // needs ADMIN_KEY, and an unset key fails closed rather than open.
@@ -140,6 +143,8 @@ async function health(env) {
       decisionCache: Boolean(kv),
       // Candidates are recorded in MEM; truth records are seeded out of band.
       truth: Boolean(kv),
+      // Browser Rendering is opt-in: no binding, no /api/shot.
+      screenshots: Boolean(env?.MYBROWSER),
     },
   });
 }

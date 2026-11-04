@@ -368,3 +368,28 @@ input to the model.
 ## Licence
 
 Apache-2.0 — see [LICENSE](LICENSE).
+
+## Screenshots (`/api/shot`)
+
+```
+GET /api/shot?url=https://example.com          # JPEG of the viewport
+GET /api/shot?url=https://example.com&full=1   # JPEG of the whole page
+```
+
+Renders the page headless through Cloudflare Browser Rendering and returns the
+bytes. One request launches one browser, navigates once with a 20 second limit,
+shoots, and closes in a `finally` — a failed navigation cannot leave a session
+billing in the background. The answer is JPEG at quality 80, not PNG, on purpose.
+
+The binding is `MYBROWSER` in `wrangler.jsonc`:
+
+```jsonc
+"browser": { "binding": "MYBROWSER" }
+```
+
+Browser Rendering must be enabled on the account, and it is billed per
+browser-second. Without the binding the route answers `501 browser_unbound`
+and `/api/health` reports `features.screenshots: false`. It is currently
+unauthenticated: `?url=` is validated as http(s) and nothing else, but anyone
+who finds the route can spend browser seconds, so put it behind `ADMIN_KEY`
+before pointing a busy page at it.

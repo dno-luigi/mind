@@ -17,6 +17,13 @@
     "binding": "AI"
   },
 
+  // Browser Rendering powers /api/shot (headless screenshots). It needs the
+  // Browser Rendering entitlement on the account and bills per browser second,
+  // so the route is one page, one shot, one close.
+  "browser": {
+    "binding": "MYBROWSER"
+  },
+
   // Already exists in this account (r2-explorer-bucket). Enabling it turns on
   // /api/upload, /f/:id and the TTS mp3 cache.
   "r2_buckets": [

@@ -1532,3 +1532,37 @@ test('tts follows the switch to OpenRouter', async () => {
     globalThis.fetch = original;
   }
 });
+
+
+test('screenshot route refuses a missing, malformed or non-http url', async () => {
+  const env = makeEnv({ MYBROWSER: {} });
+
+  const missing = await call(env, '/api/shot');
+  assert.equal(missing.status, 400);
+  assert.equal((await missing.json()).error.code, 'url_required');
+
+  const bad = await call(env, '/api/shot?url=not+a+url');
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).error.code, 'url_invalid');
+
+  // file:// would read the browser's own disk, and no scheme but http(s) is useful here.
+  const scheme = await call(env, '/api/shot?url=file%3A%2F%2F%2Fetc%2Fpasswd');
+  assert.equal(scheme.status, 400);
+  assert.equal((await scheme.json()).error.code, 'url_scheme');
+});
+
+test('screenshot route says so when Browser Rendering is not bound', async () => {
+  const res = await call(makeEnv(), '/api/shot?url=https://example.com');
+  assert.equal(res.status, 501);
+  assert.equal((await res.json()).error.code, 'browser_unbound');
+});
+
+test('health only advertises screenshots when the browser is bound', async () => {
+  const off = await (await call(makeEnv(), '/api/health')).json();
+  assert.equal(off.features.screenshots, false);
+  assert.equal(off.bindings.browser, false);
+
+  const on = await (await call(makeEnv({ MYBROWSER: {} }), '/api/health')).json();
+  assert.equal(on.features.screenshots, true);
+  assert.equal(on.bindings.browser, true);
+});

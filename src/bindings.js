@@ -28,6 +28,8 @@ export function bindingReport(env) {
   return {
     ai: Boolean(env?.AI),
     assets: Boolean(env?.ASSETS),
+    // Present only when Browser Rendering is enabled for the account.
+    browser: Boolean(env?.MYBROWSER),
     kv: {
       mem: Boolean(env?.MEM),
       master: Boolean(env?.MASTER),
