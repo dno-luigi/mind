@@ -1,5 +1,6 @@
 import { keyMatches } from './util.js';
 import { stateKv, masterKv } from './bindings.js';
+import { listCandidates, PROMOTE_AT } from './truth.js';
 
 /**
  * The console is a read-and-curate surface, not a chat route: it lists what is
@@ -223,6 +224,43 @@ export async function adminListKeys(request, env, url) {
     listed: names.length,
     matched: matched.length,
     limit,
+  });
+}
+
+/**
+ * The human in the loop. Every answer the pipeline produced is already a
+ * candidate; this is the queue, most-repeated first, with the ones that have
+ * earned a promotion flagged. It is read-only on purpose: promoting is an edit,
+ * and edits go to a truth layer, not to whatever the pipeline happened to say.
+ */
+export async function adminQueue(request, env, url) {
+  const gate = adminGate(request, env);
+  if (gate) return gate;
+
+  const limit = clampLimit(url.searchParams.get('limit'));
+  const candidates = await listCandidates(env, { limit }).catch(() => []);
+
+  const rows = candidates.map((entry) => ({
+    id: entry?.id || null,
+    key: entry?.id ? `candidate:${entry.id}` : null,
+    question: String(entry?.query || entry?.input || '').slice(0, 200),
+    preview: String(entry?.answer || '').replace(/\s+/g, ' ').trim().slice(0, PREVIEW_CHARS),
+    chars: String(entry?.answer || '').length,
+    hits: Number(entry?.hits) || 0,
+    suggested: Boolean(entry?.suggested) || (Number(entry?.hits) || 0) >= PROMOTE_AT,
+    alternatives: Array.isArray(entry?.alternatives) ? entry.alternatives.length : 0,
+    preset: entry?.preset || null,
+    route: entry?.route || null,
+    model: entry?.model || null,
+    lastAt: entry?.lastAt || null,
+  }));
+
+  return adminJson({
+    ok: true,
+    promoteAt: PROMOTE_AT,
+    total: rows.length,
+    ready: rows.filter((row) => row.suggested).length,
+    rows,
   });
 }
 

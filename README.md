@@ -410,3 +410,23 @@ twenty megabytes to localStorage.
 - Tapping the thumbnail opens the page instead of flipping the card.
 - Shots are cached in R2 for ten minutes (`x-screenshot-cache: hit | miss`), which
   is what stops a grid of cards launching a browser on every render.
+
+## The pipeline, in order
+
+One turn is five stages, and any of the first three may end it:
+
+1. **cache** — `resolveTruth` checks master, then provisional, then the candidate
+   record; a hit answers with `route: truth` and no model is called. Then the
+   in-isolate map, then the `decision:` key in KV.
+2. **decision** — the clef ladder classifies task, preset, depth and tone.
+3. **browse** — `ABROWSER` (the agent-browsing worker) is asked for material when
+   the task is `extract`/`compare` or the depth is `deep`. Its text is inserted as
+   a system turn ahead of the question, so the model answers from it.
+4. **llm** — Workers AI first, OpenRouter second, on the preset's rung.
+5. **human** — the answer is stored as a candidate with a `hits` count and the
+   review record goes to MASTER. `GET /api/admin/queue` (needs `ADMIN_KEY`) lists
+   candidates most-repeated first and flags those at `PROMOTE_AT` (3); promotion
+   itself stays a hand edit in a truth layer, never a route this worker exposes.
+
+`meta.decision.trace` names what actually ran, e.g.
+`cache:miss, intent:clef-flash, browse:ok, user:handoff, rung:operator`.

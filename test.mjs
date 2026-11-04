@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import worker from './src/index.js';
 import { wrapWav, wavInfo, wavChunks } from './src/audio.js';
 import { _resetBudget } from './src/budget.js';
+import { _resetEngine } from './src/engine.js';
 import { LADDER, within, decide, _resetDecisionCache } from './src/decide.js';
 import { upsertBody, upsertPath, syncPlan } from './src/preset-sync.js';
 import { PRESETS, findPreset } from './src/presets.js';
@@ -49,6 +50,9 @@ function fakeAI(overrides = {}) {
 function makeEnv(over = {}) {
   _resetBudget();
   _resetDecisionCache();
+  // The engine switch is cached per isolate; a test that flips it must not turn
+  // Cloudflare off for every test after it.
+  _resetEngine();
   return { AI: fakeAI(), ...over };
 }
 
@@ -1289,7 +1293,6 @@ test('candidates keep accumulating with no write route at all', async () => {
   assert.equal(candidate.suggested, true);
 });
 
-import { _resetEngine } from './src/engine.js';
 
 const ENGINE_KEY = 'engine-secret';
 
@@ -1612,4 +1615,75 @@ test('ABROWSER is the account name for the browsing service', async () => {
   assert.equal(health.bindings.services.browsing, true);
   // The rendering binding stays separate: a service binding is not a browser.
   assert.equal(health.features.screenshots, false);
+});
+
+function fakeKv(entries) {
+  return {
+    async get(key) {
+      return entries[key] ?? null;
+    },
+    async put() {},
+    async list({ prefix = '' } = {}) {
+      return {
+        keys: Object.keys(entries).filter((name) => name.startsWith(prefix)).map((name) => ({ name })),
+        list_complete: true,
+      };
+    },
+  };
+}
+
+test('browsed material reaches the model instead of stopping at the trace', async () => {
+  let seen = null;
+  const env = makeEnv({
+    ABROWSER: { fetch: async () => new Response('BROWSED-MARKER: example.com is a documentation domain.') },
+    AI: {
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) {
+          return {
+            response: JSON.stringify({ preset: 'operator', depth: 'deep', tone: 'precise', task: 'extract' }),
+          };
+        }
+        seen = body.messages;
+        return body.stream ? sse(['ok']) : { response: 'ok' };
+      },
+    },
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: 'extract the title of https://example.com' }],
+      stream: false,
+    }),
+  });
+
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+  assert.ok(body.decision.trace.includes('browse:ok'), body.decision.trace.join(','));
+  assert.ok(seen, 'the model should have been called');
+  assert.match(JSON.stringify(seen), /BROWSED-MARKER/);
+});
+
+test('the review queue is gated and lists the most repeated candidate first', async () => {
+  const env = makeEnv({
+    ADMIN_KEY: 'secret',
+    MEM: fakeKv({
+      'candidate:a': JSON.stringify({ id: 'a', query: 'one', answer: 'alpha', hits: 5, suggested: true }),
+      'candidate:b': JSON.stringify({ id: 'b', query: 'two', answer: 'beta', hits: 1, alternatives: [{ answer: 'x' }] }),
+      'truth:master:c': JSON.stringify({ query: 'ignored', answer: 'not a candidate' }),
+    }),
+  });
+
+  const denied = await call(env, '/api/admin/queue');
+  assert.equal(denied.status, 401);
+
+  const res = await call(env, '/api/admin/queue', { headers: { 'x-admin-key': 'secret' } });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.total, 2);
+  assert.equal(body.ready, 1);
+  assert.equal(body.promoteAt, PROMOTE_AT);
+  assert.deepEqual(body.rows.map((row) => row.question), ['one', 'two']);
+  assert.equal(body.rows[1].alternatives, 1);
 });

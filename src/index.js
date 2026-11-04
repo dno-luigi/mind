@@ -7,7 +7,7 @@ import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
 import { decide, recordReview, within } from './decide.js';
 import { recordCandidate, questionOf } from './truth.js';
-import { adminUnlock, adminListKeys, adminReadKey } from './admin.js';
+import { adminUnlock, adminListKeys, adminReadKey, adminQueue } from './admin.js';
 import { shot } from './shot.js';
 import { wavInfo, wavChunks } from './audio.js';
 import { DONE, delta, errorEvent, meta, sseData, upstreamError, frameShape, fromOpenRouterChat, fromWorkersAI } from './normalize.js';
@@ -99,6 +99,7 @@ async function route(request, env, ctx, url) {
   if (path === '/api/admin/unlock' && method === 'POST') return adminUnlock(request, env);
   if (path === '/api/admin/keys' && method === 'GET') return adminListKeys(request, env, url);
   if (path === '/api/admin/key' && method === 'GET') return adminReadKey(request, env, url);
+  if (path === '/api/admin/queue' && method === 'GET') return adminQueue(request, env, url);
 
   return fail(404, 'not_found', `No route for ${method} ${path}`);
 }
@@ -330,6 +331,24 @@ function explain(problem) {
   return err;
 }
 
+/**
+ * Stage 3 is material, not decoration: whatever the browser found becomes its own
+ * system turn, ahead of the question. Without this the browse stage ran, logged
+ * `browse:ok`, and the model answered as if it had never happened.
+ */
+function withBrowse(messages, decision) {
+  const material = typeof decision?.browse === 'string' ? decision.browse.trim() : '';
+  if (!material) return messages;
+
+  const note = {
+    role: 'system',
+    content: `Browsing material gathered for this request. Use it as the source for the answer and cite any URLs it contains:\n\n${material}`,
+  };
+  let at = 0;
+  while (at < messages.length && messages[at].role === 'system') at += 1;
+  return [...messages.slice(0, at), note, ...messages.slice(at)];
+}
+
 /** The review record: enough to reconstruct a session, capped so KV stays small. */
 function reviewOf({ preset, decision, route, model, lastUser, text }) {
   return {
@@ -437,10 +456,11 @@ async function chat(request, env, ctx) {
   const system = preset?.system
     ? [{ role: 'system', content: preset.system }, ...messages]
     : messages;
+  const grounded = withBrowse(system, decision);
 
   if (!wantsStream) {
     const { route, model, stream, extract } = await openUpstream(env, {
-      messages: system,
+      messages: grounded,
       images,
       preset,
       decision: reported,
@@ -464,7 +484,7 @@ async function chat(request, env, ctx) {
       text = await within(UPSTREAM_OPEN_MS, `workers-ai ${model}`, () =>
         cf.chat(env, {
           model,
-          messages: system,
+          messages: grounded,
           images,
           temperature: preset?.temperature,
           maxTokens: budgetFor(preset, reported, pinned),
@@ -520,7 +540,7 @@ async function chat(request, env, ctx) {
           const text = await within(UPSTREAM_OPEN_MS, `workers-ai ${model}`, () =>
             cf.chat(env, {
               model,
-              messages: system,
+              messages: grounded,
               images,
               temperature: preset?.temperature,
               maxTokens: budgetFor(preset, reported, pinned),
