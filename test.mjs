@@ -6,7 +6,6 @@ import { wrapWav, wavInfo, wavChunks } from './src/audio.js';
 import { _resetBudget } from './src/budget.js';
 import { _resetEngine } from './src/engine.js';
 import { readPage } from './src/page.js';
-import { workflowFor, setWorkflowFor, _resetWorkflow } from './src/workflow.js';
 import { extractText, zipEntries } from './src/extract.js';
 import { Sessions } from './src/sessions.js';
 import { parseCookies, cookieValue, sessionCookie, clearCookie } from './src/cookie.js';
@@ -60,7 +59,6 @@ function makeEnv(over = {}) {
   // The engine switch is cached per isolate; a test that flips it must not turn
   // Cloudflare off for every test after it.
   _resetEngine();
-  _resetWorkflow();
   return { AI: fakeAI(), ...over };
 }
 
@@ -1891,76 +1889,6 @@ test('reading a page refuses a non-http url and never throws without a browser',
   // A binding that is not a real browser has to fail cleanly, not hang the turn.
   const stub = await readPage({ BROWSER: {} }, 'https://example.com');
   assert.equal(stub.ok, false);
-});
-
-test('the workflow switch is on by default, persists off, and env can pin it', async () => {
-  _resetWorkflow();
-  const kv = memKv();
-  assert.equal(await workflowFor({ MEM: kv }), 'on');
-
-  await setWorkflowFor({ MEM: kv }, false);
-  assert.equal(await workflowFor({ MEM: kv }), 'off');
-
-  // A fresh isolate has to read the stored value, not trust its own default.
-  _resetWorkflow();
-  assert.equal(await workflowFor({ MEM: kv }), 'off');
-  assert.equal(await workflowFor({ MEM: kv, WORKFLOW: 'on' }), 'on');
-  _resetWorkflow();
-});
-
-test('workflow off is a bare model call: no cache, no decision model, no browser', async () => {
-  const kv = memKv();
-  let browsed = false;
-  const env = makeEnv({
-    MEM: kv,
-    ABROWSER: {
-      async fetch() {
-        browsed = true;
-        return new Response('never');
-      },
-    },
-  });
-
-  const decision = await decide(env, {
-    messages: [{ role: 'user', content: 'browse the latest news about https://example.com' }],
-    workflow: 'off',
-  });
-
-  assert.deepEqual(decision.trace, ['workflow:off']);
-  assert.equal(decision.browse, null);
-  assert.equal(decision.workflow, 'off');
-  assert.equal(decision.preset, DEFAULT_PRESET);
-  assert.equal(browsed, false);
-  // Nothing was written: a turn that bypassed the pipeline must not seed it.
-  assert.equal([...kv._map.keys()].filter((key) => key.startsWith('decision:')).length, 0);
-});
-
-test('POST /api/workflow is keyed and health reports the state', async () => {
-  const kv = memKv();
-  const env = makeEnv({ MEM: kv, KEY: 'sekret' });
-
-  assert.equal((await (await call(env, '/api/workflow')).json()).enabled, true);
-
-  const noKey = await call(env, '/api/workflow', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ enabled: false }),
-  });
-  assert.equal(noKey.status, 401);
-
-  const off = await call(env, '/api/workflow', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-engine-key': 'sekret' },
-    body: JSON.stringify({ enabled: false }),
-  });
-  assert.equal(off.status, 200);
-  assert.equal((await off.json()).enabled, false);
-
-  _resetWorkflow();
-  const health = await (await call(env, '/api/health')).json();
-  assert.equal(health.workflow, 'off');
-  assert.equal(health.features.workflow, true);
-  _resetWorkflow();
 });
 
 test('a text upload comes back with the text the model will read', async () => {

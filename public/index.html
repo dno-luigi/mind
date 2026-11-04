@@ -123,15 +123,6 @@
                     <small style="color:var(--text); opacity:0.7;">Off sends every answer to OpenRouter's free router and spends no daily neurons. Changing it needs the KEY; the state applies to every browser, not just this one.</small>
                 </div>
                 <div class="style-section">
-                    <h4>Workflow</h4>
-                    <div class="toggle-group" style="margin-bottom:8px;">
-                        <button class="toggle-btn" id="workflowToggle" onclick="app.toggleWorkflow()" aria-pressed="true">
-                            <i class="fas fa-diagram-project"></i> <span id="workflowLabel">Workflow: On</span>
-                        </button>
-                    </div>
-                    <small style="color:var(--text); opacity:0.7;">On runs the five stages — cache, decision model, browser, answer, review queue. Off sends the question straight to the model: no cache read, no decision model, no browsing, nothing queued for review. Also applies to every browser.</small>
-                </div>
-                <div class="style-section">
                     <h4>API Configuration</h4>
                     <input type="text" id="proxyUrlInput" placeholder="https://this-site/api/chat" style="width:100%; margin-bottom:8px;">
                     <small style="color:var(--text); opacity:0.7;">Already filled in with this site's own address. Change it only to point somewhere else.</small>

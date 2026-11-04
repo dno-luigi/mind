@@ -47,7 +47,6 @@ paste into a new project as a starting brief. The long-form documentation is
 | Section | Contents |
 |---|---|
 | Engine | `Cloudflare: On/Off` switch (server state, needs `KEY`) + key field kept on the device |
-| Workflow | `Workflow: On/Off` switch for the whole five-stage pipeline |
 | API configuration | Proxy URL, pre-filled with this site's own `/api/chat` |
 | Data management | Export JSON, export PDF, import, share, clear all, factory reset |
 | Theme & view | Light/dark, theme lock, list/grid/fullscreen |
@@ -94,7 +93,7 @@ Secrets (all optional except the OpenRouter key when it is used):
 | Secret | Purpose |
 |---|---|
 | `OPENROUTER_API_KEY` | escalation rung, whole-engine fallback, STT/TTS fallback |
-| `KEY` | writing the Engine and Workflow switches (`x-engine-key`) |
+| `KEY` | writing the Engine switch (`x-engine-key`) |
 | `ADMIN_KEY` | the admin console |
 | `LOGIN_PASSWORD` | one shared password for all sign-ins; unset ⇒ `/api/login` 503 |
 
@@ -160,7 +159,6 @@ plus `x-title` and `http-referer` headers.
 | `POST` | `/api/upload` | bytes → R2 + extracted text (`kind`, `chars`, `text`, `note`) |
 | `GET` | `/f/:id` | serve an uploaded object from R2 |
 | `GET`/`POST` | `/api/engine` | Cloudflare on/off (write needs `KEY`) |
-| `GET`/`POST` | `/api/workflow` | five-stage pipeline on/off (write needs `KEY`) |
 | `POST` | `/api/login` | `{ user, password }` → HttpOnly cookie |
 | `GET` | `/api/session` | who the cookie or bearer belongs to |
 | `POST` | `/api/logout` | drop the session and clear the cookie |
@@ -172,9 +170,9 @@ plus `x-title` and `http-referer` headers.
    work with `SameSite=Lax`, and there is one URL to deploy.
 2. **Normalize the upstreams, not the client.** Three provider dialects become four
    SSE events, so swapping engines never touches the frontend.
-3. **Switches are server state.** `settings:engine` and `settings:workflow` live in
-   KV and are read per request (10 s isolate cache), so one tap changes every
-   browser instead of one tab.
+3. **Switches are server state.** `settings:engine` lives in KV and is read per
+   request (10 s isolate cache), so one tap changes every browser instead of one
+   tab.
 4. **Every binding is optional.** A missing binding skips its stage and records a
    trace entry (`cache:miss, intent:fallback, browse:skipped`), so the app degrades
    instead of failing.

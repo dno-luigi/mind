@@ -89,8 +89,6 @@ class App {
         this.attachments = [];
         this.mediaRecorder = null;
         this.recordChunks = [];
-        // Read from the Worker: the pipeline switch is server state.
-        this.workflowEnabled = true;
         this.user = null;
 
         this.streamingId = null;
@@ -178,7 +176,6 @@ class App {
     init() {
         this.loadState();
         this.loadEngine();
-        this.loadWorkflow();
         this.loadSession();
         this.applyTheme();
         this.applyView();
@@ -1904,55 +1901,6 @@ class App {
             this.showToast('Transcribed');
         } catch (err) {
             this.showToast(`Transcription failed: ${err.message}`);
-        }
-    }
-
-    /** The pipeline switch is server state, so it is read, never remembered. */
-    async loadWorkflow() {
-        try {
-            const res = await fetch('/api/workflow', { headers: { accept: 'application/json' } });
-            const body = await res.json();
-            this.workflowEnabled = body.enabled !== false;
-        } catch {
-            // No route, or offline: on is what the Worker would be doing.
-            this.workflowEnabled = true;
-        }
-        this.renderWorkflowToggle();
-    }
-
-    async toggleWorkflow() {
-        if (!this.engineKey) {
-            this.showToast('Add the KEY first — the switch is keyed');
-            return;
-        }
-        try {
-            const res = await fetch('/api/workflow', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json', 'x-engine-key': this.engineKey },
-                body: JSON.stringify({ enabled: !this.workflowEnabled })
-            });
-            const body = await res.json().catch(() => null);
-            if (!res.ok) {
-                this.showToast(body?.error?.message || `Could not switch the workflow (${res.status})`);
-                return;
-            }
-            this.workflowEnabled = body.enabled !== false;
-            this.renderWorkflowToggle();
-            this.showToast(this.workflowEnabled
-                ? 'Workflow on — cache, decision, browser, review'
-                : 'Workflow off — straight to the model');
-        } catch (err) {
-            this.showToast(`Could not switch the workflow: ${err.message}`);
-        }
-    }
-
-    renderWorkflowToggle() {
-        const btn = document.getElementById('workflowToggle');
-        const label = document.getElementById('workflowLabel');
-        if (label) label.textContent = this.workflowEnabled ? 'Workflow: On' : 'Workflow: Off';
-        if (btn) {
-            btn.setAttribute('aria-pressed', String(this.workflowEnabled));
-            btn.classList.toggle('active', this.workflowEnabled);
         }
     }
 

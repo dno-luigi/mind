@@ -10,7 +10,6 @@ import { recordCandidate, questionOf } from './truth.js';
 import { adminUnlock, adminListKeys, adminReadKey, adminQueue } from './admin.js';
 import { shot } from './shot.js';
 import { wavInfo, wavChunks } from './audio.js';
-import { workflowFor, setWorkflowFor, ON as WORKFLOW_ON } from './workflow.js';
 import { extractText } from './extract.js';
 import { sessionCookie, clearCookie, tokenFrom } from './cookie.js';
 import {
@@ -107,10 +106,6 @@ async function route(request, env, ctx, url) {
   if (path === '/api/upload' && method === 'POST') return upload(request, env);
   if (path === '/api/engine' && method === 'GET') return engineView(env);
   if (path === '/api/engine' && method === 'POST') return switchEngine(request, env);
-  // The pipeline switch: on runs cache → decision → browse → review, off goes
-  // straight to the model. Read is public, writing needs the KEY.
-  if (path === '/api/workflow' && method === 'GET') return workflowView(env);
-  if (path === '/api/workflow' && method === 'POST') return switchWorkflow(request, env);
   // Login state lives in a Durable Object, one per user name.
   if (path === '/api/login' && method === 'POST') return loginRoute(request, env);
   if (path === '/api/logout' && method === 'POST') return logoutRoute(request, env);
@@ -133,12 +128,11 @@ async function health(env) {
   const bucket = objects(env);
   const engine = await engineFor(env);
   const useCf = canUseCloudflare(env, engine);
-  const workflow = await workflowFor(env);
 
   return json({
     ok: true,
     service: 'mind',
-    version: '1.3.0',
+    version: '1.3.1',
     engine: {
       workersAI: has(env, 'AI'),
       openrouterKey: has(env, 'OPENROUTER_API_KEY'),
@@ -146,8 +140,6 @@ async function health(env) {
       active: engine,
       cloudflare: useCf,
     },
-    // "on" runs the five stages; "off" is a bare model call.
-    workflow,
     bindings: bindingReport(env),
     models: {
       text: cf.TEXT_MODEL,
@@ -173,8 +165,6 @@ async function health(env) {
       truth: Boolean(kv),
       // Browser Rendering is opt-in: no binding, no /api/shot.
       screenshots: Boolean(browserBinding(env)),
-      // The switch needs somewhere to keep its value.
-      workflow: Boolean(kv),
       // Uploads are stored in R2; documents are read as text on the way in.
       documents: Boolean(bucket),
       // Login needs both the Durable Object and the shared password.
@@ -199,8 +189,8 @@ async function engineView(env) {
 }
 
 /**
- * Both switches share this gate. They change how the app spends money and how
- * it answers, so an unset KEY fails closed rather than open.
+ * The engine switch changes how the app spends money, so an unset KEY fails
+ * closed rather than open.
  */
 function keyGate(request, env) {
   const secret = String(env?.KEY || '');
@@ -217,29 +207,6 @@ function keyGate(request, env) {
     return fail(401, 'key_required', 'Send the KEY in the x-engine-key header.');
   }
   return null;
-}
-
-async function workflowView(env) {
-  const workflow = await workflowFor(env);
-  return json({
-    ok: true,
-    workflow,
-    enabled: workflow === WORKFLOW_ON,
-    stages: ['cache', 'decision', 'browse', 'answer', 'review'],
-  });
-}
-
-async function switchWorkflow(request, env) {
-  const denied = keyGate(request, env);
-  if (denied) return denied;
-
-  const body = await request.json().catch(() => null);
-  if (!body || typeof body.enabled !== 'boolean') {
-    return fail(400, 'enabled_required', 'Send { enabled: true | false }.');
-  }
-
-  const workflow = await setWorkflowFor(env, body.enabled);
-  return json({ ok: true, workflow, enabled: workflow === WORKFLOW_ON });
 }
 
 async function switchEngine(request, env) {
@@ -473,10 +440,6 @@ async function chat(request, env, ctx) {
     return fail(429, 'budget_exhausted', `Daily budget reached (${gate.used}/${gate.limit} neurons). Resets at 00:00 UTC.`);
   }
 
-  // The pipeline switch is read per request: a flip applies to every browser
-  // and every isolate within ten seconds, without a redeploy.
-  const workflow = await workflowFor(env);
-
   // A preset the user picked wins; decide() only fills the gap.
   const decision = await decide(env, {
     messages,
@@ -484,7 +447,6 @@ async function chat(request, env, ctx) {
     presetId: pinned ? requested : null,
     allowPreset: !noneSelected,
     engine,
-    workflow,
   });
   // A deliberate pick wins outright. Otherwise the decision steers, and the
   // preset the client sent (truth, normally) is the fallback prompt.
@@ -571,10 +533,7 @@ async function chat(request, env, ctx) {
     }
     await recordReview(env, ctx, reviewOf({ preset, decision: reported, route, model, lastUser, text }));
     // Every answer becomes a candidate, so nothing has to be retyped to promote it.
-    // With the workflow off this stage is not part of the turn either.
-    if (workflow !== 'off') {
-      await recordCandidate(env, { input: question, answer: text, preset: preset?.id, route, model }, ctx);
-    }
+    await recordCandidate(env, { input: question, answer: text, preset: preset?.id, route, model }, ctx);
     return json({ text, route, model, decision: reported });
   }
 
@@ -637,9 +596,7 @@ async function chat(request, env, ctx) {
         reviewOf({ preset, decision: reported, route, model, lastUser, text: answer }),
       );
       // Stored whether or not it is good: promotion is a later decision.
-      if (workflow !== 'off') {
-        await recordCandidate(env, { input: question, answer, preset: preset?.id, route, model }, ctx);
-      }
+      await recordCandidate(env, { input: question, answer, preset: preset?.id, route, model }, ctx);
       send(DONE);
       controller.close();
     },

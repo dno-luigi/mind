@@ -32,8 +32,6 @@ flowchart LR
 | `GET` | `/api/tts?t=&v=&m=` | Streamed mp3, cached immutably |
 | `POST` | `/api/upload` | Bytes → R2, plus the text a document contains |
 | `GET` | `/f/:id` | Serve an uploaded object from R2 |
-| `GET` | `/api/workflow` | Whether the five-stage pipeline is on |
-| `POST` | `/api/workflow` | `{ enabled }` → flip it (needs `KEY`) |
 | `POST` | `/api/login` | `{ user, password }` → HttpOnly session cookie |
 | `GET` | `/api/session` | Who the cookie or bearer belongs to |
 | `POST` | `/api/logout` | Drop the session and clear the cookie |
@@ -83,30 +81,6 @@ prompt. `truth` is the default and does not outrank the decision: clef's `task`
 selects the model (`chat`/`generate` → gemma,
 `transform`/`extract`/`compare` → qwen) and its `depth` sets the output budget.
 A preset you pick deliberately outranks both.
-
-## Turning the pipeline off
-
-`Workflow` in Settings is one switch for the whole chain, stored in `MEM` under
-`settings:workflow` and read per request, so a flip applies to every browser
-within ten seconds — no redeploy, and no per-tab preference to get out of sync.
-
-| stage | on (default) | off |
-|---|---|---|
-| cache | `MEM` + per-isolate read | skipped |
-| decision model | clef ladder | skipped |
-| browser | runs for web-shaped questions | never launched |
-| review queue | the answer becomes a candidate | nothing recorded |
-
-Off is a bare model call: no cache read (so a stale answer cannot come back), no
-`intent:` or `browse:` stage, and `decision.trace` is exactly `["workflow:off"]`.
-Reading needs no key; writing needs the `KEY`:
-
-```bash
-curl https://mind.ai-n.workers.dev/api/workflow
-curl -X POST https://mind.ai-n.workers.dev/api/workflow \
-  -H "x-engine-key: $KEY" -H 'content-type: application/json' \
-  -d '{"enabled": false}'
-```
 
 ## Attachments and voice
 

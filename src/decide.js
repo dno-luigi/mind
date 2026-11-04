@@ -1,7 +1,6 @@
 import { sha256Hex } from './util.js';
 import { stateKv, browsingService } from './bindings.js';
 import { readPage, firstUrl } from './page.js';
-import { workflowOn, ON as WORKFLOW_ON } from './workflow.js';
 import { resolveTruth, questionOf } from './truth.js';
 import { DEFAULT_PRESET } from './presets.js';
 
@@ -245,28 +244,10 @@ export async function decide(
     presetId = null,
     allowPreset = true,
     engine = 'cloudflare',
-    workflow = WORKFLOW_ON,
   } = {},
 ) {
   const trace = [];
 
-  // The switch, off: the pipeline is not part of this turn at all. Nothing is
-  // read from the cache, nothing is written to it, and no model is asked what
-  // the request is — the answer goes straight to the generation rung.
-  if (!workflowOn(workflow)) {
-    return {
-      preset: presetId || (allowPreset ? DEFAULT_PRESET : null),
-      task: 'chat',
-      depth: 'normal',
-      tone: 'plain',
-      source: 'off',
-      workflow: 'off',
-      trace: ['workflow:off'],
-      browse: null,
-      browseStatus: 'skipped',
-      cacheKey: null,
-    };
-  }
   // The client carries its base prompt inside the user turn, so the question a
   // cache or a curated pair is keyed by has to be lifted out of it.
   const lastUser = questionOf([...messages].reverse().find((m) => m.role === 'user')?.content || '');
@@ -364,7 +345,6 @@ export async function decide(
     preset,
     browse: material,
     browseStatus,
-    workflow: 'on',
     trace,
     cacheKey,
   };
