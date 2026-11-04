@@ -1,5 +1,5 @@
 import { sha256Hex } from './util.js';
-import { stateKv } from './bindings.js';
+import { stateKv, browsingService } from './bindings.js';
 import { resolveTruth, questionOf } from './truth.js';
 import { DEFAULT_PRESET } from './presets.js';
 
@@ -232,6 +232,15 @@ export async function decide(
   const memo = kv ? L1 : null;
   const cacheKey = `decision:${await sha256Hex(`${lastUser.slice(-4000)}|${images.length}|${presetId || ''}`)}`;
 
+  // A question that names a page must not be answered from a decision recorded
+  // when the browser did not run: replaying it would skip the browser for good,
+  // and the model would then say the page could not be retrieved.
+  const wantsWeb = webWanted(lastUser);
+  // Only a deployment that can browse has a stale-browse problem; with no
+  // binding there is nothing to re-run, so the decision stays a plain hit.
+  const canBrowse = Boolean(browsingService(env));
+  const staleBrowse = (entry) => canBrowse && wantsWeb && !entry?.browse;
+
   // 1. cache. A promoted truth is the strongest hit there is, so master and
   // provisional are checked before the decision cache. Memory sits in front of KV
   // because a KV read can lag the write that produced it.
@@ -252,16 +261,20 @@ export async function decide(
     }
 
     const local = memo?.get(cacheKey);
-    if (local) return cacheHit(local, 'memory', cacheKey);
+    if (local && !staleBrowse(local)) return cacheHit(local, 'memory', cacheKey);
+    if (local) trace.push('cache:stale_browse');
 
     try {
       const hit = await kv.get(cacheKey);
       if (hit) {
         const cached = JSON.parse(hit);
-        memo?.set(cacheKey, cached);
-        return cacheHit(cached, 'kv', cacheKey);
+        if (!staleBrowse(cached)) {
+          memo?.set(cacheKey, cached);
+          return cacheHit(cached, 'kv', cacheKey);
+        }
+        trace.push('cache:stale_browse');
       }
-      trace.push('cache:miss');
+      if (!trace.includes('cache:stale_browse')) trace.push('cache:miss');
     } catch {
       trace.push('cache:error');
     }
@@ -274,11 +287,9 @@ export async function decide(
   trace.push(`intent:${intent.source}`);
 
   // 3. browse
-  const browse = await browseFor(env, {
-    intent,
-    query: lastUser,
-    worthy: BROWSE_WORTHY.has(intent.task) || intent.depth === 'deep' || webWanted(lastUser),
-  });
+  const worthy = BROWSE_WORTHY.has(intent.task) || intent.depth === 'deep' || wantsWeb;
+  const browse = await browseFor(env, { intent, query: lastUser, worthy });
+  const material = browse?.ok ? browse.text : null;
   trace.push(
     browse === null
       ? 'browse:unbound'
@@ -296,13 +307,18 @@ export async function decide(
   trace.push('user:handoff');
   trace.push(`rung:${preset}`);
 
-  const decision = { ...intent, preset, browse: browse?.ok ? browse.text : null, trace, cacheKey };
+  const decision = { ...intent, preset, browse: material, trace, cacheKey };
 
-  if (memo) {
+  // Only a decision that got what it went looking for is worth replaying: a
+  // browse that ran and failed must be retried, not remembered. An unbound
+  // browser is not a failure — there is nothing to retry.
+  const cacheable = !worthy || Boolean(material) || browse === null;
+
+  if (memo && cacheable) {
     if (memo.size >= L1_MAX) memo.clear();
     memo.set(cacheKey, decision);
   }
-  if (kv) {
+  if (kv && cacheable) {
     try {
       await kv.put(cacheKey, JSON.stringify(decision), { expirationTtl: 3600 });
     } catch {

@@ -18,6 +18,7 @@ import {
   PROMOTE_AT,
 } from './src/truth.js';
 import { questionOf } from './src/truth.js';
+import { sha256Hex } from './src/util.js';
 import { upstreamError, sseData, frameShape, fromWorkersAI } from './src/normalize.js';
 
 const ctx = { waitUntil() {}, passThroughOnException() {} };
@@ -1711,4 +1712,77 @@ test('the browser runs on a question that names a page, even with no clef', asyn
   assert.equal(res.status, 200, JSON.stringify(body));
   assert.ok(body.decision.trace.includes('browse:ok'), body.decision.trace.join(','));
   assert.match(JSON.stringify(seen), /PAGE-MARKER/);
+});
+
+test('a decision recorded without a browse is not replayed for a page question', async () => {
+  const question = 'what does https://example.com say';
+  const key = `decision:${await sha256Hex(`${question}|0|`)}`;
+  const env = makeEnv({
+    DECIDE: 'off',
+    ABROWSER: { fetch: async () => new Response('FRESH-MARKER: the page was actually read') },
+    AI: {
+      async run(model, body = {}) {
+        return body.stream ? sse(['ok']) : { response: 'ok' };
+      },
+    },
+    MEM: fakeKv({
+      [key]: JSON.stringify({
+        preset: 'truth',
+        task: 'chat',
+        depth: 'normal',
+        tone: 'plain',
+        source: 'clef-flash',
+        trace: ['cache:miss'],
+        browse: null,
+        cacheKey: key,
+      }),
+    }),
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: question }], stream: false }),
+  });
+
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+  assert.ok(body.decision.trace.includes('cache:stale_browse'), body.decision.trace.join(','));
+  assert.ok(body.decision.trace.includes('browse:ok'), body.decision.trace.join(','));
+  assert.match(String(body.decision.browse), /FRESH-MARKER/);
+});
+
+test('a browse that fails is not cached as if it had succeeded', async () => {
+  let attempts = 0;
+  const env = makeEnv({
+    DECIDE: 'off',
+    ABROWSER: {
+      fetch: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('browser unreachable');
+        return new Response('SECOND-TRY-MARKER');
+      },
+    },
+    AI: {
+      async run(model, body = {}) {
+        return body.stream ? sse(['ok']) : { response: 'ok' };
+      },
+    },
+    MEM: fakeKv({}),
+  });
+
+  const send = () =>
+    call(env, '/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'look up https://example.com' }], stream: false }),
+    });
+
+  const first = await (await send()).json();
+  assert.ok(first.decision.trace.includes('browse:error'), first.decision.trace.join(','));
+  assert.equal(first.decision.browse, null);
+
+  const second = await (await send()).json();
+  assert.ok(second.decision.trace.includes('browse:ok'), second.decision.trace.join(','));
+  assert.match(String(second.decision.browse), /SECOND-TRY-MARKER/);
 });
