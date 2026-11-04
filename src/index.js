@@ -887,6 +887,10 @@ function extensionFor(contentType) {
   if (contentType.includes('png')) return '.png';
   if (contentType.includes('jpeg')) return '.jpg';
   if (contentType.includes('webp')) return '.webp';
+  if (contentType.includes('markdown')) return '.md';
+  if (contentType.includes('csv')) return '.csv';
+  if (contentType.includes('plain')) return '.txt';
+  if (contentType.includes('json')) return '.json';
   if (contentType.includes('gif')) return '.gif';
   if (contentType.includes('pdf')) return '.pdf';
   if (contentType.includes('wav')) return '.wav';

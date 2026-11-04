@@ -30,8 +30,13 @@ flowchart LR
 | `POST` | `/api/chat` | `{ messages, preset, stream }` → normalized SSE |
 | `POST` | `/api/stt` | WAV body, or `{ audio: "<base64>" }` → `{ text }` |
 | `GET` | `/api/tts?t=&v=&m=` | Streamed mp3, cached immutably |
-| `POST` | `/api/upload` | Bytes → R2 (needs `R2`) |
+| `POST` | `/api/upload` | Bytes → R2, plus the text a document contains |
 | `GET` | `/f/:id` | Serve an uploaded object from R2 |
+| `GET` | `/api/workflow` | Whether the five-stage pipeline is on |
+| `POST` | `/api/workflow` | `{ enabled }` → flip it (needs `KEY`) |
+| `POST` | `/api/login` | `{ user, password }` → HttpOnly session cookie |
+| `GET` | `/api/session` | Who the cookie or bearer belongs to |
+| `POST` | `/api/logout` | Drop the session and clear the cookie |
 
 ### One wire format
 
@@ -78,6 +83,65 @@ prompt. `truth` is the default and does not outrank the decision: clef's `task`
 selects the model (`chat`/`generate` → gemma,
 `transform`/`extract`/`compare` → qwen) and its `depth` sets the output budget.
 A preset you pick deliberately outranks both.
+
+## Turning the pipeline off
+
+`Workflow` in Settings is one switch for the whole chain, stored in `MEM` under
+`settings:workflow` and read per request, so a flip applies to every browser
+within ten seconds — no redeploy, and no per-tab preference to get out of sync.
+
+| stage | on (default) | off |
+|---|---|---|
+| cache | `MEM` + per-isolate read | skipped |
+| decision model | clef ladder | skipped |
+| browser | runs for web-shaped questions | never launched |
+| review queue | the answer becomes a candidate | nothing recorded |
+
+Off is a bare model call: no cache read (so a stale answer cannot come back), no
+`intent:` or `browse:` stage, and `decision.trace` is exactly `["workflow:off"]`.
+Reading needs no key; writing needs the `KEY`:
+
+```bash
+curl https://mind.ai-n.workers.dev/api/workflow
+curl -X POST https://mind.ai-n.workers.dev/api/workflow \
+  -H "x-engine-key: $KEY" -H 'content-type: application/json' \
+  -d '{"enabled": false}'
+```
+
+## Attachments and voice
+
+`POST /api/upload` stores the bytes in `R2` and returns what the model will
+actually receive:
+
+- **pictures** (`png/jpeg/webp/gif`) — stored, and sent as `image_url` content
+  parts. That needs a vision model: the Workers AI rung switches to one on its
+  own when images are present, and the OpenRouter rung passes the parts through.
+- **pdf / docx / text** — decoded on the way in (zlib content streams, zip
+  `word/document.xml`, or plain text) and the text travels with the prompt,
+  capped at 24k characters. A scanned PDF has no text layer; `note` says so
+  instead of inventing content.
+- audio and video are stored and served from `/f/:id`, but not decoded.
+
+The composer's paperclip uploads first and attaches on send, so a sent prompt
+never waits on a 10 MB upload. The card keeps a link to each file rather than a
+copy. The mic button records with `MediaRecorder` and posts to `/api/stt`, which
+is why voice no longer depends on `SpeechRecognition` (Chrome-only). Auto TTS
+reads answers back through `/api/tts`, cached in `R2`.
+
+## Login
+
+Sessions live in the `Sessions` Durable Object, one instance per user name, so a
+session survives isolates and reads its own writes. The name is free-form; the
+password is the deployment's single `LOGIN_PASSWORD` secret, compared in
+constant time:
+
+```bash
+npx wrangler secret put LOGIN_PASSWORD
+```
+
+With no `LOGIN_PASSWORD` set, `/api/login` answers `503 login_unset` rather than
+letting anyone in. Chat itself stays public: signing in identifies who is
+asking, it does not gate the card board.
 
 ## Presets
 
