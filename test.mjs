@@ -1687,3 +1687,28 @@ test('the review queue is gated and lists the most repeated candidate first', as
   assert.deepEqual(body.rows.map((row) => row.question), ['one', 'two']);
   assert.equal(body.rows[1].alternatives, 1);
 });
+
+test('the browser runs on a question that names a page, even with no clef', async () => {
+  let seen = null;
+  const env = makeEnv({
+    DECIDE: 'off',
+    ABROWSER: { fetch: async () => new Response('PAGE-MARKER: example.com title is Example Domain') },
+    AI: {
+      async run(model, body = {}) {
+        seen = body.messages;
+        return body.stream ? sse(['ok']) : { response: 'ok' };
+      },
+    },
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'what does https://example.com say' }], stream: false }),
+  });
+
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+  assert.ok(body.decision.trace.includes('browse:ok'), body.decision.trace.join(','));
+  assert.match(JSON.stringify(seen), /PAGE-MARKER/);
+});

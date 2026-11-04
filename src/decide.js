@@ -27,6 +27,19 @@ export const QUESTIONS = {
 /** Intents that need material from outside the conversation pay for a lookup. */
 const BROWSE_WORTHY = new Set(['extract', 'compare']);
 
+/**
+ * A question that names a page, or asks about the live web, needs the browser
+ * whatever the decision model said. With Cloudflare switched off there is no clef
+ * at all — the intent falls back to `chat` — so keying the browse stage on the
+ * decision alone meant the browser never ran on exactly those deployments.
+ */
+const WEB_HINT = /\b(browse|search|look ?up|fetch|scrape|latest|current|today|news|website|web ?page)\b/i;
+
+function webWanted(query) {
+  const text = String(query || '');
+  return /https?:\/\//i.test(text) || WEB_HINT.test(text);
+}
+
 const REVIEW_TTL = 60 * 60 * 24 * 30;
 
 /** A rung that never answers is a failed rung; escalating is cheaper than waiting. */
@@ -153,11 +166,11 @@ async function intentFor(env, { messages, images, presetId, engine = 'cloudflare
  * Stage 3 — browse. A missing binding is normal, and a failing one must never
  * take the request down: the intent is still good without the material.
  */
-async function browseFor(env, { intent, query }) {
+async function browseFor(env, { intent, query, worthy }) {
   // ABROWSER is this account's name for the agent-browsing worker.
   const binding = env?.ABROWSER || env?.['AGENT-BROWSING'];
   if (!binding || typeof binding.fetch !== 'function') return null;
-  if (!BROWSE_WORTHY.has(intent.task) && intent.depth !== 'deep') return { skipped: true };
+  if (!worthy) return { skipped: true };
 
   try {
     const res = await within(BROWSE_TIMEOUT_MS, 'agent-browsing', () =>
@@ -261,7 +274,11 @@ export async function decide(
   trace.push(`intent:${intent.source}`);
 
   // 3. browse
-  const browse = await browseFor(env, { intent, query: lastUser });
+  const browse = await browseFor(env, {
+    intent,
+    query: lastUser,
+    worthy: BROWSE_WORTHY.has(intent.task) || intent.depth === 'deep' || webWanted(lastUser),
+  });
   trace.push(
     browse === null
       ? 'browse:unbound'
