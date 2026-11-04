@@ -10,6 +10,22 @@ import { recordCandidate, questionOf } from './truth.js';
 import { adminUnlock, adminListKeys, adminReadKey, adminQueue } from './admin.js';
 import { shot } from './shot.js';
 import { wavInfo, wavChunks } from './audio.js';
+import { workflowFor, setWorkflowFor, ON as WORKFLOW_ON } from './workflow.js';
+import { extractText } from './extract.js';
+import { sessionCookie, clearCookie, tokenFrom } from './cookie.js';
+import {
+  Sessions,
+  SESSION_COOKIE,
+  SESSION_TTL_MS,
+  sessionsBinding,
+  openSession,
+  readSession,
+  closeSession,
+  tokenUser,
+} from './sessions.js';
+
+// Wrangler needs the Durable Object class exported from the entrypoint module.
+export { Sessions };
 import { DONE, delta, errorEvent, meta, sseData, upstreamError, frameShape, fromOpenRouterChat, fromWorkersAI } from './normalize.js';
 
 const encoder = new TextEncoder();
@@ -91,6 +107,14 @@ async function route(request, env, ctx, url) {
   if (path === '/api/upload' && method === 'POST') return upload(request, env);
   if (path === '/api/engine' && method === 'GET') return engineView(env);
   if (path === '/api/engine' && method === 'POST') return switchEngine(request, env);
+  // The pipeline switch: on runs cache → decision → browse → review, off goes
+  // straight to the model. Read is public, writing needs the KEY.
+  if (path === '/api/workflow' && method === 'GET') return workflowView(env);
+  if (path === '/api/workflow' && method === 'POST') return switchWorkflow(request, env);
+  // Login state lives in a Durable Object, one per user name.
+  if (path === '/api/login' && method === 'POST') return loginRoute(request, env);
+  if (path === '/api/logout' && method === 'POST') return logoutRoute(request, env);
+  if (path === '/api/session' && method === 'GET') return sessionRoute(request, env);
   // Headless screenshots. Billed per browser-second, so one page, one shot, closed.
   if (path === '/api/shot' && method === 'GET') return shot(url, env, ctx);
 
@@ -109,11 +133,12 @@ async function health(env) {
   const bucket = objects(env);
   const engine = await engineFor(env);
   const useCf = canUseCloudflare(env, engine);
+  const workflow = await workflowFor(env);
 
   return json({
     ok: true,
     service: 'mind',
-    version: '1.2.0',
+    version: '1.3.0',
     engine: {
       workersAI: has(env, 'AI'),
       openrouterKey: has(env, 'OPENROUTER_API_KEY'),
@@ -121,6 +146,8 @@ async function health(env) {
       active: engine,
       cloudflare: useCf,
     },
+    // "on" runs the five stages; "off" is a bare model call.
+    workflow,
     bindings: bindingReport(env),
     models: {
       text: cf.TEXT_MODEL,
@@ -146,6 +173,12 @@ async function health(env) {
       truth: Boolean(kv),
       // Browser Rendering is opt-in: no binding, no /api/shot.
       screenshots: Boolean(browserBinding(env)),
+      // The switch needs somewhere to keep its value.
+      workflow: Boolean(kv),
+      // Uploads are stored in R2; documents are read as text on the way in.
+      documents: Boolean(bucket),
+      // Login needs both the Durable Object and the shared password.
+      login: Boolean(sessionsBinding(env)) && has(env, 'LOGIN_PASSWORD'),
     },
   });
 }
@@ -165,9 +198,11 @@ async function engineView(env) {
   });
 }
 
-async function switchEngine(request, env) {
-  // This is the one route that changes how the app spends money, so it is the
-  // one route with a gate. An unset KEY fails closed rather than open.
+/**
+ * Both switches share this gate. They change how the app spends money and how
+ * it answers, so an unset KEY fails closed rather than open.
+ */
+function keyGate(request, env) {
   const secret = String(env?.KEY || '');
   if (!secret) {
     return fail(
@@ -181,6 +216,37 @@ async function switchEngine(request, env) {
   if (!keyMatches(secret, provided)) {
     return fail(401, 'key_required', 'Send the KEY in the x-engine-key header.');
   }
+  return null;
+}
+
+async function workflowView(env) {
+  const workflow = await workflowFor(env);
+  return json({
+    ok: true,
+    workflow,
+    enabled: workflow === WORKFLOW_ON,
+    stages: ['cache', 'decision', 'browse', 'answer', 'review'],
+  });
+}
+
+async function switchWorkflow(request, env) {
+  const denied = keyGate(request, env);
+  if (denied) return denied;
+
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body.enabled !== 'boolean') {
+    return fail(400, 'enabled_required', 'Send { enabled: true | false }.');
+  }
+
+  const workflow = await setWorkflowFor(env, body.enabled);
+  return json({ ok: true, workflow, enabled: workflow === WORKFLOW_ON });
+}
+
+async function switchEngine(request, env) {
+  // This is the one route that changes how the app spends money, so it is the
+  // one route with a gate. An unset KEY fails closed rather than open.
+  const denied = keyGate(request, env);
+  if (denied) return denied;
 
   const body = await request.json().catch(() => null);
   if (!body || typeof body.cloudflare !== 'boolean') {
@@ -407,6 +473,10 @@ async function chat(request, env, ctx) {
     return fail(429, 'budget_exhausted', `Daily budget reached (${gate.used}/${gate.limit} neurons). Resets at 00:00 UTC.`);
   }
 
+  // The pipeline switch is read per request: a flip applies to every browser
+  // and every isolate within ten seconds, without a redeploy.
+  const workflow = await workflowFor(env);
+
   // A preset the user picked wins; decide() only fills the gap.
   const decision = await decide(env, {
     messages,
@@ -414,6 +484,7 @@ async function chat(request, env, ctx) {
     presetId: pinned ? requested : null,
     allowPreset: !noneSelected,
     engine,
+    workflow,
   });
   // A deliberate pick wins outright. Otherwise the decision steers, and the
   // preset the client sent (truth, normally) is the fallback prompt.
@@ -500,7 +571,10 @@ async function chat(request, env, ctx) {
     }
     await recordReview(env, ctx, reviewOf({ preset, decision: reported, route, model, lastUser, text }));
     // Every answer becomes a candidate, so nothing has to be retyped to promote it.
-    await recordCandidate(env, { input: question, answer: text, preset: preset?.id, route, model }, ctx);
+    // With the workflow off this stage is not part of the turn either.
+    if (workflow !== 'off') {
+      await recordCandidate(env, { input: question, answer: text, preset: preset?.id, route, model }, ctx);
+    }
     return json({ text, route, model, decision: reported });
   }
 
@@ -563,13 +637,93 @@ async function chat(request, env, ctx) {
         reviewOf({ preset, decision: reported, route, model, lastUser, text: answer }),
       );
       // Stored whether or not it is good: promotion is a later decision.
-      await recordCandidate(env, { input: question, answer, preset: preset?.id, route, model }, ctx);
+      if (workflow !== 'off') {
+        await recordCandidate(env, { input: question, answer, preset: preset?.id, route, model }, ctx);
+      }
       send(DONE);
       controller.close();
     },
   });
 
   return new Response(out, { headers: SSE_HEADERS });
+}
+
+/**
+ * A session is a cookie, or a bearer for anything that is not a browser. The
+ * token names the account it belongs to, so the right object is asked directly.
+ */
+async function sessionRoute(request, env) {
+  const token = tokenFrom(request, SESSION_COOKIE);
+  const user = token ? tokenUser(token) : null;
+  if (!token || !user) return json({ ok: true, user: null });
+
+  const session = await readSession(env, token).catch(() => null);
+  return json({
+    ok: true,
+    user: session ? user : null,
+    expiresAt: session?.expiresAt ?? null,
+    store: Boolean(sessionsBinding(env)),
+  });
+}
+
+/**
+ * One shared password gates every name, and the name is what the Durable Object
+ * namespaces. Per-user passwords would replace the comparison below, not the
+ * session plumbing.
+ */
+async function loginRoute(request, env) {
+  const body = await request.json().catch(() => null);
+  const user = String(body?.user || '')
+    .trim()
+    .toLowerCase()
+    .slice(0, 64);
+  const password = String(body?.password || '');
+
+  if (!user || !password) return fail(400, 'credentials_required', 'Send { user, password }.');
+  if (!/^[\w .@-]{1,64}$/.test(user)) {
+    return fail(400, 'bad_user', 'Names may use letters, numbers, spaces and . _ @ -');
+  }
+
+  const expected = String(env?.LOGIN_PASSWORD || '');
+  if (!expected) {
+    return fail(
+      503,
+      'login_unset',
+      'Set the LOGIN_PASSWORD secret (wrangler secret put LOGIN_PASSWORD) before anyone can sign in.',
+    );
+  }
+  if (!sessionsBinding(env)) {
+    return fail(503, 'no_sessions', 'The SESSIONS Durable Object binding is missing from wrangler.jsonc.');
+  }
+  if (!keyMatches(expected, password)) {
+    return fail(401, 'bad_login', 'Wrong name or password.');
+  }
+
+  const session = await openSession(env, user, { ttl: SESSION_TTL_MS });
+  if (!session) return fail(503, 'no_sessions', 'The session store did not answer.');
+
+  const secure = new URL(request.url).protocol === 'https:';
+  return json(
+    { ok: true, user, expiresAt: session.expiresAt },
+    {
+      headers: {
+        'set-cookie': sessionCookie(SESSION_COOKIE, session.token, {
+          maxAge: Math.floor(SESSION_TTL_MS / 1000),
+          secure,
+        }),
+      },
+    },
+  );
+}
+
+async function logoutRoute(request, env) {
+  const token = tokenFrom(request, SESSION_COOKIE);
+  if (token) await closeSession(env, token).catch(() => {});
+  const secure = new URL(request.url).protocol === 'https:';
+  return json(
+    { ok: true, user: null },
+    { headers: { 'set-cookie': clearCookie(SESSION_COOKIE, { secure }) } },
+  );
 }
 
 async function stt(request, env) {
@@ -692,8 +846,15 @@ async function upload(request, env) {
   if (!bucket) {
     return fail(503, 'no_storage', 'Uploads need the BUCKET R2 binding.');
   }
-  const contentType = request.headers.get('content-type') || 'application/octet-stream';
-  if (!/^(image\/(png|jpeg|webp|gif)|application\/pdf|audio\/|video\/)/.test(contentType)) {
+  const contentType = (request.headers.get('content-type') || 'application/octet-stream')
+    .split(';')[0]
+    .trim()
+    .toLowerCase();
+  // Pictures go to a vision model as pictures; documents are turned into text
+  // on the way in, because a model cannot look inside a PDF.
+  const allowed =
+    /^(image\/(png|jpeg|webp|gif)|application\/pdf|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document|text\/|application\/json|application\/xml|audio\/|video\/)/;
+  if (!allowed.test(contentType)) {
     return fail(415, 'unsupported_type', `Unsupported content type: ${contentType}`);
   }
 
@@ -704,7 +865,22 @@ async function upload(request, env) {
   const digest = await sha256Key(`${contentType}:${bytes.length}:${Date.now()}`);
   const id = `${digest.slice(0, 32)}${extensionFor(contentType)}`;
   await bucket.put(`uploads/${id}`, bytes, { httpMetadata: { contentType } });
-  return json({ id, url: `/f/${id}`, contentType, size: bytes.length });
+
+  // Extraction happens once, here: the client sends the text with the prompt, so
+  // a 40-page PDF costs one decode rather than one per turn.
+  const extracted = await extractText(bytes, contentType).catch(() => null);
+  const text = String(extracted?.text || '');
+
+  return json({
+    id,
+    url: `/f/${id}`,
+    contentType,
+    size: bytes.length,
+    kind: extracted?.kind || 'binary',
+    chars: text.length,
+    text: text.length > 20000 ? text.slice(0, 20000) : text,
+    note: extracted?.note,
+  });
 }
 
 function extensionFor(contentType) {

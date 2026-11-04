@@ -66,6 +66,24 @@
     ]
   },
 
+  // Login state. One Durable Object per user name gives sessions a single
+  // home that survives isolates and reads its own writes. The migration tag is
+  // a one-time record: leave it alone or Wrangler refuses the deploy.
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SESSIONS",
+        "class_name": "Sessions"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Sessions"]
+    }
+  ],
+
   "observability": {
     "enabled": true
   },

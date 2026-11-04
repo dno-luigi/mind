@@ -85,6 +85,14 @@ class App {
             proxyUrl: ''
         };
 
+        // Attachments waiting to be sent with the next prompt, cleared on send.
+        this.attachments = [];
+        this.mediaRecorder = null;
+        this.recordChunks = [];
+        // Read from the Worker: the pipeline switch is server state.
+        this.workflowEnabled = true;
+        this.user = null;
+
         this.streamingId = null;
         this.selectedIds = new Set();
         this.contextMenuTargetId = null;
@@ -170,6 +178,8 @@ class App {
     init() {
         this.loadState();
         this.loadEngine();
+        this.loadWorkflow();
+        this.loadSession();
         this.applyTheme();
         this.applyView();
         this.bindEvents();
@@ -486,6 +496,30 @@ class App {
     bindEvents() {
         const sendBtn = document.getElementById('sendBtn');
         sendBtn.addEventListener('click', () => this.handleSendClick());
+
+        // Attach and record, both of which put something into the next prompt.
+        const attachBtn = document.getElementById('attachBtn');
+        const attachInput = document.getElementById('attachInput');
+        if (attachBtn && attachInput) {
+            attachBtn.addEventListener('click', () => attachInput.click());
+            attachInput.addEventListener('change', (e) => {
+                this.addFiles(e.target.files);
+                e.target.value = '';
+            });
+        }
+
+        const micBtn = document.getElementById('micBtn');
+        if (micBtn) micBtn.addEventListener('click', () => this.toggleRecording());
+
+        const attachTray = document.getElementById('attachTray');
+        if (attachTray) {
+            attachTray.addEventListener('click', (e) => {
+                const remove = e.target.closest('[data-remove]');
+                if (!remove) return;
+                this.attachments.splice(Number(remove.dataset.remove), 1);
+                this.renderAttachments();
+            });
+        }
         
         const input = document.getElementById('userInput');
         input.addEventListener('keydown', (e) => {
@@ -923,7 +957,7 @@ class App {
         }
     }
 
-    addCard(q, r, styles = {}, url = '') {
+    addCard(q, r, styles = {}, url = '', attachments = []) {
         const id = crypto.randomUUID();
         const card = { 
             id, 
@@ -933,7 +967,15 @@ class App {
             preset: this.currentPresetKey,
             // Optional page this card is about. Only the URL is stored; the
             // screenshot is rendered by /api/shot when the card is drawn.
-            url
+            url,
+            // Metadata only: the extracted text belongs to the turn, not to
+            // localStorage, which has a few megabytes for everything.
+            attachments: attachments.map(file => ({
+                name: file.name,
+                url: file.url,
+                contentType: file.contentType,
+                image: Boolean(file.image)
+            }))
         };
         this.cards.push(card);
         this.pushHistory("Add Card");
@@ -1025,6 +1067,7 @@ class App {
                     </div>
                     <div class="content">${this.md(card.q)}</div>
                     ${this.shotHtml(card)}
+                    ${this.attachmentsHtml(card)}
                 </div>
                 <div class="card-face card-back">
                     <div class="card-header">
@@ -1159,10 +1202,25 @@ class App {
             return;
         }
 
+        // Whatever was attached belongs to this turn only: the card keeps a
+        // record of it, the tray empties, and the model gets the text and the
+        // pictures. A document's text is appended so it reads as the source.
+        const files = this.attachments.slice();
+        this.attachments = [];
+        this.renderAttachments();
+        const imageUrls = files.filter(file => file.image).map(file => this.fileUrl(file));
+        const documents = files
+            .filter(file => file.text)
+            .map(file => `Attached document "${file.name}" (${file.contentType}):\n${file.text}`)
+            .join('\n\n');
+        const asked = documents ? `${prompt}\n\n${documents}` : prompt;
+
         // Naming a page in the prompt gives the card that page: the thumbnail is
         // part of the card, so the answer and what it is about stay together.
         const pageUrl = contextCardId ? '' : this.urlIn(prompt);
-        this.streamingId = contextCardId ? contextCardId : this.addCard(prompt, '...', {}, pageUrl);
+        this.streamingId = contextCardId
+            ? contextCardId
+            : this.addCard(prompt, '...', {}, pageUrl, files);
         
         const cardEl = document.querySelector(`.flip-card[data-id="${this.streamingId}"]`);
         if(cardEl && !contextCardId) setTimeout(() => cardEl.classList.add('flipped'), 100);
@@ -1179,9 +1237,9 @@ class App {
         let fullPrompt;
         const sysPrompt = this.getCurrentSystemPrompt();
         if (sysPrompt) {
-            fullPrompt = sysPrompt + "\n\nUser: " + prompt;
+            fullPrompt = sysPrompt + "\n\nUser: " + asked;
         } else {
-            fullPrompt = prompt;
+            fullPrompt = asked;
         }
         
         if (contextCardId) {
@@ -1200,7 +1258,14 @@ class App {
             
             const accumulated = await this.streamChat(
                 {
-                    messages: [{ role: 'user', content: fullPrompt }],
+                    messages: [{
+                        role: 'user',
+                        // Pictures travel as content parts, the one shape both
+                        // providers accept; text alone stays a plain string.
+                        content: imageUrls.length
+                            ? [{ type: 'text', text: fullPrompt }, ...imageUrls.map(url => ({ type: 'image_url', image_url: { url } }))]
+                            : fullPrompt
+                    }],
                     preset: usePreset ? preset.key : NO_PRESET_KEY,
                     signal
                 },
@@ -1677,6 +1742,277 @@ class App {
 
         const request = face.querySelector('.content');
         if (request) request.insertAdjacentHTML('afterend', this.shotHtml(card));
+    }
+
+    /** Absolute URL of an uploaded file, on whichever origin chat uses. */
+    fileUrl(attachment) {
+        const base = this.getProxyUrl().replace(/\/api\/chat$/, '');
+        return `${base}${attachment.url}`;
+    }
+
+    /**
+     * Upload first, send later: the Worker stores the file and hands back the
+     * text it could read out of it, so sending costs no extra round trip and a
+     * reload cannot lose the document behind a prompt already sent.
+     */
+    async addFiles(fileList) {
+        const room = Math.max(0, 6 - this.attachments.length);
+        const files = Array.from(fileList || []).slice(0, room);
+        if (!files.length) {
+            this.showToast('Six attachments at a time');
+            return;
+        }
+
+        for (const file of files) {
+            if (file.size > 12 * 1024 * 1024) {
+                this.showToast(`${file.name} is over 12 MB`);
+                continue;
+            }
+            this.showToast(`Uploading ${file.name}…`);
+            try {
+                const res = await fetch('/api/upload', {
+                    method: 'POST',
+                    headers: { 'content-type': file.type || 'application/octet-stream' },
+                    body: file
+                });
+                const body = await res.json().catch(() => null);
+                if (!res.ok) {
+                    this.showToast(body?.error?.message || `Upload failed (${res.status})`);
+                    continue;
+                }
+                const image = /^image\//.test(body.contentType || '');
+                this.attachments.push({
+                    id: body.id,
+                    url: body.url,
+                    name: file.name,
+                    contentType: body.contentType,
+                    image,
+                    text: body.text || '',
+                    kind: body.kind || 'binary'
+                });
+                if (!image && !body.text) {
+                    this.showToast(`${file.name}: ${body.note || 'no text found'}`);
+                }
+            } catch (err) {
+                this.showToast(`Upload failed: ${err.message}`);
+            }
+        }
+        this.renderAttachments();
+    }
+
+    renderAttachments() {
+        const tray = document.getElementById('attachTray');
+        if (!tray) return;
+
+        tray.innerHTML = this.attachments.map((file, index) => `
+            <div class="attach-chip">
+                ${file.image
+                    ? `<img src="${encodeURI(this.fileUrl(file))}" alt="">`
+                    : `<i class="fas ${file.text ? 'fa-file-alt' : 'fa-file'}"></i>`}
+                <span class="attach-name" title="${this.escapeHtml(file.name)}">${this.escapeHtml(file.name)}</span>
+                <button class="attach-remove" data-remove="${index}" aria-label="Remove attachment"><i class="fas fa-times"></i></button>
+            </div>`).join('');
+
+        tray.classList.toggle('active', this.attachments.length > 0);
+    }
+
+    /** What a card was made from, kept as links rather than copies. */
+    attachmentsHtml(card) {
+        const files = Array.isArray(card?.attachments) ? card.attachments : [];
+        if (!files.length) return '';
+
+        const cells = files.map(file => {
+            const href = encodeURI(this.fileUrl(file));
+            const label = this.escapeHtml(file.name || 'file');
+            return file.image
+                ? `<a href="${href}" target="_blank" rel="noopener noreferrer" title="${label}"><img loading="lazy" src="${href}" alt="${label}"></a>`
+                : `<a href="${href}" target="_blank" rel="noopener noreferrer" title="${label}"><i class="fas fa-file-alt"></i>${label}</a>`;
+        }).join('');
+
+        return `<div class="card-attachments">${cells}</div>`;
+    }
+
+    /**
+     * Record with MediaRecorder and let the Worker transcribe. This is the path
+     * that works in every browser: the built-in recogniser is Chrome-only, which
+     * is why the mic button does not depend on it.
+     */
+    async toggleRecording() {
+        const btn = document.getElementById('micBtn');
+
+        if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+            this.mediaRecorder.stop();
+            return;
+        }
+
+        if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+            this.showToast('Recording is unavailable here');
+            return;
+        }
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
+            this.mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+            this.recordChunks = [];
+
+            this.mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size) this.recordChunks.push(event.data);
+            };
+
+            this.mediaRecorder.onstop = async () => {
+                stream.getTracks().forEach(track => track.stop());
+                if (btn) btn.classList.remove('recording');
+                const blob = new Blob(this.recordChunks, { type: this.mediaRecorder.mimeType || 'audio/webm' });
+                this.recordChunks = [];
+                await this.transcribeAudio(blob);
+            };
+
+            this.mediaRecorder.start();
+            if (btn) btn.classList.add('recording');
+            this.showToast('Recording — tap the mic to stop');
+        } catch (err) {
+            this.showToast(`Microphone unavailable: ${err.message}`);
+        }
+    }
+
+    async transcribeAudio(blob) {
+        if (!blob.size) {
+            this.showToast('Nothing recorded');
+            return;
+        }
+        this.showToast('Transcribing…');
+        try {
+            const res = await fetch('/api/stt', {
+                method: 'POST',
+                headers: { 'content-type': blob.type || 'audio/webm' },
+                body: blob
+            });
+            const body = await res.json().catch(() => null);
+            if (!res.ok) {
+                this.showToast(body?.error?.message || `Transcription failed (${res.status})`);
+                return;
+            }
+            const text = String(body.text || '').trim();
+            if (!text) {
+                this.showToast('Nothing heard');
+                return;
+            }
+            const input = document.getElementById('userInput');
+            input.value = input.value ? `${input.value} ${text}` : text;
+            input.focus();
+            this.showToast('Transcribed');
+        } catch (err) {
+            this.showToast(`Transcription failed: ${err.message}`);
+        }
+    }
+
+    /** The pipeline switch is server state, so it is read, never remembered. */
+    async loadWorkflow() {
+        try {
+            const res = await fetch('/api/workflow', { headers: { accept: 'application/json' } });
+            const body = await res.json();
+            this.workflowEnabled = body.enabled !== false;
+        } catch {
+            // No route, or offline: on is what the Worker would be doing.
+            this.workflowEnabled = true;
+        }
+        this.renderWorkflowToggle();
+    }
+
+    async toggleWorkflow() {
+        if (!this.engineKey) {
+            this.showToast('Add the KEY first — the switch is keyed');
+            return;
+        }
+        try {
+            const res = await fetch('/api/workflow', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', 'x-engine-key': this.engineKey },
+                body: JSON.stringify({ enabled: !this.workflowEnabled })
+            });
+            const body = await res.json().catch(() => null);
+            if (!res.ok) {
+                this.showToast(body?.error?.message || `Could not switch the workflow (${res.status})`);
+                return;
+            }
+            this.workflowEnabled = body.enabled !== false;
+            this.renderWorkflowToggle();
+            this.showToast(this.workflowEnabled
+                ? 'Workflow on — cache, decision, browser, review'
+                : 'Workflow off — straight to the model');
+        } catch (err) {
+            this.showToast(`Could not switch the workflow: ${err.message}`);
+        }
+    }
+
+    renderWorkflowToggle() {
+        const btn = document.getElementById('workflowToggle');
+        const label = document.getElementById('workflowLabel');
+        if (label) label.textContent = this.workflowEnabled ? 'Workflow: On' : 'Workflow: Off';
+        if (btn) {
+            btn.setAttribute('aria-pressed', String(this.workflowEnabled));
+            btn.classList.toggle('active', this.workflowEnabled);
+        }
+    }
+
+    async loadSession() {
+        try {
+            const res = await fetch('/api/session', {
+                headers: { accept: 'application/json' },
+                credentials: 'same-origin'
+            });
+            const body = await res.json();
+            this.user = body.user || null;
+        } catch {
+            this.user = null;
+        }
+        this.renderAuth();
+    }
+
+    renderAuth() {
+        const status = document.getElementById('authStatus');
+        if (status) status.textContent = this.user ? `Signed in as ${this.user}` : 'Not signed in.';
+    }
+
+    async login() {
+        const user = document.getElementById('loginUser')?.value.trim() || '';
+        const password = document.getElementById('loginPassword')?.value || '';
+        if (!user || !password) {
+            this.showToast('Name and password');
+            return;
+        }
+        try {
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ user, password })
+            });
+            const body = await res.json().catch(() => null);
+            if (!res.ok) {
+                this.showToast(body?.error?.message || `Sign-in failed (${res.status})`);
+                return;
+            }
+            this.user = body.user;
+            const field = document.getElementById('loginPassword');
+            if (field) field.value = '';
+            this.renderAuth();
+            this.showToast(`Signed in as ${this.user}`);
+        } catch (err) {
+            this.showToast(`Sign-in failed: ${err.message}`);
+        }
+    }
+
+    async logout() {
+        try {
+            await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
+        } catch {
+            // A failed sign-out must still clear the local view of the session.
+        }
+        this.user = null;
+        this.renderAuth();
+        this.showToast('Signed out');
     }
 
     openModal(id) {

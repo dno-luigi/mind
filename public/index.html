@@ -73,9 +73,15 @@
         <button class="fab primary" id="viewFab" title="View"><i class="fas fa-columns"></i></button>
     </div>
 
+    <div id="attachTray"></div>
+
     <div id="inputPanel">
+        <button id="attachBtn" title="Attach a picture, PDF or document"><i class="fas fa-paperclip"></i></button>
+        <input type="file" id="attachInput" multiple style="display:none;"
+               accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,.docx,text/plain,text/markdown,text/csv,application/json">
+        <button id="micBtn" title="Record a voice note"><i class="fas fa-microphone"></i></button>
         <button id="presetSelectorBtn" title="Select Preset for Next Query"><i class="fas fa-sliders-h"></i> <span id="currentPresetLabel">Default</span></button>
-        <input type="text" id="userInput" placeholder="Type or say something..." autocomplete="off" spellcheck="false">
+        <input type="text" id="userInput" placeholder="Type, say, or attach something..." autocomplete="off" spellcheck="false">
         <button id="sendBtn" title="Send">⏎</button>
     </div>
 
@@ -115,6 +121,15 @@
                     </div>
                     <input type="password" id="engineKeyInput" placeholder="KEY (kept on this device)" autocomplete="off" style="width:100%; margin-bottom:8px;" oninput="app.saveEngineKey(this.value)">
                     <small style="color:var(--text); opacity:0.7;">Off sends every answer to OpenRouter's free router and spends no daily neurons. Changing it needs the KEY; the state applies to every browser, not just this one.</small>
+                </div>
+                <div class="style-section">
+                    <h4>Workflow</h4>
+                    <div class="toggle-group" style="margin-bottom:8px;">
+                        <button class="toggle-btn" id="workflowToggle" onclick="app.toggleWorkflow()" aria-pressed="true">
+                            <i class="fas fa-diagram-project"></i> <span id="workflowLabel">Workflow: On</span>
+                        </button>
+                    </div>
+                    <small style="color:var(--text); opacity:0.7;">On runs the five stages — cache, decision model, browser, answer, review queue. Off sends the question straight to the model: no cache read, no decision model, no browsing, nothing queued for review. Also applies to every browser.</small>
                 </div>
                 <div class="style-section">
                     <h4>API Configuration</h4>
@@ -159,6 +174,17 @@
                         <button class="toggle-btn" id="asrToggle" onclick="app.toggleASR()">ASR (Mic)</button>
                         <button class="toggle-btn" id="ttsToggle" onclick="app.toggleTTS()">Auto TTS</button>
                     </div>
+                    <small style="color:var(--text); opacity:0.7;">The mic button in the bar records and transcribes through the Worker. Auto TTS reads each answer back with the speaker button.</small>
+                </div>
+                <div class="style-section">
+                    <h4>Account</h4>
+                    <input type="text" id="loginUser" placeholder="Name" autocomplete="username" style="width:100%; margin-bottom:8px; min-height:auto;">
+                    <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password" style="width:100%; margin-bottom:8px; min-height:auto;">
+                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                        <button class="btn btn-primary" onclick="app.login()"><i class="fas fa-sign-in-alt"></i> Sign in</button>
+                        <button class="btn btn-ghost" onclick="app.logout()"><i class="fas fa-sign-out-alt"></i> Sign out</button>
+                    </div>
+                    <small id="authStatus" style="display:block; margin-top:8px; color:var(--text); opacity:0.7;">Not signed in.</small>
                 </div>
                 <div class="style-section">
                     <h4>Presets</h4>

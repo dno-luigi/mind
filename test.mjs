@@ -6,6 +6,11 @@ import { wrapWav, wavInfo, wavChunks } from './src/audio.js';
 import { _resetBudget } from './src/budget.js';
 import { _resetEngine } from './src/engine.js';
 import { readPage } from './src/page.js';
+import { workflowFor, setWorkflowFor, _resetWorkflow } from './src/workflow.js';
+import { extractText, zipEntries } from './src/extract.js';
+import { Sessions } from './src/sessions.js';
+import { parseCookies, cookieValue, sessionCookie, clearCookie } from './src/cookie.js';
+import { DEFAULT_PRESET } from './src/presets.js';
 import { LADDER, within, decide, _resetDecisionCache } from './src/decide.js';
 import { upsertBody, upsertPath, syncPlan } from './src/preset-sync.js';
 import { PRESETS, findPreset } from './src/presets.js';
@@ -55,7 +60,98 @@ function makeEnv(over = {}) {
   // The engine switch is cached per isolate; a test that flips it must not turn
   // Cloudflare off for every test after it.
   _resetEngine();
+  _resetWorkflow();
   return { AI: fakeAI(), ...over };
+}
+
+function memKv() {
+  const map = new Map();
+  return {
+    async get(key) {
+      return map.has(key) ? map.get(key) : null;
+    },
+    async put(key, value) {
+      map.set(key, value);
+    },
+    async delete(key) {
+      map.delete(key);
+    },
+    _map: map,
+  };
+}
+
+function memBucket() {
+  const map = new Map();
+  return {
+    async put(key, value, opts = {}) {
+      map.set(key, { value, opts });
+    },
+    async get(key) {
+      const hit = map.get(key);
+      return hit ? { body: hit.value, httpMetadata: hit.opts.httpMetadata } : null;
+    },
+    _map: map,
+  };
+}
+
+function concatBytes(...parts) {
+  const length = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(length);
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+}
+
+/** A zip with stored (uncompressed) members — enough to exercise the docx path. */
+function zipStore(name, content) {
+  const nameBytes = new TextEncoder().encode(name);
+  const data = new TextEncoder().encode(content);
+  const header = new Uint8Array(30);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, 0x04034b50, true);
+  view.setUint16(8, 0, true);
+  view.setUint32(18, data.length, true);
+  view.setUint32(22, data.length, true);
+  view.setUint16(26, nameBytes.length, true);
+  return concatBytes(header, nameBytes, data);
+}
+
+function jsonRes(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+function fakeSessions() {
+  const store = new Map();
+  return {
+    idFromName: (name) => name,
+    get: () => ({
+      async fetch(url, init) {
+        const path = new URL(typeof url === 'string' ? url : url.url).pathname;
+        const body = init?.body ? JSON.parse(init.body) : {};
+        if (path === '/login') {
+          const expiresAt = Date.now() + 60000;
+          store.set(body.token, { expiresAt, createdAt: Date.now() });
+          return jsonRes({ token: body.token, expiresAt });
+        }
+        if (path === '/read') {
+          const record = store.get(body.token);
+          return record ? jsonRes(record) : jsonRes({ error: { code: 'no_session' } }, 401);
+        }
+        if (path === '/logout') {
+          store.delete(body.token);
+          return jsonRes({ ok: true });
+        }
+        return jsonRes({ error: { code: 'not_found' } }, 404);
+      },
+    }),
+    _store: store,
+  };
 }
 
 async function call(env, path, init) {
@@ -1795,4 +1891,256 @@ test('reading a page refuses a non-http url and never throws without a browser',
   // A binding that is not a real browser has to fail cleanly, not hang the turn.
   const stub = await readPage({ BROWSER: {} }, 'https://example.com');
   assert.equal(stub.ok, false);
+});
+
+test('the workflow switch is on by default, persists off, and env can pin it', async () => {
+  _resetWorkflow();
+  const kv = memKv();
+  assert.equal(await workflowFor({ MEM: kv }), 'on');
+
+  await setWorkflowFor({ MEM: kv }, false);
+  assert.equal(await workflowFor({ MEM: kv }), 'off');
+
+  // A fresh isolate has to read the stored value, not trust its own default.
+  _resetWorkflow();
+  assert.equal(await workflowFor({ MEM: kv }), 'off');
+  assert.equal(await workflowFor({ MEM: kv, WORKFLOW: 'on' }), 'on');
+  _resetWorkflow();
+});
+
+test('workflow off is a bare model call: no cache, no decision model, no browser', async () => {
+  const kv = memKv();
+  let browsed = false;
+  const env = makeEnv({
+    MEM: kv,
+    ABROWSER: {
+      async fetch() {
+        browsed = true;
+        return new Response('never');
+      },
+    },
+  });
+
+  const decision = await decide(env, {
+    messages: [{ role: 'user', content: 'browse the latest news about https://example.com' }],
+    workflow: 'off',
+  });
+
+  assert.deepEqual(decision.trace, ['workflow:off']);
+  assert.equal(decision.browse, null);
+  assert.equal(decision.workflow, 'off');
+  assert.equal(decision.preset, DEFAULT_PRESET);
+  assert.equal(browsed, false);
+  // Nothing was written: a turn that bypassed the pipeline must not seed it.
+  assert.equal([...kv._map.keys()].filter((key) => key.startsWith('decision:')).length, 0);
+});
+
+test('POST /api/workflow is keyed and health reports the state', async () => {
+  const kv = memKv();
+  const env = makeEnv({ MEM: kv, KEY: 'sekret' });
+
+  assert.equal((await (await call(env, '/api/workflow')).json()).enabled, true);
+
+  const noKey = await call(env, '/api/workflow', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ enabled: false }),
+  });
+  assert.equal(noKey.status, 401);
+
+  const off = await call(env, '/api/workflow', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-engine-key': 'sekret' },
+    body: JSON.stringify({ enabled: false }),
+  });
+  assert.equal(off.status, 200);
+  assert.equal((await off.json()).enabled, false);
+
+  _resetWorkflow();
+  const health = await (await call(env, '/api/health')).json();
+  assert.equal(health.workflow, 'off');
+  assert.equal(health.features.workflow, true);
+  _resetWorkflow();
+});
+
+test('a text upload comes back with the text the model will read', async () => {
+  const bucket = memBucket();
+  const env = makeEnv({ BUCKET: bucket });
+
+  const res = await call(env, '/api/upload', {
+    method: 'POST',
+    headers: { 'content-type': 'text/plain; charset=utf-8' },
+    body: 'meeting notes: ship the browser stage',
+  });
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.equal(body.kind, 'text');
+  assert.equal(body.contentType, 'text/plain');
+  assert.match(body.text, /ship the browser stage/);
+  assert.match(body.url, /^\/f\//);
+  assert.equal(bucket._map.size, 1);
+});
+
+test('pdf text is read out of a flate-compressed content stream', async () => {
+  const content = 'BT /F1 12 Tf 72 720 Td (Hello from a PDF) Tj T* (Second line) Tj ET';
+  const compressed = new Uint8Array(
+    await new Response(
+      new Blob([new TextEncoder().encode(content)]).stream().pipeThrough(new CompressionStream('deflate')),
+    ).arrayBuffer(),
+  );
+  const encoder = new TextEncoder();
+  const pdf = concatBytes(
+    encoder.encode(`%PDF-1.4\n1 0 obj\n<< /Length ${compressed.length} /Filter /FlateDecode >>\nstream\n`),
+    compressed,
+    encoder.encode('\nendstream\nendobj\ntrailer\n<<>>\n%%EOF\n'),
+  );
+
+  const out = await extractText(pdf, 'application/pdf');
+  assert.equal(out.kind, 'pdf');
+  assert.match(out.text, /Hello from a PDF/);
+  assert.match(out.text, /Second line/);
+});
+
+test('docx text is read out of the zip', async () => {
+  const xml = '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:t>Quarterly report</w:t></w:r></w:p><w:p><w:r><w:t>Revenue &amp; costs</w:t></w:r></w:p></w:body></w:document>';
+  const file = zipStore('word/document.xml', xml);
+
+  assert.equal(zipEntries(file).length, 1);
+  assert.equal(zipEntries(file)[0].name, 'word/document.xml');
+
+  const out = await extractText(file, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  assert.equal(out.kind, 'docx');
+  assert.match(out.text, /Quarterly report/);
+  assert.match(out.text, /Revenue & costs/);
+});
+
+test('an image upload is stored as an image and never decoded as text', async () => {
+  const env = makeEnv({ BUCKET: memBucket() });
+  const res = await call(env, '/api/upload', {
+    method: 'POST',
+    headers: { 'content-type': 'image/png' },
+    body: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+  });
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.equal(body.kind, 'image');
+  assert.equal(body.text, '');
+  // A document type that is neither text nor an image is refused, not stored.
+  const refused = await call(env, '/api/upload', {
+    method: 'POST',
+    headers: { 'content-type': 'application/zip' },
+    body: new Uint8Array([0x50, 0x4b]),
+  });
+  assert.equal(refused.status, 415);
+});
+
+test('cookies round-trip, expire cleanly and are read from the header', () => {
+  const header = sessionCookie('mind_session', 'abc.def', { maxAge: 60 });
+  assert.match(header, /HttpOnly/);
+  assert.match(header, /SameSite=Lax/);
+  assert.match(header, /Max-Age=60/);
+
+  assert.equal(parseCookies(header.split(';')[0]).mind_session, 'abc.def');
+  const request = new Request('https://example.com/', { headers: { cookie: header } });
+  assert.equal(cookieValue(request, 'mind_session'), 'abc.def');
+  assert.equal(cookieValue(request, 'missing'), '');
+  assert.match(clearCookie('mind_session'), /Max-Age=0/);
+});
+
+test('login fails closed without LOGIN_PASSWORD and rejects a wrong password', async () => {
+  const post = (env, body) =>
+    call(env, '/api/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  const unset = await post(makeEnv({ SESSIONS: fakeSessions() }), { user: 'ada', password: 'x' });
+  assert.equal(unset.status, 503);
+  assert.equal((await unset.json()).error.code, 'login_unset');
+
+  const wrong = await post(
+    makeEnv({ SESSIONS: fakeSessions(), LOGIN_PASSWORD: 'open-sesame' }),
+    { user: 'ada', password: 'nope' },
+  );
+  assert.equal(wrong.status, 401);
+
+  const noStore = await post(makeEnv({ LOGIN_PASSWORD: 'open-sesame' }), {
+    user: 'ada',
+    password: 'open-sesame',
+  });
+  assert.equal(noStore.status, 503);
+});
+
+test('login issues a session and /api/session reads it back from the cookie', async () => {
+  const env = makeEnv({ SESSIONS: fakeSessions(), LOGIN_PASSWORD: 'open-sesame' });
+
+  const res = await call(env, '/api/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ user: 'Ada', password: 'open-sesame' }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.user, 'ada');
+  assert.ok(body.expiresAt > Date.now());
+
+  const cookie = res.headers.get('set-cookie');
+  assert.match(cookie, /mind_session=/);
+  assert.match(cookie, /HttpOnly/);
+
+  const session = await call(env, '/api/session', { headers: { cookie } });
+  assert.equal((await session.json()).user, 'ada');
+
+  // No cookie, no identity — and a cookie naming nobody is not a crash.
+  assert.equal((await (await call(env, '/api/session')).json()).user, null);
+  const bogus = await call(env, '/api/session', { headers: { cookie: 'mind_session=notatoken' } });
+  assert.equal(bogus.status, 200);
+  assert.equal((await bogus.json()).user, null);
+
+  const out = await call(env, '/api/logout', { method: 'POST', headers: { cookie } });
+  assert.equal(out.status, 200);
+  assert.match(out.headers.get('set-cookie'), /Max-Age=0/);
+});
+
+test('the session object hands out a live token and forgets an expired one', async () => {
+  const store = new Map();
+  const state = {
+    storage: {
+      async get(key) {
+        return store.get(key);
+      },
+      async put(key, value) {
+        store.set(key, value);
+      },
+      async delete(key) {
+        store.delete(key);
+      },
+      async list({ prefix = '' } = {}) {
+        return [...store].filter(([key]) => key.startsWith(prefix));
+      },
+    },
+  };
+
+  const sessions = new Sessions(state, {});
+  const post = (path, body) =>
+    sessions.fetch(
+      new Request(`https://sessions${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  assert.equal((await post('/login', { token: 't1', ttl: 60000 })).status, 200);
+  assert.equal((await post('/read', { token: 't1' })).status, 200);
+
+  // Age it out by hand: the next read must refuse it and clear the record.
+  store.set('session:t1', { createdAt: 1, expiresAt: Date.now() - 1 });
+  assert.equal((await post('/read', { token: 't1' })).status, 401);
+  assert.equal(store.has('session:t1'), false);
+
+  assert.equal((await post('/logout', { token: 't2' })).status, 200);
 });
