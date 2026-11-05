@@ -275,9 +275,15 @@ const TASK_CF = {
 /** The depth the decision model reports becomes an output budget. */
 const DEPTH_TOKENS = { terse: 1024, deep: 8192 };
 
-function budgetFor(preset, decision, explicit) {
-  if (explicit) return preset?.maxTokens;
-  return DEPTH_TOKENS[decision?.depth] ?? preset?.maxTokens ?? null;
+/**
+ * The output budget is a floor, not a ceiling. A "terse" classification used to
+ * cap the answer at 1024 tokens whatever preset was in force, which cut long
+ * reports off mid-sentence; depth may now widen an answer but never narrow it.
+ */
+function budgetFor(preset, decision) {
+  const depth = DEPTH_TOKENS[decision?.depth] ?? 0;
+  const cap = preset?.maxTokens ?? 0;
+  return Math.max(depth, cap) || null;
 }
 
 function pickCfModel(preset, images, { decision, explicit } = {}) {
@@ -305,7 +311,7 @@ async function openUpstream(
           messages,
           images,
           temperature: preset?.temperature,
-          maxTokens: budgetFor(preset, decision, explicit),
+          maxTokens: budgetFor(preset, decision),
         }),
       );
       return { route: 'workers-ai', model, stream, extract: fromWorkersAI };
@@ -426,9 +432,12 @@ async function chat(request, env, ctx) {
     });
   }
 
-  // Truth is the default preset, not a user choice, so it must not outrank the
-  // decision. A preset picked deliberately (anything but the default) does.
-  const pinned = Boolean(requestedPreset) && requestedPreset.id !== DEFAULT_PRESET;
+  // A preset picked from the menu wins, truth included — the client marks those
+  // with presetLocked. Truth is also the fallback prompt, so an *unlocked* truth
+  // must not outrank the decision or clef could never route.
+  const pinned =
+    Boolean(requestedPreset) &&
+    (requestedPreset.id !== DEFAULT_PRESET || body.presetLocked === true);
 
   const engine = await engineFor(env);
   const useCf = canUseCloudflare(env, engine);
@@ -461,9 +470,11 @@ async function chat(request, env, ctx) {
   const reported = { ...decision, preset: preset?.id ?? null };
   const wantsStream = body.stream !== false;
 
-  // A promoted truth is the cache that actually short-circuits: the MEM check
-  // decided this before clef was ever asked, so no model runs.
-  if (decision.truth?.answer) {
+  // Only a curated (master) truth answers in place of the model. A provisional
+  // one is a guess the truth service generated and kept on the way past, and
+  // serving it here is what replaced long answers with a single sentence. A
+  // preset picked from the menu also means "generate with this preset".
+  if (decision.truth?.answer && decision.truth.layer === 'master' && !pinned) {
     const truth = decision.truth;
     if (!wantsStream) {
       await recordReview(
@@ -576,7 +587,7 @@ async function chat(request, env, ctx) {
               messages: grounded,
               images,
               temperature: preset?.temperature,
-              maxTokens: budgetFor(preset, reported, pinned),
+              maxTokens: budgetFor(preset, reported),
             }),
           );
           if (text) {

@@ -676,7 +676,7 @@ test('review records are written to MASTER', async () => {
   assert.equal(reviews[0].record.prompt, 'remember this');
 });
 
-test('clef decides the model and output budget when no preset is pinned', async () => {
+test('clef picks the model when no preset is pinned, but never shrinks the budget below the preset cap', async () => {
   const seen = [];
   const env = makeEnv({
     AI: fakeAI({
@@ -697,7 +697,8 @@ test('clef decides the model and output budget when no preset is pinned', async 
 
   const generation = seen.at(-1);
   assert.equal(generation.model, '@cf/qwen/qwen3.8-27b');
-  assert.equal(generation.body.max_tokens, 1024);
+  // "terse" must not cap the answer at 1024 tokens; the truth preset asks for 4096.
+  assert.equal(generation.body.max_tokens, 4096);
 });
 
 test('sending the default preset still lets clef steer the rung', async () => {
@@ -721,6 +722,37 @@ test('sending the default preset still lets clef steer the rung', async () => {
   // truth is the default rather than a choice, so the decision still routes.
   assert.equal(events[0].preset, 'mnl');
   assert.equal(events.filter((e) => e.type === 'delta').map((e) => e.text).join(''), 'steered');
+});
+
+test('a preset chosen from the menu pins truth instead of letting clef route', async () => {
+  const seen = [];
+  const env = makeEnv({
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) {
+          return { response: '{"preset":"mnl","task":"chat","depth":"terse"}' };
+        }
+        seen.push({ model, body });
+        if (body.stream) return sse(['pinned']);
+        return { response: 'pinned' };
+      },
+    }),
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: 'hi' }],
+      preset: 'truth',
+      presetLocked: true,
+    }),
+  });
+
+  const events = await readSSE(res);
+  assert.equal(events[0].preset, 'truth');
+  assert.equal(seen.at(-1).model, '@cf/google/gemma-4-26b-a4b-it');
+  assert.equal(seen.at(-1).body.max_tokens, 4096);
 });
 
 test('selecting no preset drops the preset prompt but keeps the decision', async () => {

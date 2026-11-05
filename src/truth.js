@@ -95,14 +95,23 @@ export function legacyTruthKeys(layer, id, query) {
  * Stored pairs are not always this file's shape: a hand-written admin may have
  * saved the answer as `html`, `text`, `content` or a bare string.
  */
+/** How a store admits it cut the value it kept. Such a record is not an answer. */
+const CLIPPED = /\{\s*truncated\s*\}|\[\s*truncated\b[^\]]*\]/i;
+
 function answerOf(value) {
-  if (typeof value === 'string') return value.trim() || null;
-  if (!value || typeof value !== 'object') return null;
-  for (const field of ['answer', 'html', 'text', 'content', 'body', 'response', 'truth']) {
-    const raw = value[field];
-    if (typeof raw === 'string' && raw.trim()) return raw;
-  }
-  return null;
+  const text =
+    typeof value === 'string'
+      ? value
+      : value && typeof value === 'object'
+        ? ['answer', 'html', 'text', 'content', 'body', 'response', 'truth']
+            .map((field) => value[field])
+            .find((raw) => typeof raw === 'string' && raw.trim()) || ''
+        : '';
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  // A clipped copy would be served as if it were the whole answer, which is
+  // exactly what a half-finished report looks like. Miss instead, and generate.
+  return CLIPPED.test(trimmed) ? null : trimmed;
 }
 
 function citationsOf(value) {

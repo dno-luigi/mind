@@ -100,6 +100,9 @@ class App {
         this.stylingId = null;
         this.promptContext = null;
         this.presetToApply = null;
+        // True only once the preset menu has been used, so the Worker can tell a
+        // deliberate pick (pin it) from the truth default (let clef route).
+        this.presetChosen = false;
 
         // Dictation aims at the last field that had focus, so one mic can fill a
         // menu's text box as well as the chat bar.
@@ -377,6 +380,9 @@ class App {
         if (!this.presets[presetKey]) return;
         
         this.currentPresetKey = presetKey;
+        // A pick from the menu is a choice: the Worker pins it rather than
+        // letting the decision model swap the preset out.
+        this.presetChosen = true;
         
         // Update button label
         const label = document.getElementById('currentPresetLabel');
@@ -1284,6 +1290,7 @@ class App {
                             : fullPrompt
                     }],
                     preset: usePreset ? preset.key : NO_PRESET_KEY,
+                    presetLocked: this.presetChosen,
                     signal
                 },
                 (text, first) => this.updateStreamingContent(text, first)
@@ -1310,12 +1317,12 @@ class App {
      * The client never learns which provider answered, which is why switching
      * between Workers AI and OpenRouter needs no frontend change.
      */
-    async streamChat({ messages, preset = null, signal = null }, onText) {
+    async streamChat({ messages, preset = null, presetLocked = false, signal = null }, onText) {
         const url = this.getProxyUrl();
         const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messages, preset, stream: true }),
+            body: JSON.stringify({ messages, preset, presetLocked, stream: true }),
             signal
         });
 
@@ -2184,6 +2191,7 @@ class App {
                 {
                     messages: [{ role: 'user', content: fullPrompt }],
                     preset: usePreset ? preset.key : NO_PRESET_KEY,
+                    presetLocked: this.presetChosen,
                     signal
                 },
                 (text, first) => this.updateStreamingContent(text, first)
