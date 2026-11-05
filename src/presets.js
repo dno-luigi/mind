@@ -64,6 +64,44 @@ export function findPreset(id) {
   return BY_ID.get(String(id).toLowerCase().replace(/_/g, '-')) || null;
 }
 
+/**
+ * The Truth Engine Prompt is a secret, not source: it lives in the account's
+ * Secrets Store under the TEP binding, so it can be rewritten without a deploy
+ * and never appears in this file, in git, or in a chat message.
+ *
+ * The built-in string above is the fallback, which makes every failure mode
+ * boring: no binding, an empty edit, or a store that will not answer leaves the
+ * truth preset answering with what it always did rather than failing.
+ */
+export const promptStore = (env) => (typeof env?.TEP?.get === 'function' ? env.TEP : null);
+
+// One read per isolate: the secret only changes on an edit, and a healthy read
+// is worth keeping. A failed read is not cached, so the next turn retries.
+let storedPrompt = null;
+
+export async function truthPromptFromStore(env) {
+  if (storedPrompt) return storedPrompt;
+  const store = promptStore(env);
+  if (!store) return null;
+  const value = await store.get().catch(() => null);
+  const prompt = String(value ?? '').trim();
+  if (!prompt) return null;
+  storedPrompt = prompt;
+  return storedPrompt;
+}
+
+/** The preset as it will actually run: the stored prompt wins when there is one. */
+export async function withStoredPrompt(env, preset) {
+  if (!preset || preset.id !== DEFAULT_PRESET) return preset;
+  const prompt = await truthPromptFromStore(env);
+  return prompt ? { ...preset, system: prompt } : preset;
+}
+
+/** Tests read the same isolate the worker does, so the cache needs a reset. */
+export function _resetStoredPrompt() {
+  storedPrompt = null;
+}
+
 /** What the client is allowed to see — no prompts, no slugs. */
 export function publicPresets() {
   return PRESETS.map(({ id, name }) => ({ id, name }));

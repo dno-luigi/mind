@@ -102,6 +102,21 @@
     }
   ],
 
+  // The Truth Engine Prompt is a secret with an owner, so it lives in the
+  // account's Secrets Store instead of this repo: TEP is the binding the code
+  // reads, TRUTH_ENGINE_PROMPT is the entry it resolves to. Values never pass
+  // through git, this file or a deploy log, and rewriting the prompt is a store
+  // edit rather than a release. Code reads it as `await env.TEP.get()` — one
+  // string, no name argument — and falls back to the preset's built-in prompt
+  // if the store cannot answer.
+  "secrets_store_secrets": [
+    {
+      "binding": "TEP",
+      "store_id": "7073bd5852014f83875874ae3ff0817e",
+      "secret_name": "TRUTH_ENGINE_PROMPT"
+    }
+  ],
+
   // Empty to match the deployed Worker. Every value this block used to carry is
   // also the code default — 8000 neurons/IP/day in budget.js, gemini-2.5-flash
   // and whisper-large-v3 in providers/openrouter.js — so nothing changes, and

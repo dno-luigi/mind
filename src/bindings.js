@@ -52,6 +52,11 @@ export function bindingReport(env) {
       bucket: Boolean(env?.BUCKET),
       legacy: Boolean(env?.R2),
     },
+    // Secrets Store entries are unreadable from outside; the binding is the only
+    // thing worth reporting, never what it holds.
+    secretsStore: {
+      truthPrompt: Boolean(env?.TEP?.get),
+    },
     services: {
       agentBrowsing: Boolean(env?.['AGENT-BROWSING']),
       browsing: Boolean(browsingService(env)),

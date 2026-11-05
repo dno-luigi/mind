@@ -2,7 +2,7 @@ import { json, fail, has, options, b64FromBytes, bytesFromB64, clientIp, keyMatc
 import { charge } from './budget.js';
 import { stateKv, objects, bindingReport, browserBinding } from './bindings.js';
 import { engineFor, setEngineFor, canUseCloudflare } from './engine.js';
-import { publicPresets, findPreset, openRouterBackedPresets, DEFAULT_PRESET } from './presets.js';
+import { publicPresets, findPreset, openRouterBackedPresets, withStoredPrompt, DEFAULT_PRESET } from './presets.js';
 import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
 import { decide, recordReview, within } from './decide.js';
@@ -474,11 +474,15 @@ async function chat(request, env, ctx) {
   });
   // A deliberate pick wins outright. Otherwise the decision steers, and the
   // preset the client sent (truth, normally) is the fallback prompt.
-  const preset = noneSelected
+  const chosen = noneSelected
     ? null
     : pinned
       ? requestedPreset
       : (decision.preset && findPreset(decision.preset)) || requestedPreset || findPreset(DEFAULT_PRESET);
+  // The Truth Engine Prompt is read from the TEP secret here, before the cache
+  // check, so a served truth and a generated one see the same prompt. Any other
+  // preset keeps the prompt written for it.
+  const preset = await withStoredPrompt(env, chosen);
 
   // Report the preset that actually ran, not the one the decision model named:
   // they diverge whenever it suggests a preset that no longer exists.

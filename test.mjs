@@ -12,7 +12,7 @@ import { parseCookies, cookieValue, sessionCookie, clearCookie } from './src/coo
 import { DEFAULT_PRESET } from './src/presets.js';
 import { LADDER, within, decide, _resetDecisionCache } from './src/decide.js';
 import { upsertBody, upsertPath, syncPlan } from './src/preset-sync.js';
-import { PRESETS, findPreset } from './src/presets.js';
+import { PRESETS, findPreset, _resetStoredPrompt } from './src/presets.js';
 import { stateKv, objects, bindingReport } from './src/bindings.js';
 import {
   truthKey,
@@ -368,6 +368,87 @@ test('the workers-ai rung still uses the local prompt and sampling', async () =>
   assert.equal(body.messages[0].role, 'system');
   assert.match(body.messages[0].content, /verified fact/);
   assert.equal(body.temperature, 0.3);
+});
+
+test('the truth prompt comes from the TEP secret when it is bound', async () => {
+  _resetStoredPrompt();
+  const seen = [];
+  const env = makeEnv({
+    TEP: { async get() { return '  STORED TRUTH PROMPT  '; } },
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{}' };
+        seen.push(body);
+        if (body.stream) return sse(['ok']);
+        return { response: 'ok' };
+      },
+    }),
+  });
+
+  await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth', stream: false }),
+  });
+
+  assert.equal(seen.at(-1).messages[0].content, 'STORED TRUTH PROMPT');
+  // Diagnostics name the binding, never the value.
+  const health = await (await call(env, '/api/health')).json();
+  assert.equal(health.bindings.secretsStore.truthPrompt, true);
+});
+
+test('an unreadable TEP secret falls back to the built-in truth prompt', async () => {
+  _resetStoredPrompt();
+  const seen = [];
+  const env = makeEnv({
+    TEP: { async get() { throw new Error('denied'); } },
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{}' };
+        seen.push(body);
+        if (body.stream) return sse(['ok']);
+        return { response: 'ok' };
+      },
+    }),
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth', stream: false }),
+  });
+
+  assert.equal(res.status, 200);
+  assert.match(seen.at(-1).messages[0].content, /verified fact/);
+});
+
+test('the TEP secret never overwrites another preset prompt', async () => {
+  _resetStoredPrompt();
+  const seen = [];
+  const env = makeEnv({
+    TEP: { async get() { return 'STORED TRUTH PROMPT'; } },
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{}' };
+        seen.push(body);
+        if (body.stream) return sse(['ok']);
+        return { response: 'ok' };
+      },
+    }),
+  });
+
+  await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: 'hi' }],
+      preset: 'operator',
+      presetLocked: true,
+      stream: false,
+    }),
+  });
+
+  assert.match(seen.at(-1).messages[0].content, /you act rather than explain/i);
 });
 
 test('no engine at all is a 503, not a hang', async () => {
