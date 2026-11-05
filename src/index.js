@@ -2,7 +2,14 @@ import { json, fail, has, options, b64FromBytes, bytesFromB64, clientIp, keyMatc
 import { charge } from './budget.js';
 import { stateKv, objects, bindingReport, browserBinding } from './bindings.js';
 import { engineFor, setEngineFor, canUseCloudflare } from './engine.js';
-import { publicPresets, findPreset, openRouterBackedPresets, withStoredPrompt, DEFAULT_PRESET } from './presets.js';
+import {
+  publicPresets,
+  findPreset,
+  openRouterBackedPresets,
+  withStoredPrompt,
+  truthPromptInfo,
+  DEFAULT_PRESET,
+} from './presets.js';
 import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
 import { decide, recordReview, within } from './decide.js';
@@ -25,7 +32,19 @@ import {
 
 // Wrangler needs the Durable Object class exported from the entrypoint module.
 export { Sessions };
-import { DONE, delta, errorEvent, meta, sseData, upstreamError, frameShape, fromOpenRouterChat, fromWorkersAI } from './normalize.js';
+import {
+  DONE,
+  delta,
+  errorEvent,
+  incompleteEvent,
+  meta,
+  sseData,
+  upstreamError,
+  finishReason,
+  frameShape,
+  fromOpenRouterChat,
+  fromWorkersAI,
+} from './normalize.js';
 
 const encoder = new TextEncoder();
 
@@ -103,6 +122,8 @@ async function route(request, env, ctx, url) {
   if (path === '/api/health' && method === 'GET') return health(env);
   if (path === '/api/presets' && method === 'GET') return json({ presets: publicPresets() });
   if (path === '/api/chat' && method === 'POST') return chat(request, env, ctx);
+  // The shape the proxies' last rung posts; an alias of the same pipeline.
+  if (path === '/api/generate' && method === 'POST') return generate(request, env, ctx);
   if (path === '/api/stt' && method === 'POST') return stt(request, env);
   if (path === '/api/tts' && method === 'GET') return tts(url, env, ctx);
   if (path === '/api/upload' && method === 'POST') return upload(request, env);
@@ -143,6 +164,9 @@ async function health(env) {
       cloudflare: useCf,
     },
     bindings: bindingReport(env),
+    // Which prompt the Truth preset actually runs, and a hash of it: enough to
+    // tell the store's text from the built-in copy without publishing either.
+    truthPrompt: await truthPromptInfo(env),
     models: {
       text: cf.TEXT_MODEL,
       asr: cf.ASR_MODEL,
@@ -424,6 +448,61 @@ function reviewOf({ preset, decision, route, model, lastUser, text }) {
   };
 }
 
+/**
+ * POST /api/generate {prompt|messages, stream}.
+ *
+ * orproxy and ai-proxy fall back to this route when their own rungs fail, and a
+ * 404 here is the `mind error: 404` in their error chain. It is an alias, not a
+ * second generator: the body is rewritten into the chat contract and handed to
+ * the same pipeline, so the truth cache, the presets, the store prompt and the
+ * stream protocol all behave exactly as they do on /api/chat.
+ */
+async function generate(request, env, ctx) {
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== 'object') {
+    return fail(400, 'body_required', 'Send { prompt | messages, stream }.');
+  }
+
+  const supplied = Array.isArray(body.messages) ? body.messages : [];
+  // `prompt` is the proxy's name for a single user turn; `input` is its older one.
+  const prompt = [body.prompt, body.input].find((value) => typeof value === 'string' && value.trim());
+  const messages = supplied.length ? supplied : prompt ? [{ role: 'user', content: prompt }] : [];
+  if (!messages.length) {
+    return fail(400, 'prompt_required', 'Send a non-empty prompt, or messages: [{ role, content }].');
+  }
+
+  // The caller's address still decides the budget, so it is carried across; the
+  // body is replaced, which is the only thing this alias rewrites.
+  const headers = new Headers({ 'content-type': 'application/json' });
+  const ip = request.headers.get('cf-connecting-ip');
+  if (ip) headers.set('cf-connecting-ip', ip);
+
+  const rewritten = new Request(new URL('/api/chat', request.url).toString(), {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      messages,
+      preset: body.preset,
+      presetLocked: body.presetLocked === true || body.presetsLocked === true,
+      stream: body.stream,
+    }),
+  });
+  return chat(rewritten, env, ctx);
+}
+
+/** The protocol's own end-of-answer signals: the sentinel frame or a finish_reason. */
+const isTerminal = (data) => data === '[DONE]' || Boolean(finishReason(data));
+
+/**
+ * The only truncation this app can see without a protocol marker is text that
+ * stops inside a word — the observed failures ended at "scheduling a new" and
+ * "08/26/202". A letter or digit as the last character is that signature; a
+ * closing bracket, quote, period or markdown marker is not.
+ */
+function endsMidWord(text) {
+  return /[\p{L}\p{N}]$/u.test(String(text || '').trimEnd());
+}
+
 async function chat(request, env, ctx) {
   const body = await request.json().catch(() => null);
   if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
@@ -550,9 +629,11 @@ async function chat(request, env, ctx) {
     let text = '';
     let frames = 0;
     let shape = null;
+    let sawTerminal = false;
     for await (const data of sseData(stream, { timeoutMs: STREAM_IDLE_MS })) {
       const problem = upstreamError(data);
       if (problem) throw explain(problem);
+      if (isTerminal(data)) sawTerminal = true;
       frames += 1;
       shape = shape ?? frameShape(data);
       text += extract(data);
@@ -575,6 +656,19 @@ async function chat(request, env, ctx) {
         502,
         'empty_upstream',
         `${route} (${model}) returned no text: ${describeEmpty(frames, shape)}.`,
+      );
+    }
+    // Text is not the same thing as a finished answer. A stream that closed
+    // mid-word used to return 200 carrying half a report, which is how a
+    // truncated audit reached its caller looking like a completed one. The
+    // partial text is still handed back, under an error, so it can be read
+    // without being trusted.
+    if (!sawTerminal && endsMidWord(text)) {
+      return fail(
+        502,
+        'stream_incomplete',
+        `${route} (${model}) closed the stream mid-answer after ${text.length} characters; the text is not a complete answer.`,
+        { partial: text },
       );
     }
     await recordReview(env, ctx, reviewOf({ preset, decision: reported, route, model, lastUser, text }));
@@ -602,11 +696,13 @@ async function chat(request, env, ctx) {
       let answer = '';
       let frames = 0;
       let shape = null;
+      let sawTerminal = false;
       try {
         send(meta({ route, model, preset: preset?.id, decision: reported }));
         for await (const data of sseData(stream, { timeoutMs: STREAM_IDLE_MS })) {
           const problem = upstreamError(data);
           if (problem) throw explain(problem);
+          if (isTerminal(data)) sawTerminal = true;
           frames += 1;
           shape = shape ?? frameShape(data);
           const text = extract(data);
@@ -633,6 +729,17 @@ async function chat(request, env, ctx) {
           else send(errorEvent('empty_upstream', `${model} returned no text: ${describeEmpty(frames, shape)}.`));
         } else if (!emitted) {
           send(errorEvent('empty_upstream', `${route} (${model}) returned no text.`));
+        }
+        // The deltas are already on the wire, so this cannot become an HTTP
+        // error; it is the stream admitting the answer stopped mid-thought.
+        if (emitted && !sawTerminal && endsMidWord(answer)) {
+          send(
+            incompleteEvent({
+              code: 'stream_incomplete',
+              message: `${route} (${model}) closed the stream mid-answer after ${answer.length} characters. The text above is not a complete answer.`,
+              chars: answer.length,
+            }),
+          );
         }
       } catch (err) {
         send(errorEvent(err?.code || 'stream_failed', err?.message || String(err)));

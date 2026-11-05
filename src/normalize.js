@@ -15,6 +15,34 @@ export const delta = (text) => (text ? event({ type: 'delta', text }) : '');
 export const errorEvent = (code, message) => event({ type: 'error', error: { code, message } });
 
 /**
+ * Text arrived, but the upstream never said it had finished. This is its own
+ * event rather than an error: the deltas already painted are real, they are just
+ * not the whole answer, and a card that shows them as complete is lying.
+ */
+export const incompleteEvent = (fields) => event({ type: 'incomplete', complete: false, ...fields });
+
+/**
+ * The provider's own end-of-answer signal, when it sends one. OpenAI-shaped
+ * streams put a `finish_reason` on the last choice; the sentinel frame is the
+ * other spelling of the same claim. Neither means "the socket closed".
+ */
+export function finishReason(data) {
+  if (!data || data === '[DONE]') return null;
+  try {
+    const parsed = JSON.parse(data);
+    const choice = parsed.choices?.[0] ?? parsed.result?.choices?.[0];
+    const reason =
+      choice?.finish_reason ??
+      choice?.finishReason ??
+      parsed.finish_reason ??
+      parsed.result?.finish_reason;
+    return typeof reason === 'string' && reason ? reason : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Iterate the `data:` payloads of an SSE stream, whatever produced them.
  *
  * `timeoutMs` is an idle budget, restarted on every chunk: a slow but living

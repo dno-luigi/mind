@@ -1,3 +1,5 @@
+import { sha256Hex } from './util.js';
+
 /**
  * Presets are server data: prompt + model + params, one rung per provider.
  *
@@ -107,6 +109,21 @@ export async function withStoredPrompt(env, preset) {
 /** Tests read the same isolate the worker does, so the cache needs a reset. */
 export function _resetStoredPrompt() {
   storedPrompt = null;
+}
+
+/**
+ * What the Truth preset will actually run, without the text itself: `source`
+ * says whether the store answered, and `version` identifies the prompt by hash
+ * so an edit can be seen from outside without the prompt ever being published.
+ */
+export async function truthPromptInfo(env) {
+  const stored = await truthPromptFromStore(env);
+  const text = stored || BY_ID.get(DEFAULT_PRESET)?.system || '';
+  return {
+    source: stored ? 'store' : 'builtin',
+    version: text ? (await sha256Hex(text)).slice(0, 12) : null,
+    chars: text.length,
+  };
 }
 
 /** What the client is allowed to see — no prompts, no slugs. */

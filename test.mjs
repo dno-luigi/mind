@@ -38,6 +38,21 @@ function sse(chunks) {
   });
 }
 
+/**
+ * The same frames without the terminal one: exactly what a dropped connection
+ * leaves behind, and the shape that used to be returned as a finished answer.
+ */
+function sseNoDone(chunks) {
+  return new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ response: chunk })}\n\n`));
+      }
+      controller.close();
+    },
+  });
+}
+
 function fakeAI(overrides = {}) {
   return {
     async run(model, body = {}) {
@@ -211,6 +226,127 @@ test('chat streams meta, deltas and [DONE]', async () => {
   const text = events.filter((e) => e.type === 'delta').map((e) => e.text).join('');
   assert.equal(text, 'Hello world');
   assert.equal(events.at(-1), '[DONE]');
+});
+
+test('/api/generate answers the proxies\' prompt shape', async () => {
+  const res = await call(makeEnv(), '/api/generate', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ prompt: 'hi', stream: false }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.text, 'Hello world');
+  assert.equal(body.route, 'workers-ai');
+});
+
+test('/api/generate streams the chat protocol when asked', async () => {
+  const res = await call(makeEnv(), '/api/generate', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/event-stream/);
+
+  const events = await readSSE(res);
+  assert.equal(events[0].type, 'meta');
+  assert.equal(events.filter((e) => e.type === 'delta').map((e) => e.text).join(''), 'Hello world');
+  // A stream that said it finished gets no incomplete note.
+  assert.equal(events.some((e) => e.type === 'incomplete'), false);
+  assert.equal(events.at(-1), '[DONE]');
+});
+
+test('/api/generate without a prompt is a controlled 400', async () => {
+  const res = await call(makeEnv(), '/api/generate', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).error.code, 'prompt_required');
+});
+
+test('/api/generate reports a dead model instead of answering blank', async () => {
+  const env = makeEnv({
+    AI: {
+      async run() {
+        throw new Error('model unavailable');
+      },
+    },
+  });
+  const res = await call(env, '/api/generate', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ prompt: 'hi', stream: false }),
+  });
+  assert.equal(res.status, 503);
+  assert.equal((await res.json()).error.code, 'no_engine');
+});
+
+test('a stream that closes mid-word is marked incomplete, not successful', async () => {
+  const env = makeEnv({
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{}' };
+        if (body.stream) return sseNoDone(['The agreement renews', ' automat']);
+        return { response: 'The agreement renews automat' };
+      },
+    }),
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'summarise the clause' }] }),
+  });
+  assert.equal(res.status, 200);
+
+  const events = await readSSE(res);
+  const text = events.filter((e) => e.type === 'delta').map((e) => e.text).join('');
+  assert.equal(text, 'The agreement renews automat');
+  const note = events.find((e) => e.type === 'incomplete');
+  assert.ok(note, 'an interrupted stream must say so');
+  assert.equal(note.complete, false);
+  assert.equal(note.code, 'stream_incomplete');
+  assert.equal(events.at(-1), '[DONE]');
+});
+
+test('a half answer is never a 200 for a non-streaming caller', async () => {
+  const env = makeEnv({
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{}' };
+        if (body.stream) return sseNoDone(['The agreement renews', ' automat']);
+        return { response: 'The agreement renews automat' };
+      },
+    }),
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'summarise the clause' }], stream: false }),
+  });
+  assert.equal(res.status, 502);
+  const body = await res.json();
+  assert.equal(body.error.code, 'stream_incomplete');
+  // The partial text is still handed back, under the error.
+  assert.match(body.error.partial, /automat$/);
+});
+
+test('health names which Truth prompt is in force, without the text', async () => {
+  const plain = await (await call(makeEnv(), '/api/health')).json();
+  assert.equal(plain.truthPrompt.source, 'builtin');
+  assert.match(plain.truthPrompt.version, /^[0-9a-f]{12}$/);
+  assert.ok(plain.truthPrompt.chars > 0);
+  assert.equal(JSON.stringify(plain).includes('verified fact'), false);
+
+  const stored = await (
+    await call(makeEnv({ TEP: { async get() { return 'A DIFFERENT CANONICAL PROMPT'; } } }), '/api/health')
+  ).json();
+  assert.equal(stored.truthPrompt.source, 'store');
+  assert.notEqual(stored.truthPrompt.version, plain.truthPrompt.version);
 });
 
 test('chat rejects an unknown preset instead of silently substituting', async () => {

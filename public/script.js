@@ -1343,6 +1343,7 @@ class App {
         let accumulated = '';
         let first = true;
         let failure = null;
+        let incomplete = null;
 
         while (true) {
             const { done, value } = await reader.read();
@@ -1368,6 +1369,8 @@ class App {
                     first = false;
                 } else if (event.type === 'error') {
                     failure = event.error?.message || event.error?.code || 'stream failed';
+                } else if (event.type === 'incomplete') {
+                    incomplete = event.message || 'The answer stopped before it finished.';
                 } else if (event.type === 'meta') {
                     this.lastRoute = event;
                 }
@@ -1375,6 +1378,13 @@ class App {
         }
 
         if (failure && !accumulated) throw new Error(failure);
+        // A half answer is shown, never passed off as the whole one: the note is
+        // part of the text so it survives into the saved message.
+        if (incomplete) {
+            this.showToast(incomplete);
+            accumulated += '\n\n---\n*This answer ended early: the stream closed mid-sentence, so the text above is all that arrived.*';
+            onText(accumulated, false);
+        }
         return accumulated;
     }
 
