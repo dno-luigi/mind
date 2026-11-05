@@ -2803,6 +2803,46 @@ ${retry ? 'Your previous answer was unusable. Reply with that single line and no
         }
     }
 
+    /**
+     * A saved Proxy URL is honoured only if it serves this app's presets.
+     *
+     * Which preset ran, its prompt, its budget and the truth cache are all
+     * decided by the Worker behind /api/chat. A plain chat relay accepts the
+     * same POST, ignores `preset`, and can end a long answer with an empty
+     * stream — which reads as truncation rather than as the wrong URL. So ask
+     * the configured server for its preset list once at boot: a server that
+     * cannot name its presets cannot honour one, and chat returns to this site.
+     */
+    async verifyProxyUrl() {
+        const own = new URL(DEFAULT_PROXY_URL, window.location.href).href;
+        const configured = this.getProxyUrl();
+        if (configured === own) return true;
+
+        const base = configured.replace(/\/api\/chat$/, '');
+        let servesPresets = false;
+        let timer = null;
+        try {
+            const controller = new AbortController();
+            timer = setTimeout(() => controller.abort(), 4000);
+            const res = await fetch(`${base}/api/presets`, { signal: controller.signal });
+            const body = res.ok ? await res.json().catch(() => null) : null;
+            servesPresets = Array.isArray(body?.presets) && body.presets.length > 0;
+        } catch {
+            servesPresets = false;
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+        if (servesPresets) return true;
+
+        const before = configured;
+        this.settings.proxyUrl = own;
+        this.saveState();
+        const input = document.getElementById('proxyUrlInput');
+        if (input) input.value = own;
+        this.showToast(`Proxy URL ${before} cannot serve presets — chat is back on this site`);
+        return false;
+    }
+
     showToast(msg) {
         const t = document.getElementById('toast');
         t.textContent = msg;
@@ -2831,4 +2871,5 @@ ${retry ? 'Your previous answer was unusable. Reply with that single line and no
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new App();
     window.app.init();
+    window.app.verifyProxyUrl();
 });
