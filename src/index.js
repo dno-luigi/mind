@@ -41,6 +41,7 @@ import {
   sseData,
   upstreamError,
   finishReason,
+  finishState,
   frameShape,
   fromOpenRouterChat,
   fromWorkersAI,
@@ -630,10 +631,12 @@ async function chat(request, env, ctx) {
     let frames = 0;
     let shape = null;
     let sawTerminal = false;
+    let cutReason = null;
     for await (const data of sseData(stream, { timeoutMs: STREAM_IDLE_MS })) {
       const problem = upstreamError(data);
       if (problem) throw explain(problem);
       if (isTerminal(data)) sawTerminal = true;
+      if (finishState(data) === 'cut') cutReason = finishReason(data);
       frames += 1;
       shape = shape ?? frameShape(data);
       text += extract(data);
@@ -663,6 +666,16 @@ async function chat(request, env, ctx) {
     // truncated audit reached its caller looking like a completed one. The
     // partial text is still handed back, under an error, so it can be read
     // without being trusted.
+    // A length cut is the provider's own admission, so it outranks how the text
+    // happens to end: a report cut at the ceiling can still stop at a full stop.
+    if (cutReason) {
+      return fail(
+        502,
+        'output_truncated',
+        `${route} (${model}) stopped at its ${cutReason} limit after ${text.length} characters; the text is a prefix, not an answer.`,
+        { partial: text, finishReason: cutReason },
+      );
+    }
     if (!sawTerminal && endsMidWord(text)) {
       return fail(
         502,
@@ -697,12 +710,14 @@ async function chat(request, env, ctx) {
       let frames = 0;
       let shape = null;
       let sawTerminal = false;
+      let cutReason = null;
       try {
         send(meta({ route, model, preset: preset?.id, decision: reported }));
         for await (const data of sseData(stream, { timeoutMs: STREAM_IDLE_MS })) {
           const problem = upstreamError(data);
           if (problem) throw explain(problem);
           if (isTerminal(data)) sawTerminal = true;
+          if (finishState(data) === 'cut') cutReason = finishReason(data);
           frames += 1;
           shape = shape ?? frameShape(data);
           const text = extract(data);
@@ -732,7 +747,18 @@ async function chat(request, env, ctx) {
         }
         // The deltas are already on the wire, so this cannot become an HTTP
         // error; it is the stream admitting the answer stopped mid-thought.
-        if (emitted && !sawTerminal && endsMidWord(answer)) {
+        // The provider's `length` wins over the text heuristic because a prefix
+        // can end on a full stop and still be a prefix.
+        if (emitted && cutReason) {
+          send(
+            incompleteEvent({
+              code: 'output_truncated',
+              message: `${route} (${model}) stopped at its ${cutReason} limit after ${answer.length} characters. The text above is a prefix, not a complete answer.`,
+              reason: cutReason,
+              chars: answer.length,
+            }),
+          );
+        } else if (emitted && !sawTerminal && endsMidWord(answer)) {
           send(
             incompleteEvent({
               code: 'stream_incomplete',

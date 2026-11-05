@@ -53,6 +53,18 @@ function sseNoDone(chunks) {
   });
 }
 
+/** Frames as raw objects, so protocol metadata like finish_reason can be tested. */
+function sseFrames(frames) {
+  return new ReadableStream({
+    start(controller) {
+      for (const frame of frames) {
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(frame)}\n\n`));
+      }
+      controller.close();
+    },
+  });
+}
+
 function fakeAI(overrides = {}) {
   return {
     async run(model, body = {}) {
@@ -333,6 +345,92 @@ test('a half answer is never a 200 for a non-streaming caller', async () => {
   assert.equal(body.error.code, 'stream_incomplete');
   // The partial text is still handed back, under the error.
   assert.match(body.error.partial, /automat$/);
+});
+
+test('a length cut is incomplete even when the text ends at a full stop', async () => {
+  const env = makeEnv({
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{}' };
+        if (body.stream) {
+          return sseFrames([
+            { response: 'The timeline ends here.' },
+            { choices: [{ delta: {}, finish_reason: 'length' }] },
+          ]);
+        }
+        return { response: 'The timeline ends here.' };
+      },
+    }),
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'audit the docket' }] }),
+  });
+  const events = await readSSE(res);
+  const text = events.filter((e) => e.type === 'delta').map((e) => e.text).join('');
+  assert.equal(text, 'The timeline ends here.');
+
+  const note = events.find((e) => e.type === 'incomplete');
+  assert.ok(note, 'a token-ceiling cut must be reported');
+  assert.equal(note.code, 'output_truncated');
+  assert.equal(note.reason, 'length');
+});
+
+test('a natural stop is complete even when the text ends in a letter', async () => {
+  const env = makeEnv({
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{}' };
+        if (body.stream) {
+          return sseFrames([
+            { response: 'End of Report' },
+            { choices: [{ delta: {}, finish_reason: 'stop' }] },
+          ]);
+        }
+        return { response: 'End of Report' };
+      },
+    }),
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'audit the docket' }] }),
+  });
+  const events = await readSSE(res);
+  // The protocol said it finished; ending in a letter is not evidence of a cut.
+  assert.equal(events.some((e) => e.type === 'incomplete'), false);
+  assert.equal(events.filter((e) => e.type === 'delta').map((e) => e.text).join(''), 'End of Report');
+});
+
+test('a length cut on the non-stream path is an error, not a 200', async () => {
+  const env = makeEnv({
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{}' };
+        if (body.stream) {
+          return sseFrames([
+            { response: 'The timeline ends here.' },
+            { choices: [{ delta: {}, finish_reason: 'length' }] },
+          ]);
+        }
+        return { response: 'The timeline ends here.' };
+      },
+    }),
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'audit the docket' }], stream: false }),
+  });
+  assert.equal(res.status, 502);
+  const body = await res.json();
+  assert.equal(body.error.code, 'output_truncated');
+  assert.equal(body.error.finishReason, 'length');
+  assert.match(body.error.partial, /^The timeline ends here\.$/);
 });
 
 test('health names which Truth prompt is in force, without the text', async () => {

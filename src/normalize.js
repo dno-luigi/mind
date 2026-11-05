@@ -22,6 +22,27 @@ export const errorEvent = (code, message) => event({ type: 'error', error: { cod
 export const incompleteEvent = (fields) => event({ type: 'incomplete', complete: false, ...fields });
 
 /**
+ * What a finish_reason actually claims.
+ *
+ * `stop` means the model finished. `length` means it was cut off at the token
+ * ceiling: the text is a prefix, and a report that stops there is not a report.
+ * Treating every finish_reason as success is how a truncated audit reads as a
+ * finished one, because the sentinel frame arrives either way.
+ */
+const COMPLETE_REASONS = new Set(['stop', 'eos', 'end_turn', 'stop_sequence', 'complete', 'completed']);
+const CUT_REASONS = new Set(['length', 'max_tokens', 'content_filter', 'model_context_window_exceeded']);
+
+/** 'complete', 'cut', 'unknown', or null when the frame carries no reason. */
+export function finishState(data) {
+  const reason = finishReason(data);
+  if (!reason) return null;
+  const key = String(reason).toLowerCase();
+  if (CUT_REASONS.has(key)) return 'cut';
+  if (COMPLETE_REASONS.has(key)) return 'complete';
+  return 'unknown';
+}
+
+/**
  * The provider's own end-of-answer signal, when it sends one. OpenAI-shaped
  * streams put a `finish_reason` on the last choice; the sentinel frame is the
  * other spelling of the same claim. Neither means "the socket closed".
