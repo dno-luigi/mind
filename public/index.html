@@ -152,7 +152,9 @@
                         <button class="toggle-btn" onclick="app.toggleThemeLock()">
                             <i class="fas fa-lock"></i> <span id="lockLabel">Lock Theme</span>
                         </button>
+                        <button class="toggle-btn" onclick="app.openPageStylist()"><i class="fas fa-magic"></i> AI Stylist</button>
                     </div>
+                    <small style="color:var(--text); opacity:0.7;">Styling is menu-only: chat replies never change the theme or a card.</small>
                     <div class="toggle-group">
                         <button class="toggle-btn" onclick="app.setCardView('list')">List</button>
                         <button class="toggle-btn" onclick="app.setCardView('grid')">Grid</button>
@@ -262,11 +264,14 @@
                 <button class="btn btn-ghost" onclick="app.closeModal('aiThemeModal')"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
-                <p style="margin-bottom:8px; font-size:13px; opacity:0.8;">Describe the vibe.</p>
+                <p style="margin-bottom:8px; font-size:13px; opacity:0.8;">Describe the vibe. The menu applies it.</p>
                 <textarea id="aiThemePrompt" placeholder="Kill Bill red, pale text..."></textarea>
+                <p id="aiThemeStatus" class="modal-hint" hidden></p>
             </div>
             <div class="modal-footer">
+                <button class="dictation-btn" id="aiThemeMic" title="Describe it out loud" onclick="app.dictateInto('aiThemePrompt', this)"><i class="fas fa-microphone"></i></button>
                 <button class="btn btn-ghost" onclick="app.closeModal('aiThemeModal')">Cancel</button>
+                <button class="btn btn-ghost" id="aiThemeRetry" hidden onclick="app.applyAITheme(true)">Retry</button>
                 <button class="btn btn-primary" onclick="app.applyAITheme()">Generate & Apply</button>
             </div>
         </div>
@@ -317,6 +322,6 @@
 
     <div id="toast">Action Saved</div>
 
-    <script src="script.js?v=6"></script>
+    <script src="script.js?v=7"></script>
 </body>
 </html>

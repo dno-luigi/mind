@@ -24,7 +24,7 @@ paste into a new project as a starting brief. The long-form documentation is
 | Card menu | Continue, Split, Merge, AI Edit, Create Preset Card, AI Theme, Manual Style, Copy, Share Card, Export PDF, Screenshot Page, Fullscreen, Undo, Delete. |
 | Multi-select | Selection bar with split, merge, delete and "share selected". |
 | Views | List / grid / fullscreen, plus a fullscreen overlay with flip, native fullscreen and read-aloud. |
-| Styling per card | Bold/italic/underline, text/background/border colours, padding, radius, border width, custom CSS, style lock — or describe a vibe in **AI Stylist** and let the model pick the theme. |
+| Styling per card | Bold/italic/underline, text/background/border colours, padding, radius, border width, custom CSS, style lock — or describe a vibe in **AI Stylist** and let the model pick the theme. Styling is menu-only: chat replies never change the theme or a card, and their directives are stripped. |
 | Undo | One-step undo of the last destructive action, on the top bar. |
 | Page on a card | Name a URL in a prompt (or **Screenshot Page**) and the card shows a live `/api/shot` thumbnail linked to the page; only the URL is stored, and shots are cached in R2 for ten minutes. |
 | Data | `localStorage` persistence, export/import JSON, export PDF, clear all, factory reset, shareable links. |

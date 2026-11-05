@@ -20,16 +20,15 @@ function normalizeChatUrl(raw) {
 const STORAGE_KEY = "ai_ndraft_data_v2";
 const PRESETS_KEY = "ai_ncards_presets_v1";
 
-const SYSTEM_PROMPT_BASE = `You are a helpful, casual AI assistant. You can control styling and app behavior.
+// Chat is text-only on purpose. Styling and board changes live behind the menus
+// (AI Stylist, Card Styles, Clear All), so a reply can never repaint the app or
+// wipe the board by accident. Teaching the directive grammar here is exactly
+// what made the model emit !theme: / !action: in ordinary conversation.
+const SYSTEM_PROMPT_BASE = `You are a helpful, casual AI assistant. Answer in plain text only.
 
-1. VISUAL STYLING (Start of response):
-   - Page Theme: !theme:Name,BgHex,CardBgHex,TextHex,BorderHex,PrimaryHex!
-   - Card Style: !bg:#hex! !text:#hex! !border:#hex! !pad:px! !radius:px! !bold! !italic!
-
-2. APP ACTIONS (Hidden commands, put at end):
-   - !action:merge! (Merges current selection)
-   - !action:clear! (Clears the entire board)
-   - !action:view:grid! or !action:view:list! or !action:view:full! (Changes view)
+Never emit styling directives, hex colour palettes, or app commands such as
+!theme:..., !bg:... or !action:.... Colours and layout are handled by the app's
+own menus, not by you.
 
 User requests are natural language. Be efficient.`;
 
@@ -101,6 +100,13 @@ class App {
         this.stylingId = null;
         this.promptContext = null;
         this.presetToApply = null;
+
+        // Dictation aims at the last field that had focus, so one mic can fill a
+        // menu's text box as well as the chat bar.
+        this.lastTextField = null;
+        this.dictationTarget = null;
+        this.dictationBtn = null;
+        this.lastThemePrompt = '';
 
         this.recognizer = null;
         this.isListening = false;
@@ -505,8 +511,22 @@ class App {
             });
         }
 
+        // Remember the last text field that had focus: the mic types into it, so
+        // it works for a menu's textarea and not just the chat bar.
+        document.addEventListener('focusin', (e) => {
+            const el = e.target;
+            if (!el || !el.matches) return;
+            if (el.matches('textarea, input[type="text"], input[type="search"], input[type="url"]')) {
+                this.lastTextField = el;
+            }
+        });
+
         const micBtn = document.getElementById('micBtn');
-        if (micBtn) micBtn.addEventListener('click', () => this.toggleRecording());
+        if (micBtn) {
+            // Keep the caret where it was instead of moving focus to the button.
+            micBtn.addEventListener('mousedown', (e) => e.preventDefault());
+            micBtn.addEventListener('click', () => this.dictateInto(null, micBtn));
+        }
 
         const attachTray = document.getElementById('attachTray');
         if (attachTray) {
@@ -1465,18 +1485,17 @@ class App {
         clearInterval(this.revealTimer);
         this.reveal = null;
 
-        const { cleanText, styles, themeUpdate, actions } = this.parseCommands(fullText);
+        // Chat is text-only: directives are stripped from the text, never
+        // applied. Theme, card styles and board actions live behind the menus,
+        // so a stray !theme: or !action:clear! in a reply does nothing.
+        const { cleanText } = this.parseCommands(fullText);
         const card = this.cards.find(c => c.id === id);
         
         if (card) {
-            if (card.styles && card.styles.locked) {
-                this.showToast("Card Locked - Style changes ignored");
-            } else {
-                if (Object.keys(styles).length > 0) {
-                    card.styles = { ...card.styles, ...styles };
-                }
-            }
+            const previous = card.r;
             card.r = cleanText;
+            // A reply made only of directives would otherwise blank the card.
+            if (!cleanText && previous) card.r = previous;
         }
 
         const cleanHtml = this.md(cleanText);
@@ -1489,50 +1508,17 @@ class App {
             if (fsPane) fsPane.scrollTop = fsPane.scrollHeight;
         }
 
-        if (card && (!card.styles || !card.styles.locked)) {
-            if (Object.keys(styles).length > 0 && !this.theme.locked) {
-                const cardEl = document.querySelector(`.flip-card[data-id="${id}"]`);
-                if (cardEl) this.applyCardStyleToEl(cardEl, styles);
-            }
-        }
-
-        if (themeUpdate) {
-            if (this.theme.locked) {
-                this.showToast("Global Theme Locked");
-            } else {
-                this.theme = { ...this.theme, ...themeUpdate };
-                this.applyTheme();
-                this.saveState();
-                this.showToast(`Theme: ${themeUpdate.name || 'Updated'}`);
-            }
-        }
-
-        if (actions.length > 0) {
-            actions.forEach(action => {
-                if (action === 'clear') this.clearAll();
-                if (action === 'merge') {
-                     if (this.selectedIds.size > 1) {
-                         this.merge();
-                     } else {
-                         this.showToast("AI requested merge, but no cards selected.");
-                     }
-                }
-                if (action.startsWith('view:')) {
-                    const view = action.split(':')[1];
-                    if (['list', 'grid', 'full'].includes(view)) {
-                        this.setCardView(view);
-                        this.showToast(`AI switched to ${view}`);
-                    }
-                }
-            });
-        }
-
         if (this.settings.autoTTS) this.readCard(id);
 
         this.streamingId = null;
         this.pushHistory("AI Response");
     }
 
+    /**
+     * Split the app's directive grammar out of a reply. Chat uses this only to
+     * strip directives from the text — applying one is the menus' job (see
+     * applyFinalResponse), so the two can never be confused.
+     */
     parseCommands(text) {
         const cmdRegex = /!(theme|bg|text|border|pad|radius|font|bold|italic|css|action):?([^!]+)!/gi;
         let styles = {};
@@ -1834,13 +1820,23 @@ class App {
      * that works in every browser: the built-in recogniser is Chrome-only, which
      * is why the mic button does not depend on it.
      */
-    async toggleRecording() {
-        const btn = document.getElementById('micBtn');
+    /** Aim the one recorder at a field: the chat bar, or a menu's text box. */
+    dictateInto(fieldId, btn) {
+        this.dictationBtn = btn || document.getElementById('micBtn');
+        return this.toggleRecording(fieldId || null);
+    }
+
+    async toggleRecording(fieldId = null) {
+        const btn = this.dictationBtn || document.getElementById('micBtn');
 
         if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
             this.mediaRecorder.stop();
             return;
         }
+
+        this.dictationTarget = fieldId
+            ? document.getElementById(fieldId)
+            : (this.lastTextField || document.getElementById('userInput'));
 
         if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
             this.showToast('Recording is unavailable here');
@@ -1895,13 +1891,37 @@ class App {
                 this.showToast('Nothing heard');
                 return;
             }
-            const input = document.getElementById('userInput');
-            input.value = input.value ? `${input.value} ${text}` : text;
-            input.focus();
-            this.showToast('Transcribed');
+            this.insertDictated(text);
         } catch (err) {
             this.showToast(`Transcription failed: ${err.message}`);
         }
+    }
+
+    /** Type a transcript into the field the mic was aimed at. */
+    insertDictated(text) {
+        const target = this.dictationTarget && document.contains(this.dictationTarget)
+            ? this.dictationTarget
+            : document.getElementById('userInput');
+        if (!target) return;
+
+        // A panel that closed while we were transcribing must not collect text.
+        const panel = target.closest('.modal-overlay');
+        if (panel && !panel.classList.contains('active')) {
+            this.showToast('Transcription discarded — that panel closed');
+            return;
+        }
+
+        const start = typeof target.selectionStart === 'number' ? target.selectionStart : target.value.length;
+        const end = typeof target.selectionEnd === 'number' ? target.selectionEnd : start;
+        const before = target.value.slice(0, start);
+        const after = target.value.slice(end);
+        const glue = before && !/\s$/.test(before) ? ' ' : '';
+        const inserted = before + glue + text;
+        target.value = inserted + after;
+        if (target.setSelectionRange) target.setSelectionRange(inserted.length, inserted.length);
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        target.focus();
+        this.showToast('Transcribed');
     }
 
     async loadSession() {
@@ -1964,6 +1984,8 @@ class App {
     }
 
     openModal(id) {
+        // A fresh open must not show the previous attempt's complaint.
+        if (id === 'aiThemeModal') this.closeThemeIssue();
         document.getElementById(id).classList.add('active');
     }
 
@@ -2181,9 +2203,13 @@ class App {
         }
     }
 
-    applyAITheme() {
-        const desc = document.getElementById('aiThemePrompt').value.trim();
-        if (!desc) return;
+    applyAITheme(retry = false) {
+        const input = document.getElementById('aiThemePrompt');
+        const desc = (input?.value || this.lastThemePrompt || '').trim();
+        if (!desc) {
+            this.showToast('Describe the vibe first');
+            return;
+        }
         
         if (this.editingId) {
             const card = this.cards.find(c => c.id === this.editingId);
@@ -2200,13 +2226,16 @@ class App {
             return;
         }
 
+        // Fixed on purpose: the menu owns styling, so it never has to be coaxed
+        // out of a conversation.
         const prompt = `Generate ONLY a style definition in this exact format:
 !theme:Name,BgHex,CardBgHex,TextHex,BorderHex,PrimaryHex!
 Based on this vibe: ${desc}
-Do not output any other text.`;
+${retry ? 'Your previous answer was unusable. Reply with that single line and nothing else, with all five colours as 6-digit hex.\n' : ''}Do not output any other text.`;
 
+        this.lastThemePrompt = desc;
         this.closeModal('aiThemeModal');
-        this.showToast("Generating Theme...");
+        this.showToast(retry ? 'Retrying theme…' : 'Generating theme…');
         
         const preset = this.getCurrentPreset();
         const usePreset = Boolean(preset && preset.key);
@@ -2216,19 +2245,170 @@ Do not output any other text.`;
             () => {}
         )
         .then(fullText => {
-            const { themeUpdate } = this.parseCommands(fullText);
-            if (themeUpdate) {
-                this.theme = { ...this.theme, ...themeUpdate };
+            const result = this.parseThemeResult(fullText);
+            if (!result.complete) {
+                this.showThemeIssue(desc, result.missing);
+                return;
+            }
+
+            // Opened from a card's menu, so the colours belong to that card.
+            const card = this.editingId ? this.cards.find(c => c.id === this.editingId) : null;
+            if (card) {
+                card.styles = {
+                    ...(card.styles || {}),
+                    color: result.theme.text,
+                    backgroundColor: result.theme.bg,
+                    borderColor: result.theme.border
+                };
+                this.saveState();
+                const el = document.querySelector(`.flip-card[data-id="${card.id}"]`);
+                if (el) this.applyCardStyleToEl(el, card.styles);
+                this.showToast(`Card style: ${result.theme.name}`);
+            } else {
+                this.theme = { ...this.theme, ...result.theme };
                 this.applyTheme();
                 this.saveState();
-                this.showToast(`Theme: ${themeUpdate.name}`);
-            } else {
-                this.showToast("Theme generation failed (parse error)");
+                this.showToast(`Theme: ${result.theme.name}`);
             }
+            this.closeThemeIssue();
         })
-        .catch(() => {
-            this.showToast("Theme generation failed");
-        });
+        .catch(err => this.showThemeIssue(desc, [], err.message));
+    }
+
+    /** The page theme's menu entry: the Stylist with no card attached. */
+    openPageStylist() {
+        this.editingId = null;
+        this.closeThemeIssue();
+        this.closeModal('settingsModal');
+        this.openModal('aiThemeModal');
+    }
+
+    /**
+     * Read whatever the Stylist model returned and turn it into a theme. Models
+     * drift: they wrap the line in prose, drop the "!", omit "#", answer in JSON
+     * or label the colours. All of that is usable — only a missing or invalid
+     * colour is a real failure, and that is what the retry is for.
+     */
+    parseThemeResult(text) {
+        const slots = {
+            bg: 'bg', background: 'bg', pagebackground: 'bg',
+            cardbg: 'cardBg', cardbackground: 'cardBg', card: 'cardBg',
+            text: 'text', textcolor: 'text', foreground: 'text', fg: 'text', color: 'text',
+            border: 'border', bordercolor: 'border',
+            primary: 'primary', accent: 'primary', primarycolor: 'primary'
+        };
+        const order = ['bg', 'cardBg', 'text', 'border', 'primary'];
+        const found = {};
+        let name = '';
+        const raw = String(text || '');
+
+        // JSON, because some models answer {"bg":"#111",...} whatever the prompt.
+        const json = raw.match(/\{[\s\S]*\}/);
+        if (json) {
+            try {
+                const parsed = JSON.parse(json[0]);
+                for (const [key, value] of Object.entries(parsed)) {
+                    const flat = String(key).toLowerCase().replace(/[^a-z]/g, '');
+                    const slot = slots[flat];
+                    const hex = slot && !found[slot] ? this.normalizeHex(value) : null;
+                    if (hex) found[slot] = hex;
+                    if (flat === 'name' && typeof value === 'string') name = value.trim();
+                }
+            } catch { /* not JSON — the other shapes still work */ }
+        }
+
+        // Labelled pairs: bg: #111, primary=#c41e3a
+        for (const match of raw.matchAll(/([a-z]+)\s*[:=]\s*(#[0-9a-f]{3,8}|rgba?\([^)]*\))/gi)) {
+            const slot = slots[match[1].toLowerCase()];
+            const hex = slot && !found[slot] ? this.normalizeHex(match[2]) : null;
+            if (hex) found[slot] = hex;
+        }
+        const labelledName = raw.match(/\bname\s*[:=]\s*["']?([^"',\n!}]+)/i);
+        if (!name && labelledName) name = labelledName[1].trim();
+
+        // !theme:Name,bg,cardBg,text,border,primary! — with or without the bangs.
+        const directive = raw.match(/!?\btheme\s*:\s*([^!\n]+)/i);
+        let positional = [];
+        if (directive) {
+            // Split on the separators models actually use, but keep rgb(...) whole:
+            // a comma split would cut "rgb(245,245,245)" into three tokens, and a
+            // bare "245" would then be read as the 3-digit hex #224455.
+            const pieces = (directive[1].match(/rgba?\([^)]*\)|[^,;|\n]+/gi) || [])
+                .map(part => part.trim())
+                .filter(Boolean);
+            if (!name && pieces.length && !this.normalizeHex(pieces[0])) {
+                name = pieces[0].replace(/^["']|["']$/g, '').trim();
+            }
+            positional = pieces.map(part => this.normalizeHex(part)).filter(Boolean);
+        } else {
+            positional = (raw.match(/#[0-9a-f]{3,8}\b|rgba?\([^)]*\)/gi) || [])
+                .map(hex => this.normalizeHex(hex))
+                .filter(Boolean);
+        }
+
+        const missing = order.filter(slot => !found[slot]);
+        if (missing.length) {
+            // A full set is a whole theme; otherwise the colours fill the gaps.
+            const fills = positional.length === order.length
+                ? order.map((slot, index) => [slot, positional[index]])
+                : missing.map((slot, index) => [slot, positional[index]]);
+            for (const [slot, hex] of fills) {
+                if (hex && !found[slot]) found[slot] = hex;
+            }
+        }
+
+        const stillMissing = order.filter(slot => !found[slot]);
+        return {
+            theme: { name: name || 'AI Stylist', ...found },
+            missing: stillMissing,
+            complete: stillMissing.length === 0
+        };
+    }
+
+    /** "#abc" | "abc" | "#AABBCC" | "rgb(1, 2, 3)" → "#aabbcc", or null. */
+    normalizeHex(raw) {
+        const value = String(raw ?? '').trim().replace(/^["']|["']$/g, '');
+        const hex = value.replace(/^#/, '');
+        if (/^[0-9a-f]{3}$/i.test(hex)) return '#' + hex.split('').map(c => c + c).join('').toLowerCase();
+        if (/^[0-9a-f]{6}$/i.test(hex)) return '#' + hex.toLowerCase();
+        if (/^[0-9a-f]{8}$/i.test(hex)) return '#' + hex.slice(0, 6).toLowerCase();
+        const rgb = value.match(/^rgba?\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})/i);
+        if (rgb) {
+            const parts = rgb.slice(1, 4).map(n => Math.min(255, Number(n)));
+            return '#' + parts.map(n => n.toString(16).padStart(2, '0')).join('');
+        }
+        return null;
+    }
+
+    /** Reopen the Stylist with what was typed, saying what the answer lacked. */
+    showThemeIssue(desc, missing = [], reason = '') {
+        if (desc) this.lastThemePrompt = desc;
+        const detail = missing.length
+            ? `The answer left out ${missing.join(', ')}.`
+            : `The answer had no usable colours${reason ? ` (${reason})` : ''}.`;
+
+        const input = document.getElementById('aiThemePrompt');
+        if (input && desc) input.value = desc;
+        this.openModal('aiThemeModal');
+
+        const status = document.getElementById('aiThemeStatus');
+        if (status) {
+            status.textContent = `${detail} Retry, or describe the look differently.`;
+            status.hidden = false;
+        }
+        const retry = document.getElementById('aiThemeRetry');
+        if (retry) retry.hidden = false;
+        this.showToast('Theme needs another try');
+    }
+
+    closeThemeIssue() {
+        const status = document.getElementById('aiThemeStatus');
+        if (status) {
+            status.textContent = '';
+            status.hidden = true;
+        }
+        const retry = document.getElementById('aiThemeRetry');
+        if (retry) retry.hidden = true;
     }
 
     toggleSelect(id, e) {
