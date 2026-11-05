@@ -4,3 +4,9 @@ node_modules/
 *.log
 .DS_Store
 .shot-check/
+
+# Local draft of the Truth Engine Prompt (TEP) — development only. The deployed
+# worker reads the Secrets Store entry TRUTH_ENGINE_PROMPT, so a prompt committed
+# from here would be a prompt published.
+truth.md
+truth-engine-prompt.txt
