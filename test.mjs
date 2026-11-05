@@ -367,7 +367,7 @@ test('the workers-ai rung still uses the local prompt and sampling', async () =>
   const body = seen.at(-1);
   assert.equal(body.messages[0].role, 'system');
   assert.match(body.messages[0].content, /verified fact/);
-  assert.equal(body.temperature, 0.1);
+  assert.equal(body.temperature, 0.3);
 });
 
 test('no engine at all is a 503, not a hang', async () => {
@@ -456,7 +456,7 @@ test('uploads are refused without R2 instead of failing open', async () => {
 test('preset upserts send the prompt as a system message', () => {
   const body = upsertBody(findPreset('truth'), { model: 'openai/gpt-4o' });
   assert.equal(body.model, 'openai/gpt-4o');
-  assert.equal(body.temperature, 0.1);
+  assert.equal(body.temperature, 0.3);
   // messages is ignored for storage, but a system message is extracted as system_prompt
   assert.equal(body.messages[0].role, 'system');
   assert.match(body.messages[0].content, /verified fact/);
@@ -753,6 +753,129 @@ test('a preset chosen from the menu pins truth instead of letting clef route', a
   assert.equal(events[0].preset, 'truth');
   assert.equal(seen.at(-1).model, '@cf/google/gemma-4-26b-a4b-it');
   assert.equal(seen.at(-1).body.max_tokens, 4096);
+});
+
+test('a short ask still gets the instant cached truth', async () => {
+  const { kv } = kvStore();
+  const seen = [];
+  const env = makeEnv({
+    MEM: kv,
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"chat","depth":"terse"}' };
+        seen.push(model);
+        return { response: 'generated' };
+      },
+    }),
+  });
+  await promote(env, {
+    input: 'what is the buy-in',
+    answer: 'A contract of participation.',
+    layer: 'provisional',
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'what is the buy-in' }] }),
+  });
+  const events = await readSSE(res);
+  const text = events.filter((e) => e.type === 'delta').map((e) => e.text).join('');
+
+  assert.equal(events[0].route, 'truth');
+  assert.equal(events[0].model, 'provisional');
+  assert.equal(text, 'A contract of participation.');
+  assert.equal(seen.length, 0);
+});
+
+test('a long ask is generated instead of answered from a provisional cache hit', async () => {
+  const ask = 'Write 8 numbered paragraphs about contract law.';
+  const { kv } = kvStore();
+  const seen = [];
+  const env = makeEnv({
+    MEM: kv,
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"chat","depth":"terse"}' };
+        seen.push(model);
+        if (body.stream) return sse(['generated']);
+        return { response: 'generated' };
+      },
+    }),
+  });
+  await promote(env, { input: ask, answer: 'One sentence.', layer: 'provisional' });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: ask }] }),
+  });
+  const events = await readSSE(res);
+
+  assert.equal(events[0].route, 'workers-ai');
+  assert.equal(seen.length, 1);
+  assert.equal(events.filter((e) => e.type === 'delta').map((e) => e.text).join(''), 'generated');
+});
+
+test('a truth picked from the menu still serves the cached answer', async () => {
+  const { kv } = kvStore();
+  const seen = [];
+  const env = makeEnv({
+    MEM: kv,
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"chat","depth":"terse"}' };
+        seen.push(model);
+        return { response: 'generated' };
+      },
+    }),
+  });
+  await promote(env, {
+    input: 'what is the buy-in',
+    answer: 'A contract of participation.',
+    layer: 'provisional',
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: 'what is the buy-in' }],
+      preset: 'truth',
+      presetLocked: true,
+    }),
+  });
+  const events = await readSSE(res);
+
+  // Pinning Truth is a request for the truth preset, and the stored truth is it.
+  assert.equal(events[0].route, 'truth');
+  assert.equal(events.filter((e) => e.type === 'delta').map((e) => e.text).join(''), 'A contract of participation.');
+  assert.equal(seen.length, 0);
+});
+
+test('an ask that names a length gets the long-answer budget', async () => {
+  const seen = [];
+  const env = makeEnv({
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"chat","depth":"terse"}' };
+        seen.push({ model, body });
+        return { response: 'ok' };
+      },
+    }),
+  });
+
+  await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: 'Write 8 numbered paragraphs about contract law.' }],
+      preset: 'truth',
+      stream: false,
+    }),
+  });
+
+  assert.equal(seen.at(-1).body.max_tokens, 8192);
 });
 
 test('selecting no preset drops the preset prompt but keeps the decision', async () => {
@@ -1522,7 +1645,7 @@ test('switching Cloudflare off sends chat to the free router', async () => {
     // A preset reference would point at the paid preset; the local prompt is sent
     // instead so the answer keeps the preset's character.
     assert.equal(sent.messages[0].role, 'system');
-    assert.equal(sent.temperature, 0.1);
+    assert.equal(sent.temperature, 0.3);
     // Neither clef nor the chat rung may touch Workers AI while it is off.
     assert.equal(aiCalls, 0);
     assert.ok(events[0].decision.trace.includes('intent:fallback'));

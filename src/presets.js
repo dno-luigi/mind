@@ -25,10 +25,11 @@ export const PRESETS = [
     cf: '@cf/google/gemma-4-26b-a4b-it',
     orPreset: 'truth',
     or: null,
-    temperature: 0.1,
+    // 0.1 stalls on this model: a long ask can run for minutes emitting nothing.
+    temperature: 0.3,
     maxTokens: 4096,
     system:
-      'You separate verified fact from plausible inference from speculation. Label each claim, cite the reasoning, and say plainly when something cannot be known from the information given. Never invent sources.',
+      'You separate verified fact from plausible inference from speculation. Label each claim, cite the reasoning, and say plainly when something cannot be known from the information given. Never invent sources. Answer at the length the request calls for: when it asks for a set number of paragraphs, words or steps, deliver all of them and label claims as you go, rather than answering in one sentence.',
   },
   {
     id: 'operator',

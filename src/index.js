@@ -62,7 +62,9 @@ const MAX_TTS_CHARS = 2000;
  * An idle budget, restarted on every chunk: a slow but flowing answer survives,
  * a dead one becomes an error naming the model instead of a 58-second silence.
  */
-const STREAM_IDLE_MS = 15000;
+// A slow model can go quiet mid-answer for far longer than 15s; treating that as
+// a stall killed the stream and left the card cut off wherever it got to.
+const STREAM_IDLE_MS = 45000;
 /** How long opening a connection — not answering — may take. */
 const UPSTREAM_OPEN_MS = 20000;
 
@@ -280,10 +282,23 @@ const DEPTH_TOKENS = { terse: 1024, deep: 8192 };
  * cap the answer at 1024 tokens whatever preset was in force, which cut long
  * reports off mid-sentence; depth may now widen an answer but never narrow it.
  */
+// An ask that names a length cannot be answered by one stored sentence, however
+// good that sentence is. Matched against the user's own words so a cache hit
+// never stands in for a report.
+const ASKS_FOR_LENGTH =
+  /\b(?:essays?|reports?|articles?|dissertations?|theses|step[- ]by[- ]step|in detail|detailed|comprehensive|exhaustive|long[- ]form|blog posts?)\b|\b\d{1,4}\b[^.!?]{0,24}\b(?:paragraphs?|words?|bullets?|points?|steps?|sentences?|pages?|sections?|items?|lines?)\b|\b(?:two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|fifty)\b[^.!?]{0,12}\b(?:paragraphs?|words?|bullets?|points?|steps?|sentences?|pages?|sections?|items?)\b/i;
+
 function budgetFor(preset, decision) {
   const depth = DEPTH_TOKENS[decision?.depth] ?? 0;
   const cap = preset?.maxTokens ?? 0;
   return Math.max(depth, cap) || null;
+}
+
+/** An ask that names a length gets a long-answer budget whatever the preset says. */
+function budgetForAsk(preset, decision, ask) {
+  const budget = budgetFor(preset, decision);
+  if (!ASKS_FOR_LENGTH.test(String(ask || ''))) return budget;
+  return Math.max(budget ?? 0, DEPTH_TOKENS.deep);
 }
 
 function pickCfModel(preset, images, { decision, explicit } = {}) {
@@ -298,7 +313,7 @@ function pickCfModel(preset, images, { decision, explicit } = {}) {
 /** The provider ladder: Cloudflare first, OpenRouter when CF cannot serve it. */
 async function openUpstream(
   env,
-  { messages, images, preset, decision, explicit, allowCloudflare = true, freeRouter = false },
+  { messages, images, preset, decision, explicit, allowCloudflare = true, freeRouter = false, ask = '' },
 ) {
   const failures = [];
 
@@ -311,7 +326,7 @@ async function openUpstream(
           messages,
           images,
           temperature: preset?.temperature,
-          maxTokens: budgetFor(preset, decision),
+          maxTokens: budgetForAsk(preset, decision, ask),
         }),
       );
       return { route: 'workers-ai', model, stream, extract: fromWorkersAI };
@@ -470,11 +485,19 @@ async function chat(request, env, ctx) {
   const reported = { ...decision, preset: preset?.id ?? null };
   const wantsStream = body.stream !== false;
 
-  // Only a curated (master) truth answers in place of the model. A provisional
-  // one is a guess the truth service generated and kept on the way past, and
-  // serving it here is what replaced long answers with a single sentence. A
-  // preset picked from the menu also means "generate with this preset".
-  if (decision.truth?.answer && decision.truth.layer === 'master' && !pinned) {
+  // A curated (master) truth answers in place of the model, and instantly. A
+  // provisional one is the truth service's own guess kept on the way past: still
+  // a cache hit worth serving, but only when the ask is small enough for one
+  // stored sentence to answer it. An ask that names a length, or one clef
+  // classified deep, goes to the model, so a report is never replaced by a
+  // one-liner. A preset picked from the menu also means "generate".
+  const briefAsk = decision.depth !== 'deep' && !ASKS_FOR_LENGTH.test(lastUser);
+  const cachedTruth = decision.truth?.answer && (decision.truth.layer === 'master' || briefAsk);
+  // Picking Truth from the menu means "answer with the truth preset", and a
+  // stored truth is that preset's answer - so the cache still serves. Picking
+  // any other preset means generate with it, cache or no cache.
+  const mayServeCache = !pinned || preset?.id === DEFAULT_PRESET;
+  if (cachedTruth && mayServeCache) {
     const truth = decision.truth;
     if (!wantsStream) {
       await recordReview(
@@ -504,6 +527,7 @@ async function chat(request, env, ctx) {
 
   if (!wantsStream) {
     const { route, model, stream, extract } = await openUpstream(env, {
+    ask: lastUser,
       messages: grounded,
       images,
       preset,
@@ -531,7 +555,7 @@ async function chat(request, env, ctx) {
           messages: grounded,
           images,
           temperature: preset?.temperature,
-          maxTokens: budgetFor(preset, reported, pinned),
+          maxTokens: budgetForAsk(preset, reported, lastUser),
         }),
       );
     }
@@ -549,6 +573,7 @@ async function chat(request, env, ctx) {
   }
 
   const { route, model, stream, extract } = await openUpstream(env, {
+    ask: lastUser,
     messages: system,
     images,
     preset,
@@ -587,7 +612,7 @@ async function chat(request, env, ctx) {
               messages: grounded,
               images,
               temperature: preset?.temperature,
-              maxTokens: budgetFor(preset, reported),
+              maxTokens: budgetForAsk(preset, reported, lastUser),
             }),
           );
           if (text) {
