@@ -1,15 +1,16 @@
 /**
  * Presets are server data: prompt + model + params, one rung per provider.
  *
- * The OpenRouter side is the source of truth for the prompt: each `orPreset`
- * names a preset in the account (https://openrouter.ai/settings/presets) and
- * the escalation rung references `@preset/<slug>` while sending no prompt,
- * model or sampling params of its own. OpenRouter shallow-merges request fields
- * over preset fields, so sending ours would quietly undo the preset.
+ * Each `orPreset` names a preset in the account
+ * (https://openrouter.ai/settings/presets), referenced as `@preset/<slug>`.
+ * OpenRouter shallow-merges request fields over preset fields, so anything sent
+ * alongside the reference replaces what the preset holds.
  *
- * `cf`, `system` and `temperature` therefore describe the Workers AI rung only.
- * It cannot read a prompt that lives in the OpenRouter account, so anything you
- * want on both rungs has to be written twice — here and in the dashboard.
+ * The Truth prompt is not written here: it comes from the TEP secret, and that
+ * one text is now used on both rungs. On Workers AI it is the system turn; on
+ * OpenRouter it overrides the referenced preset's own prompt, leaving the preset
+ * to supply the model and sampling params. Operator and MNL still keep a local
+ * copy and the OpenRouter preset's prompt on their own rungs.
  */
 
 /** Used when no preset is picked and the decision model declines to route. */
@@ -50,8 +51,8 @@ export const PRESETS = [
     or: null,
     temperature: 0.7,
     maxTokens: 4096,
-    // The OpenRouter preset owns this prompt; this copy only runs on the
-    // Workers AI rung. Fill it in if MNL should behave the same there.
+    // Still owned by the OpenRouter preset; fill it in if MNL should behave the
+    // same on the Workers AI rung.
     system: '',
   },
 ];
@@ -90,11 +91,17 @@ export async function truthPromptFromStore(env) {
   return storedPrompt;
 }
 
-/** The preset as it will actually run: the stored prompt wins when there is one. */
+/**
+ * The preset as it will actually run: the stored prompt wins when there is one.
+ *
+ * `systemFrom` travels with it so the provider rungs can tell a prompt that came
+ * from the store from one written for a single provider. Only the Truth preset
+ * reads the store: cycling through Operator or MNL must keep those prompts.
+ */
 export async function withStoredPrompt(env, preset) {
   if (!preset || preset.id !== DEFAULT_PRESET) return preset;
   const prompt = await truthPromptFromStore(env);
-  return prompt ? { ...preset, system: prompt } : preset;
+  return prompt ? { ...preset, system: prompt, systemFrom: 'store' } : preset;
 }
 
 /** Tests read the same isolate the worker does, so the cache needs a reset. */

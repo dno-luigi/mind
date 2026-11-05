@@ -345,7 +345,14 @@ async function openUpstream(
     const freeOnly = Boolean(freeRouter);
     const usesPreset = !freeOnly && Boolean(preset?.orPreset);
     const model = freeOnly ? or.freeModelFor(env) : or.modelFor(env, preset);
-    const base = usesPreset ? messages.filter((message) => message.role !== 'system') : messages;
+    // A prompt that came from the secret store is the single source of truth, so
+    // it travels with the request and overrides the preset's own system turn.
+    // OpenRouter shallow-merges messages over the preset, which is exactly the
+    // intent here; the preset still supplies the model and sampling params.
+    // Prompts written for one provider keep the old behaviour and are stripped.
+    const storePrompt = usesPreset && preset?.systemFrom === 'store' && preset?.system;
+    const base =
+      usesPreset && !storePrompt ? messages.filter((message) => message.role !== 'system') : messages;
     const payload = base.map((message, index) =>
       index === base.length - 1 && images.length
         ? { ...message, content: or.withImages(message.content, images) }

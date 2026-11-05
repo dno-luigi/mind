@@ -56,6 +56,8 @@ function fakeAI(overrides = {}) {
 function makeEnv(over = {}) {
   _resetBudget();
   _resetDecisionCache();
+  // The TEP prompt is cached per isolate like the worker caches it.
+  _resetStoredPrompt();
   // The engine switch is cached per isolate; a test that flips it must not turn
   // Cloudflare off for every test after it.
   _resetEngine();
@@ -340,6 +342,38 @@ test('the openrouter rung references the preset and leaves its config alone', as
     assert.equal(sent.temperature, undefined);
     assert.equal(sent.max_tokens, undefined);
     assert.equal(sent.messages.some((m) => m.role === 'system'), false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('the stored truth prompt is the one openrouter sends too', async () => {
+  const original = globalThis.fetch;
+  let sent = null;
+  globalThis.fetch = async (url, init) => {
+    sent = JSON.parse(init.body);
+    return new Response('data: [DONE]\n\n', { status: 200 });
+  };
+
+  try {
+    const env = makeEnv({
+      AI: undefined,
+      OPENROUTER_API_KEY: 'test-key',
+      TEP: { async get() { return 'ONE PROMPT FOR BOTH RUNGS'; } },
+    });
+    const res = await call(env, '/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth', stream: false }),
+    });
+    await res.text();
+
+    // The preset still owns model and sampling; the prompt is the store's.
+    assert.equal(sent.model, '@preset/truth');
+    assert.equal(sent.temperature, undefined);
+    assert.equal(sent.max_tokens, undefined);
+    assert.equal(sent.messages[0].role, 'system');
+    assert.equal(sent.messages[0].content, 'ONE PROMPT FOR BOTH RUNGS');
   } finally {
     globalThis.fetch = original;
   }
