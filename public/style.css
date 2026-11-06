@@ -257,6 +257,12 @@ button.btn { padding: 10px 16px; border-radius: 8px; border: none; cursor: point
 .card-shot { display: block; margin: 10px 0 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #000; }
 .card-shot img { display: block; width: 100%; height: auto; }
 
+/* A reply that is a document keeps its own CSS inside its own frame. */
+.doc-shell { margin: 10px 0 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fff; }
+.doc-frame { display: block; width: 100%; height: 60vh; min-height: 240px; border: 0; background: #fff; }
+.doc-frame-full { height: calc(100vh - 190px); min-height: 420px; }
+@media (max-width: 480px) { .doc-frame { height: 70vh; } }
+
 /* Attachments: what is about to be sent, and what a card was made from. */
 #attachBtn, #micBtn {
     background: var(--bg); color: var(--text); border: 1px solid var(--border);

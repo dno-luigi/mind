@@ -1075,7 +1075,7 @@ class App {
                 rHtml = '<div class="streaming"><span class="thinking-indicator">Thinking...</span></div>';
             }
         } else {
-            rHtml = this.md(card.r);
+            rHtml = this.renderAnswer(card.r);
         }
 
         div.innerHTML = `
@@ -1515,7 +1515,7 @@ class App {
             if (!cleanText && previous) card.r = previous;
         }
 
-        const cleanHtml = this.md(cleanText);
+        const cleanHtml = this.renderAnswer(cleanText);
         const el = document.querySelector(`.flip-card[data-id="${id}"] .response-content`);
         if (el) el.innerHTML = cleanHtml;
 
@@ -2501,7 +2501,7 @@ ${retry ? 'Your previous answer was unusable. Reply with that single line and no
         if (card.r === '...' && this.streamingId === id) {
             responseContent.innerHTML = '<div class="streaming"><span class="thinking-indicator">Thinking...</span><button class="stop-stream-btn" onclick="app.stopStream()">Stop</button></div>';
         } else {
-            responseContent.innerHTML = this.md(card.r);
+            responseContent.innerHTML = this.renderAnswer(card.r, { full: true });
         }
 
         const ov = document.getElementById('fullscreenOverlay');
@@ -2858,6 +2858,75 @@ ${retry ? 'Your previous answer was unusable. Reply with that single line and no
         t.textContent = msg;
         t.classList.add('show');
         setTimeout(() => t.classList.remove('show'), 2000);
+    }
+
+    /**
+     * A reply that is a page, not prose.
+     *
+     * A stored document carries its own <style>, and sanitizing a markdown parse
+     * drops that block: the layout, the type and every colour go with it, and the
+     * card shows a wall of unstyled text. Anything shaped like a document is
+     * framed instead, so the CSS it shipped with survives untouched.
+     *
+     * Fenced code is stripped first: explaining HTML should not turn the answer
+     * into a frame.
+     */
+    looksLikeDocument(text) {
+        const prose = String(text || '').replace(/```[\s\S]*?```/g, '');
+        return /<!doctype\s+html|<html[\s>]|<head[\s>]|<body[\s>]|<style[\s>]/i.test(prose);
+    }
+
+    /**
+     * The frame's document, with a light base underneath the page's own CSS.
+     *
+     * A document that names no colour inherits the browser's default, which is
+     * black text — invisible once that frame is painted on a dark card. The base
+     * only fills in what the page left unsaid, and it is injected into <head> so
+     * the page's own <style> still wins the cascade.
+     */
+    documentSrcdoc(html) {
+        const text = String(html || '');
+        const css = (text.match(/<style[^>]*>[\s\S]*?<\/style>/gi) || []).join('\n');
+        const hasBackground = /background(-color)?\s*:/i.test(css);
+        const hasColor = /(?:^|[;{\s])color\s*:/i.test(css);
+        const base =
+            `<style>${hasBackground ? '' : 'html{background:#fff}'}` +
+            `${hasColor ? '' : 'html,body{color:#111}'}body{margin:0}</style>`;
+        const viewport = '<meta name="viewport" content="width=device-width, initial-scale=1">';
+
+        if (/<head[^>]*>/i.test(text)) {
+            return text.replace(/<head[^>]*>/i, (tag) => `${tag}${viewport}${base}`);
+        }
+        if (/<html[^>]*>/i.test(text)) {
+            return text.replace(/<html[^>]*>/i, (tag) => `${tag}<head>${viewport}${base}</head>`);
+        }
+        return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">${viewport}${base}</head><body>${text}</body></html>`;
+    }
+
+    /**
+     * Render a reply: prose as markdown, a document as a sandboxed frame.
+     *
+     * The frame runs scripts so a page's own buttons work, but without
+     * allow-same-origin it cannot reach this document, its state or its storage.
+     */
+    renderAnswer(text, { full = false } = {}) {
+        const raw = String(text || '');
+        if (!raw.trim() || !this.looksLikeDocument(raw)) return this.md(raw);
+        const doc = this.escapeAttr(this.documentSrcdoc(raw));
+        return (
+            '<div class="doc-shell">' +
+            `<iframe class="doc-frame${full ? ' doc-frame-full' : ''}" title="Generated document" ` +
+            `sandbox="allow-scripts allow-modals allow-popups allow-forms" srcdoc="${doc}"></iframe>` +
+            '</div>'
+        );
+    }
+
+    escapeAttr(text) {
+        return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
     }
 
     md(text) {
