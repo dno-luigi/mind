@@ -2459,11 +2459,23 @@ test('an image upload is stored as an image and never decoded as text', async ()
   assert.equal(res.status, 200);
   assert.equal(body.kind, 'image');
   assert.equal(body.text, '');
-  // A document type that is neither text nor an image is refused, not stored.
-  const refused = await call(env, '/api/upload', {
+  // Anything the paperclip offers is stored. An archive with no readable text
+  // lands as a binary with an empty text field, not as a refusal.
+  const archive = await call(env, '/api/upload', {
     method: 'POST',
     headers: { 'content-type': 'application/zip' },
-    body: new Uint8Array([0x50, 0x4b]),
+    body: new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+  });
+  const archived = await archive.json();
+  assert.equal(archive.status, 200);
+  assert.equal(archived.kind, 'binary');
+  assert.equal(archived.text, '');
+
+  // An executable is still refused: attaching a file is not a way to ship one.
+  const refused = await call(env, '/api/upload', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-msdownload' },
+    body: new Uint8Array([0x4d, 0x5a]),
   });
   assert.equal(refused.status, 415);
 });

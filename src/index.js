@@ -989,8 +989,12 @@ async function upload(request, env) {
     .toLowerCase();
   // Pictures go to a vision model as pictures; documents are turned into text
   // on the way in, because a model cannot look inside a PDF.
+  // Anything the paperclip can offer. Pictures, audio and video are stored and
+  // linked; PDF, Word, Excel and slides are turned into text; an unknown binary
+  // is stored with no text rather than rejected, because "other files" is the
+  // point of the attach button.
   const allowed =
-    /^(image\/(png|jpeg|webp|gif)|application\/pdf|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document|text\/|application\/json|application\/xml|audio\/|video\/)/;
+    /^(image\/|audio\/|video\/|text\/|application\/(pdf|json|xml|rtf|zip|octet-stream|x-yaml|yaml|javascript|msword|vnd\.ms-excel|vnd\.ms-powerpoint|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)))/;
   if (!allowed.test(contentType)) {
     return fail(415, 'unsupported_type', `Unsupported content type: ${contentType}`);
   }

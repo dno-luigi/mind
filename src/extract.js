@@ -304,6 +304,115 @@ export async function docxText(bytes) {
   return xmlToText(latin1(bytesOut));
 }
 
+/** XML entities, unescaped in the one order that cannot double-decode. */
+function unescapeXml(text) {
+  return String(text || '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&amp;/g, '&');
+}
+
+/** Every text run in document order, with no markup left behind. */
+function textRuns(xml, tag) {
+  const out = [];
+  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'g');
+  let match;
+  while ((match = re.exec(xml))) {
+    const value = unescapeXml(match[1].replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
+    if (value) out.push(value);
+  }
+  return out;
+}
+
+/** Inflate one zip entry and return it as latin1 text. */
+async function entryText(entries, name) {
+  const entry = entries.find((item) => item.name === name);
+  if (!entry) return '';
+  const raw = entry.method === 8 ? await inflate(entry.data, 'deflate-raw') : entry.data;
+  return raw ? latin1(raw) : '';
+}
+
+/** Slide decks and workbooks are zipped XML, like docx. Order is by filename. */
+const numbered = (names) =>
+  names.sort((a, b) => {
+    const left = Number((a.match(/(\d+)\.xml$/) || [])[1] || 0);
+    const right = Number((b.match(/(\d+)\.xml$/) || [])[1] || 0);
+    return left - right;
+  });
+
+/**
+ * XLSX: shared strings hold every text cell, sheets hold indices into them.
+ * Without the shared-strings table a sheet reads as a grid of numbers.
+ */
+export async function xlsxText(bytes) {
+  const entries = zipEntries(bytes);
+
+  const shared = [];
+  const table = await entryText(entries, 'xl/sharedStrings.xml');
+  for (const item of table.match(/<si>[\s\S]*?<\/si>/g) || []) {
+    shared.push(textRuns(item, 't').join(''));
+  }
+
+  const sheets = numbered(
+    entries.map((item) => item.name).filter((name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name)),
+  );
+
+  const blocks = [];
+  for (const [index, name] of sheets.entries()) {
+    const xml = await entryText(entries, name);
+    if (!xml) continue;
+
+    const rows = [];
+    for (const row of xml.match(/<row[\s\S]*?<\/row>/g) || []) {
+      const cells = [];
+      for (const cell of row.match(/<c[\s\S]*?<\/c>/g) || []) {
+        const type = (cell.match(/ t="([^"]+)"/) || [])[1] || '';
+        let value = '';
+        if (type === 's') {
+          const at = Number((cell.match(/<v>(\d+)<\/v>/) || [])[1]);
+          value = Number.isFinite(at) ? shared[at] || '' : '';
+        } else if (type === 'inlineStr') {
+          value = textRuns(cell, 't').join(' ');
+        } else {
+          value = unescapeXml((cell.match(/<v>([\s\S]*?)<\/v>/) || [])[1] || '').trim();
+        }
+        if (value) cells.push(value.replace(/\s+/g, ' '));
+      }
+      if (cells.length) rows.push(cells.join(' | '));
+    }
+    if (rows.length) blocks.push(`Sheet ${index + 1}:\n${rows.join('\n')}`);
+  }
+
+  return blocks.join('\n\n').trim();
+}
+
+/** PPTX: one XML per slide; `<a:t>` is the only element that carries words. */
+export async function pptxText(bytes) {
+  const entries = zipEntries(bytes);
+  const slides = numbered(
+    entries.map((item) => item.name).filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)),
+  );
+
+  const blocks = [];
+  for (const [index, name] of slides.entries()) {
+    const xml = await entryText(entries, name);
+    if (!xml) continue;
+    const runs = [];
+    const re = /<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g;
+    let match;
+    while ((match = re.exec(xml))) {
+      const value = unescapeXml(match[1]).trim();
+      if (value) runs.push(value);
+    }
+    if (runs.length) blocks.push(`Slide ${index + 1}:\n${runs.join('\n')}`);
+  }
+
+  return blocks.join('\n\n').trim();
+}
+
 export const isImageType = (type) => /^image\//i.test(String(type || ''));
 
 /**
@@ -335,6 +444,29 @@ export async function extractText(bytes, contentType) {
     const text = await docxText(bytes).catch(() => '');
     const { text: clipped, note } = clip(text);
     return { kind: 'docx', text: clipped, note: note || (clipped ? undefined : 'no readable text') };
+  }
+
+  // Spreadsheets and slide decks are zips as well, so the same reader opens
+  // them: a workbook yields cell text, a deck yields slide text.
+  const office = async (kind, missing) => {
+    const text = kind === 'xlsx' ? await xlsxText(bytes).catch(() => '') : await pptxText(bytes).catch(() => '');
+    const { text: clipped, note } = clip(text);
+    return { kind, text: clipped, note: note || (clipped ? undefined : missing) };
+  };
+
+  if (type.includes('spreadsheetml') || type.includes('ms-excel') || (looksZip && type.includes('xlsx'))) {
+    return office('xlsx', 'no readable cells');
+  }
+  if (type.includes('presentationml') || type.includes('ms-powerpoint') || (looksZip && type.includes('pptx'))) {
+    return office('pptx', 'no readable slides');
+  }
+
+  // A plain .zip (or an unknown type sent as octet-stream) is still worth a
+  // look: sniff the container instead of declaring it unreadable.
+  if (looksZip) {
+    const names = zipEntries(bytes).map((item) => item.name);
+    if (names.some((name) => name.startsWith('xl/'))) return office('xlsx', 'no readable cells');
+    if (names.some((name) => name.startsWith('ppt/'))) return office('pptx', 'no readable slides');
   }
 
   if (TEXTY.some((prefix) => type.startsWith(prefix))) {
