@@ -881,7 +881,7 @@
     const citationTitles = document.querySelectorAll('.citation-title');
     const citationUrls = document.querySelectorAll('.citation-url');
 
-    // Track current record metadata so Save knows which endpoint to use
+    // The layer a record was loaded from, used for the status line after a load.
     let currentLayer = null;    // "master" | "provisional" | null
     let currentId = null;       // normalized id
 
@@ -997,7 +997,7 @@
       }
     };
 
-    // Save: route to master/provisional endpoints based on currentLayer
+    // Save: always writes a master truth, which the worker keeps with no expiry
     saveBtn.onclick = async () => {
       saveMsg.textContent = '';
       const input = queryInput.value.trim();
@@ -1021,33 +1021,22 @@
       saveMsg.textContent = "Saving...";
 
       try {
-        let endpoint = "";
-        let body = {};
-
-        // Decide: if loaded from master → update master.
-        // If loaded from provisional or nothing → update/create provisional.
-        if (currentLayer === "master") {
-          endpoint = `${API_BASE}/api/truth/master/update`;
-          body = {
-            input,
-            answer,
-            editor,
-            meta: {
+        // Straight to master: a curated answer is stored with no expiry there,
+        // unlike a provisional, which the worker expires after 24 hours.
+        const endpoint = `${API_BASE}/api/truth/master/create`;
+        const body = {
+          input,
+          answer,
+          editor,
+          meta: {
+            citations,
+            // The worker persists what is under meta.metadata; meta.citations
+            // alone is only echoed back by some routes, never written.
+            metadata: {
               citations
             }
-          };
-        } else {
-          // provisional create-or-update
-          endpoint = `${API_BASE}/api/truth/provisional/update`;
-          body = {
-            idOrQuery: input,
-            answer,
-            meta: {
-              editor,
-              citations
-            }
-          };
-        }
+          }
+        };
 
         const resp = await fetch(endpoint, {
           method: "POST",
@@ -1062,13 +1051,9 @@
           return;
         }
 
-        if (currentLayer === "master") {
-          saveMsg.textContent = "MASTER truth updated successfully.";
-        } else {
-          saveMsg.textContent = "PROVISIONAL truth saved/updated successfully.";
-          currentLayer = "provisional";
-          currentId = data.id || currentId;
-        }
+        currentLayer = "master";
+        currentId = data.id || currentId;
+        saveMsg.textContent = "MASTER truth saved (no expiry).";
 
       } catch (e) {
         saveMsg.textContent = "Error saving: " + e.message;
