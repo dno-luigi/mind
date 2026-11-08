@@ -577,6 +577,15 @@
         </div>
       </div>
 
+      <div class="audit-fields">
+        <label for="truthKey">Truth worker key (<code>ADMIN_KEY</code>):</label>
+        <input type="password" id="truthKey" placeholder="sent as x-admin-key on Save" autocomplete="off">
+        <div style="grid-column: 1 / span 2; margin-top: 5px; font-size: 0.85em; opacity: 0.85;">
+          Only needed when the truth worker's ADMIN_KEY differs from the console key above.
+          Kept in this tab only.
+        </div>
+      </div>
+
       <div class="button-group">
         <button id="saveBtn">Save</button>
         <button id="copyPreviewBtn">Copy Output</button>
@@ -801,8 +810,8 @@
         else text = (value && (value.answer || value.html || value.content || value.text || value.response)) || data.raw;
         answerInput.value = typeof text === 'string' ? text : data.raw;
         answerInput.dispatchEvent(new Event('input'));
-        // A master record is saved back to master; everything else is saved the
-        // way this console always has, through the provisional route.
+        // Informational only now: Save always writes a master truth, whatever
+        // layer the record was opened from.
         currentLayer = row.kind === 'master' ? 'master' : null;
         currentId = typeof value === 'object' && value ? (value.id || null) : null;
         say(
@@ -873,6 +882,7 @@
     const queryInput = document.getElementById('query');
     const answerInput = document.getElementById('answer');
     const editorInput = document.getElementById('editor');
+    const truthKeyInput = document.getElementById('truthKey');
     const loadBtn = document.getElementById('loadBtn');
     const saveBtn = document.getElementById('saveBtn');
     const loadMsg = document.getElementById('loadMsg');
@@ -1038,18 +1048,35 @@
           }
         };
 
+        // The truth worker checks its own ADMIN_KEY on writes. Fall back to the
+        // console key, since both workers often carry the same password.
+        const truthKey = (truthKeyInput.value.trim() || adminKey || "");
+
         const resp = await fetch(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(truthKey ? { "x-admin-key": truthKey } : {})
+          },
           body: JSON.stringify(body)
         });
 
         const data = await resp.json().catch(() => ({}));
 
+        if (resp.status === 401) {
+          sessionStorage.removeItem('mind-truth-key');
+          saveMsg.textContent =
+            "Rejected (401): the truth worker wants its own ADMIN_KEY. Enter it in " +
+            "\"Truth worker key\" above - it can differ from the console key.";
+          return;
+        }
+
         if (!resp.ok) {
           saveMsg.textContent = `Save failed: ${data.error || resp.status}`;
           return;
         }
+
+        if (truthKey) sessionStorage.setItem('mind-truth-key', truthKey);
 
         currentLayer = "master";
         currentId = data.id || currentId;
@@ -1107,6 +1134,9 @@
     (function initializeEditor() {
       const lastEditor = localStorage.getItem('lastEditorName');
       if (lastEditor) editorInput.value = lastEditor;
+      truthKeyInput.value = sessionStorage.getItem('mind-truth-key') || '';
+      // Same password on both workers is the common case: prefill, never force.
+      if (!truthKeyInput.value && adminKey) truthKeyInput.value = adminKey;
       answerInput.dispatchEvent(new Event('input'));
     })();
   </script>
