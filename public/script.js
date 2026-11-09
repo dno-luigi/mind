@@ -81,7 +81,11 @@ class App {
             view: 'list',
             autoTTS: false,
             asrEnabled: false,
-            proxyUrl: ''
+            proxyUrl: '',
+            // The bar and the fullscreen answer's size are both preferences:
+            // a session with nothing to type keeps them, and so does a reload.
+            inputHidden: false,
+            fsSize: null
         };
 
         // Attachments waiting to be sent with the next prompt, cleared on send.
@@ -188,6 +192,7 @@ class App {
         this.loadSession();
         this.applyTheme();
         this.applyView();
+        this.applyInputBar();
         this.bindEvents();
         this.initASR();
         this.renderAll();
@@ -222,6 +227,30 @@ class App {
             const preset = this.presets[this.currentPresetKey];
             label.textContent = preset ? preset.name : 'Default';
         }
+    }
+
+    /**
+     * One tap, next preset, wrapping at the end. The bar never opens a list: a
+     * preset is chosen by stepping, and presets themselves are managed in the
+     * menu, where the prompt and the slug live.
+     */
+    cyclePreset() {
+        const keys = [NO_PRESET_KEY, ...Object.keys(this.presets).filter(key => key !== NO_PRESET_KEY)];
+        const at = keys.indexOf(this.currentPresetKey);
+        const next = keys[(at + 1) % keys.length];
+        this.selectPresetForNextQuery(next);
+    }
+
+    /** The bar is optional: a session with nothing to type gives the cards the screen. */
+    toggleInputBar(force) {
+        const hidden = typeof force === 'boolean' ? force : !this.settings.inputHidden;
+        this.settings.inputHidden = hidden;
+        this.applyInputBar();
+        this.saveState();
+    }
+
+    applyInputBar() {
+        document.body.classList.toggle('input-hidden', Boolean(this.settings.inputHidden));
     }
 
     managePresets() {
@@ -552,8 +581,34 @@ class App {
             }
         });
 
-        // Preset selector button for next query
-        document.getElementById('presetSelectorBtn').addEventListener('click', () => this.openInputPresetSelector());
+        // One tap steps to the next preset; shift-tap still opens the full list.
+        // Which presets exist is a menu job (Settings → Manage Presets).
+        const gridFsFab = document.getElementById('gridFsFab');
+        if (gridFsFab) gridFsFab.addEventListener('click', () => this.toggleNativeFullscreen());
+
+        document.getElementById('presetSelectorBtn').addEventListener('click', (e) => {
+            if (e.shiftKey) {
+                this.openInputPresetSelector();
+                return;
+            }
+            this.cyclePreset();
+        });
+
+        const collapseInput = document.getElementById('collapseInput');
+        if (collapseInput) collapseInput.addEventListener('click', () => this.toggleInputBar(true));
+        const showInput = document.getElementById('showInput');
+        if (showInput) showInput.addEventListener('click', () => this.toggleInputBar(false));
+
+        const fsGrip = document.getElementById('fsGrip');
+        if (fsGrip) {
+            fsGrip.addEventListener('pointerdown', (e) => this.beginFsResize(e));
+            fsGrip.addEventListener('dblclick', () => {
+                this.settings.fsSize = null;
+                this.applyFsSize(null);
+                this.saveState();
+                this.showToast('Fullscreen restored');
+            });
+        }
 
         document.getElementById('menuFab').addEventListener('click', () => this.openModal('settingsModal'));
         document.getElementById('viewFab').addEventListener('click', () => this.cycleView());
@@ -1044,7 +1099,9 @@ class App {
                 empty.style.display = 'flex';
             }
         } else {
-            empty.style.display = 'none';
+            // The empty state is removed the moment a card arrives, so a later
+            // full re-render has nothing to hide — and must not dereference it.
+            if (empty) empty.style.display = 'none';
             this.cards.forEach(c => this.renderCard(c, false));
         }
     }
@@ -1082,7 +1139,10 @@ class App {
             <div class="flip-card-inner">
                 <div class="card-face">
                     <div class="card-header">
-                        <span style="font-size:11px; opacity:0.5;">REQ${presetBadge}</span>
+                        <div class="card-head-left">
+                            <span class="card-grip" title="Drag to rearrange"><i class="fas fa-grip-vertical"></i></span>
+                            <span style="font-size:11px; opacity:0.5;">REQ${presetBadge}</span>
+                        </div>
                         <div class="card-actions">
                             <button onclick="app.openCardMenu('${card.id}', event)"><i class="fas fa-ellipsis-v"></i></button>
                             <button onclick="app.toggleSelect('${card.id}', event)"><i class="fas fa-check-circle"></i></button>
@@ -1103,9 +1163,11 @@ class App {
                     <div class="response-content">${rHtml}</div>
                 </div>
             </div>
+            <button class="card-resize" type="button" title="Drag to resize" aria-label="Resize card"></button>
         `;
 
         if (card.styles) this.applyCardStyleToEl(div, card.styles);
+        if (card.span) this.applySpan(div, card.span);
 
         this.attachCardEvents(div, card.id);
         grid.appendChild(div);
@@ -1114,7 +1176,7 @@ class App {
     attachCardEvents(div, id) {
         div.addEventListener('click', (e) => {
             // Quick filters keep links, and the page shot, working as links.
-            if (e.target.closest('button') || e.target.closest('.card-actions') || e.target.closest('a')) return;
+            if (e.target.closest('button') || e.target.closest('.card-actions') || e.target.closest('a') || e.target.closest('.card-grip')) return;
             if (this.selectedIds.size > 0) {
                 e.stopPropagation();
                 this.toggleSelect(id, e);
@@ -1128,7 +1190,7 @@ class App {
             const currentTime = new Date().getTime();
             const tapLength = currentTime - lastTap;
             if (tapLength < 300 && tapLength > 0) {
-                if (e.target.closest('button') || e.target.closest('.card-actions') || e.target.closest('a')) return;
+                if (e.target.closest('button') || e.target.closest('.card-actions') || e.target.closest('a') || e.target.closest('.card-grip')) return;
                 this.openFullscreen(id);
                 e.preventDefault();
             }
@@ -1141,6 +1203,7 @@ class App {
         let pressTimer;
         div.addEventListener('touchstart', (e) => {
             if (this.selectedIds.size > 0) return;
+            if (e.target.closest('.card-grip') || e.target.closest('.card-resize')) return;
             pressTimer = setTimeout(() => {
                 this.openCardMenu(id, e);
                 if (navigator.vibrate) navigator.vibrate(50);
@@ -1156,6 +1219,111 @@ class App {
                 this.openCardMenu(id);
             }
         });
+
+        this.attachCardGestures(div, id);
+    }
+
+    /**
+     * Grid rearranging. The grip in a card's header moves its place in the order;
+     * the corner grip changes how many cells it covers. Both are grid-only, and
+     * both are saved with the card, because an arrangement is part of the work.
+     */
+    attachCardGestures(div, id) {
+        const grip = div.querySelector('.card-grip');
+        const resizer = div.querySelector('.card-resize');
+        if (grip) grip.addEventListener('pointerdown', (e) => this.beginCardDrag(e, div, id));
+        if (resizer) resizer.addEventListener('pointerdown', (e) => this.beginCardResize(e, div, id));
+    }
+
+    beginCardDrag(event, div, id) {
+        if (!document.body.classList.contains('view-grid')) return;
+        event.preventDefault();
+        event.stopPropagation();
+
+        const grid = document.getElementById('grid');
+        if (!grid) return;
+        div.classList.add('dragging');
+
+        const move = (e) => {
+            const under = document.elementFromPoint(e.clientX, e.clientY);
+            const target = under ? under.closest('.flip-card') : null;
+            if (!target || target === div || !grid.contains(target)) return;
+            const rect = target.getBoundingClientRect();
+            const after = e.clientY > rect.top + rect.height / 2;
+            grid.insertBefore(div, after ? target.nextSibling : target);
+        };
+        const end = () => {
+            div.classList.remove('dragging');
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', end);
+            window.removeEventListener('pointercancel', end);
+            this.syncCardOrder();
+        };
+
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', end);
+        window.addEventListener('pointercancel', end);
+    }
+
+    /** The DOM now holds the order; copy it back so a reload keeps the arrangement. */
+    syncCardOrder() {
+        const grid = document.getElementById('grid');
+        if (!grid) return;
+        const byId = new Map(this.cards.map(card => [card.id, card]));
+        const next = [...grid.querySelectorAll('.flip-card')]
+            .map(el => byId.get(el.dataset.id))
+            .filter(Boolean);
+        if (next.length !== this.cards.length) return;
+        if (next.every((card, i) => card === this.cards[i])) return;
+        this.cards = next;
+        this.saveState();
+        this.showToast('Cards rearranged');
+    }
+
+    beginCardResize(event, div, id) {
+        if (!document.body.classList.contains('view-grid')) return;
+        event.preventDefault();
+        event.stopPropagation();
+
+        const card = this.cards.find(c => c.id === id);
+        const grid = document.getElementById('grid');
+        if (!card || !grid) return;
+
+        const styles = getComputedStyle(grid);
+        const columns = Math.max(1, (styles.gridTemplateColumns || '').split(' ').filter(Boolean).length);
+        const gap = parseFloat(styles.columnGap) || 0;
+        const cellWidth = (grid.clientWidth - gap * (columns - 1)) / columns;
+        const startCols = (card.span && card.span.cols) || 1;
+        const startRows = (card.span && card.span.rows) || 1;
+        const cellHeight = div.getBoundingClientRect().height / startRows;
+        const start = { x: event.clientX, y: event.clientY };
+
+        div.classList.add('resizing');
+        const move = (e) => {
+            const cols = Math.min(columns, Math.max(1, startCols + Math.round((e.clientX - start.x) / (cellWidth + gap))));
+            const rows = Math.min(6, Math.max(1, startRows + Math.round((e.clientY - start.y) / (cellHeight + gap))));
+            card.span = { cols, rows };
+            this.applySpan(div, card.span);
+        };
+        const end = () => {
+            div.classList.remove('resizing');
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', end);
+            window.removeEventListener('pointercancel', end);
+            this.saveState();
+        };
+
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', end);
+        window.addEventListener('pointercancel', end);
+    }
+
+    /** How many cells a card covers. CSS variables, so other views ignore it. */
+    applySpan(el, span) {
+        const cols = Math.max(1, Math.min(6, (span && span.cols) || 1));
+        const rows = Math.max(1, Math.min(6, (span && span.rows) || 1));
+        el.style.setProperty('--span-cols', cols);
+        el.style.setProperty('--span-rows', rows);
     }
 
     handleSendClick() {
@@ -2504,18 +2672,81 @@ ${retry ? 'Your previous answer was unusable. Reply with that single line and no
             responseContent.innerHTML = this.renderAnswer(card.r, { full: true });
         }
 
+        // A size the reader chose earlier, kept across cards and reloads.
+        this.applyFsSize(this.settings.fsSize || null);
+
         const ov = document.getElementById('fullscreenOverlay');
         ov.classList.add('active');
         
         setTimeout(() => {
-            const responsePane = document.getElementById('fsResponsePane');
-            if (responsePane) responsePane.scrollTop = responsePane.scrollHeight;
+            // The overlay opens at the top of the answer: reading starts at the
+            // first line, not at whatever the last stream left scrolled into view.
+            const content = document.getElementById('fsContent');
+            if (content) content.scrollTop = 0;
         }, 50);
     }
 
     closeFullscreen() {
         document.getElementById('fullscreenOverlay').classList.remove('active');
         this.fullscreenId = null;
+    }
+
+    /**
+     * The fullscreen answer is not fixed to the glass: drag the corner and it
+     * covers less of the screen, which is what portrait and landscape each need
+     * at different times. Percentages, so a rotation keeps the proportion.
+     */
+    beginFsResize(event) {
+        const pane = document.getElementById('fsResponsePane');
+        const content = document.getElementById('fsContent');
+        if (!pane || !content) return;
+        event.preventDefault();
+        event.stopPropagation();
+
+        const contentRect = content.getBoundingClientRect();
+        const paneRect = pane.getBoundingClientRect();
+        const start = {
+            x: event.clientX,
+            y: event.clientY,
+            w: (paneRect.width / contentRect.width) * 100,
+            h: (paneRect.height / contentRect.height) * 100
+        };
+
+        const move = (e) => {
+            const w = Math.min(100, Math.max(35, start.w + ((e.clientX - start.x) / contentRect.width) * 100));
+            const h = Math.min(100, Math.max(25, start.h + ((e.clientY - start.y) / contentRect.height) * 100));
+            this.applyFsSize({ w: Math.round(w), h: Math.round(h) });
+        };
+        const end = () => {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', end);
+            window.removeEventListener('pointercancel', end);
+            const box = pane.getBoundingClientRect();
+            const now = content.getBoundingClientRect();
+            this.settings.fsSize = {
+                w: Math.round((box.width / now.width) * 100),
+                h: Math.round((box.height / now.height) * 100)
+            };
+            this.saveState();
+        };
+
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', end);
+        window.addEventListener('pointercancel', end);
+    }
+
+    applyFsSize(size) {
+        const pane = document.getElementById('fsResponsePane');
+        if (!pane) return;
+        if (!size) {
+            pane.style.flex = '';
+            pane.style.width = '';
+            pane.style.height = '';
+            return;
+        }
+        pane.style.flex = '0 0 auto';
+        pane.style.width = size.w + '%';
+        pane.style.height = size.h + '%';
     }
 
     toggleFullscreenFlip() {
@@ -2551,7 +2782,9 @@ ${retry ? 'Your previous answer was unusable. Reply with that single line and no
 
     setCardView(view) {
         this.settings.view = view;
-        document.body.className = '';
+        // Rebuild the view classes only: the hidden bar is a body class too, and
+        // clearing them all would bring the bar back on every view change.
+        document.body.classList.remove('view-list', 'view-grid', 'view-full');
         if (view === 'grid') document.body.classList.add('view-grid');
         if (view === 'list') document.body.classList.add('view-list');
         if (view === 'full') document.body.classList.add('view-full');
