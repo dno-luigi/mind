@@ -1,4 +1,5 @@
 import { sha256Hex } from './util.js';
+import { MNL_PROMPT, MICRO_PROMPT, DOC_PROMPT } from './prompts.js';
 
 /**
  * Presets are server data: prompt + model + params, one rung per provider.
@@ -44,6 +45,9 @@ export const PRESETS = [
     maxTokens: 6144,
     system:
       'You are an operator: you act rather than explain. Give the shortest path to a working result, name the exact commands or steps, state the precondition that would break it, and skip preamble.',
+    // The rung the pipeline generates on when nothing is pinned. Nobody picks it
+    // from the menu, so it stays out of /api/presets and out of the button cycle.
+    internal: true,
   },
   {
     id: 'mnl',
@@ -53,25 +57,21 @@ export const PRESETS = [
     or: null,
     temperature: 0.7,
     maxTokens: 4096,
-    // Still owned by the OpenRouter preset; fill it in if MNL should behave the
-    // same on the Workers AI rung.
-    system: '',
+    // The owner's MNL prompt, kept here so the Workers AI rung runs the same text
+    // the OpenRouter preset carries on its own rung.
+    system: MNL_PROMPT,
   },
-  // Micro, Doc and Tarot are OpenRouter presets in the same way Operator and MNL
-  // are: the account holds their model, prompt and sampling. Truth is the only
-  // preset this repo writes a prompt for, and it reads that from the Secrets
-  // Store. Until a Workers AI prompt is written for these three, that rung runs
-  // the default text model with no system turn — exactly what MNL does now.
+  // Micro and Doc are the owner's prompts too, kept in src/prompts/ and compiled
+  // into src/prompts.js. Their OpenRouter presets carry the same text.
   {
     id: 'micro',
     name: 'Micro',
     cf: '@cf/google/gemma-4-26b-a4b-it',
     orPreset: 'micro',
     or: null,
-    // Only the Workers AI rung reads these: the OpenRouter preset owns its own.
     temperature: 0.3,
     maxTokens: 4096,
-    system: '',
+    system: MICRO_PROMPT,
   },
   {
     id: 'doc',
@@ -81,17 +81,7 @@ export const PRESETS = [
     or: null,
     temperature: 0.3,
     maxTokens: 4096,
-    system: '',
-  },
-  {
-    id: 'tarot',
-    name: 'Tarot',
-    cf: '@cf/google/gemma-4-26b-a4b-it',
-    orPreset: 'tarot',
-    or: null,
-    temperature: 0.3,
-    maxTokens: 4096,
-    system: '',
+    system: DOC_PROMPT,
   },
 ];
 
@@ -162,12 +152,12 @@ export async function truthPromptInfo(env) {
   };
 }
 
-/** What the client is allowed to see — no prompts, no slugs. */
+/** What the client is allowed to see: the presets a person can pick, no internal rung. */
 export function publicPresets() {
-  return PRESETS.map(({ id, name }) => ({ id, name }));
+  return PRESETS.filter((preset) => !preset.internal).map(({ id, name }) => ({ id, name }));
 }
 
 /** Presets bound to an OpenRouter preset, for /api/health diagnostics. */
 export function openRouterBackedPresets() {
-  return PRESETS.filter((p) => p.orPreset).map((p) => p.id);
+  return PRESETS.filter((p) => p.orPreset && !p.internal).map((p) => p.id);
 }

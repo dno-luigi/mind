@@ -34,7 +34,7 @@ export function upsertBody(preset, { model } = {}) {
 
 /** One entry per preset that names an OpenRouter slug; others are local-only. */
 export function syncPlan({ model } = {}) {
-  return PRESETS.filter((preset) => preset.orPreset).map((preset) => ({
+  return PRESETS.filter((preset) => preset.orPreset && !preset.internal).map((preset) => ({
     id: preset.id,
     slug: preset.orPreset,
     path: upsertPath(preset.orPreset),

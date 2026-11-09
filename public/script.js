@@ -39,32 +39,24 @@ const DEFAULT_PRESETS = {
         name: 'Truth',
         key: 'truth' // OpenRouter preset slug
     },
-    'operator': {
-        name: 'Operator',
-        key: 'operator' // OpenRouter preset slug
-    },
     'mnl': {
         name: 'MNL',
         key: 'mnl' // OpenRouter preset slug
     },
     'micro': {
         name: 'Micro',
-        key: 'micro'
+        key: 'micro' // OpenRouter preset slug
     },
     'doc': {
         name: 'Doc',
-        key: 'doc'
-    },
-    'tarot': {
-        name: 'Tarot',
-        key: 'tarot'
+        key: 'doc' // OpenRouter preset slug
     }
 };
 
-// Every preset is an OpenRouter preset, and this table is exactly the three the
-// Worker publishes at /api/presets. Truth is also the fallback the Worker uses
-// when neither the user nor the decision model picks one, so it is the one entry
-// that cannot be deleted.
+// Every preset is an OpenRouter preset, and this table is exactly the four the
+// Worker publishes at /api/presets: Truth, MNL, Micro and Doc. The button cycles
+// these with Off in front of them, and Off is where it starts. Truth is also the
+// fallback the Worker uses when nothing is picked, so it cannot be deleted.
 const FALLBACK_PRESET_KEY = 'truth';
 
 // Selecting "No preset" sends this sentinel: no preset prompt, no @preset/ slug.
