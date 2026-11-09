@@ -131,6 +131,23 @@ function parseRecord(raw) {
   }
 }
 
+/**
+ * What a record says it is. This app writes `layer`; a sibling that shares the
+ * namespace writes `status`. Nothing declared is an older record of this app's
+ * own shape, which the key it sits at already identifies.
+ */
+function declaredLayerOf(fields) {
+  const record = fields && typeof fields === 'object' ? fields : {};
+  if (typeof record.layer === 'string') return record.layer.toLowerCase();
+  if (typeof record.status === 'string') return record.status.toLowerCase();
+  return null;
+}
+
+/** A record that declares another layer is not a master, whatever key it sits at. */
+function isMasterRecord(hit) {
+  return hit?.declares == null || hit.declares === 'master';
+}
+
 /** One read, whatever shape the record is in. A tombstone or review blob is a miss. */
 async function readTruth(store, key, layer, id, query) {
   if (!store || typeof store.get !== 'function') return null;
@@ -152,6 +169,7 @@ async function readTruth(store, key, layer, id, query) {
     id,
     query: declared || query,
     declared,
+    declares: declaredLayerOf(fields),
     answer,
     citations: citationsOf(parsed),
     key,
@@ -189,6 +207,9 @@ async function scanForTruth(stores, { id, query }) {
         const hit = await readTruth(store, name, 'master', id, query);
         if (!hit) return null;
         if (!answersQuery(hit, query) && hit.key !== query) return null;
+        // These namespaces are shared with a writer whose candidates are not
+        // truths. Only a record that says it is master is served as one.
+        if (hit.declares !== 'master') return null;
         return { ...hit, scanned: true };
       }),
     );
@@ -380,7 +401,7 @@ export async function resolveTruth(env, input) {
   const swept = await Promise.all(
     pairs.map(([store, key, layer]) => readTruth(store, key, layer, id, query)),
   );
-  const sweptMaster = swept.find((hit) => hit && hit.layer === 'master');
+  const sweptMaster = swept.find((hit) => hit && hit.layer === 'master' && isMasterRecord(hit));
   if (sweptMaster) return sweptMaster;
   const sweptProvisional = swept.find((hit) => hit && hit.layer === 'provisional');
   if (sweptProvisional) return sweptProvisional;

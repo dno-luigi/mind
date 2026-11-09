@@ -28,6 +28,53 @@ import { upstreamError, sseData, frameShape, fromWorkersAI } from './src/normali
 
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 
+/** A KV namespace small enough to read: the shape the truth reader actually uses. */
+function kvStub(entries = {}) {
+  return {
+    async get(key) {
+      return Object.prototype.hasOwnProperty.call(entries, key) ? entries[key] : null;
+    },
+    async put(key, value) {
+      entries[key] = value;
+    },
+    async list({ limit = 1000 } = {}) {
+      return { keys: Object.keys(entries).slice(0, limit).map((name) => ({ name })) };
+    },
+  };
+}
+
+/**
+ * MASTER is shared with other workers. A record that says it is a candidate is
+ * waiting for review: it must never be served as a curated truth, however well
+ * its question matches.
+ */
+test('a candidate another writer stored is not served as a master truth', async () => {
+  const query = 'what is the filing fee';
+  const id = await sha256Hex(truthKey(query));
+  const foreign = {
+    id: 't_4f2a9c1b7d3e5a60',
+    status: 'candidate',
+    confidence: 0.72,
+    question: query,
+    answer: 'A guess from another app',
+  };
+
+  const uncurated = await resolveTruth(
+    { MASTER: kvStub({ 'truth:t_4f2a9c1b7d3e5a60': JSON.stringify(foreign) }) },
+    query,
+  );
+  assert.equal(uncurated.layer, 'none');
+  assert.ok(!String(uncurated.answer || '').includes('A guess'));
+
+  // The same namespace, a record that declares itself master: that one answers.
+  const curated = await resolveTruth(
+    { MASTER: kvStub({ [`truth:master:${id}`]: JSON.stringify({ layer: 'master', id, query, answer: 'Curated' }) }) },
+    query,
+  );
+  assert.equal(curated.layer, 'master');
+  assert.equal(curated.answer, 'Curated');
+});
+
 function sse(chunks) {
   return new ReadableStream({
     start(controller) {
