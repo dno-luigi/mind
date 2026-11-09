@@ -196,6 +196,10 @@ body.view-grid .card-resize::after {
    grows with the screen instead of keeping a fixed height. */
 .fs-pane .doc-shell { margin-top: 0; height: 100%; display: flex; flex-direction: column; }
 .fs-pane .doc-frame-full { flex: 1 1 auto; height: auto; min-height: 240px; }
+/* A document in the fullscreen pane fills it even when the answer was painted
+   without the full flag: otherwise it keeps its 60vh card height and leaves the
+   lower half of the screen empty. */
+.fs-pane .doc-frame { flex: 1 1 auto; height: auto; min-height: 240px; }
 .fs-grip {
     position: absolute; right: 0; bottom: 0; width: 30px; height: 30px; z-index: 5;
     cursor: nwse-resize; touch-action: none;
