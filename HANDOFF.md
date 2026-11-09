@@ -388,3 +388,42 @@ change production could land on an artifact `npm test` never touched.
 Decision: keep the workflow path, because it runs `npm test` and `npm run build`
 before deploying, and switch off the other. Until then, read version history knowing
 that every push to `main` publishes twice.
+
+## 11. The owner tier, delivered as a patch
+
+`docs/EZ-EXHIBITZ-OWNER-ENTITLEMENT.md` is an instruction; it said what the owner tier
+must be, not that it existed. On 2026-11-09 it was implemented against
+`dno-luigi/ezxhibitz@d559dae` and delivered as `patches/ezxhibitz-owner-entitlement.patch`
+— nine files, +613/−3.
+
+Why a patch: a `mind` chat cannot write to that repository. This chat's git credential
+is bound to `dno-luigi/mind`, and the alternative — putting a token into a command line —
+is how a credential ends up in a log. The patch is the delivery; whoever applies it owns
+the commit there.
+
+What it changes: `worker/owner.js` (role resolution, HMAC session, rate limit),
+`worker/index.js` (the `/api/owner/session` route), `worker/usage.js` (role read once,
+owner exports recorded but not counted, role named in every reply), `src/lib/owner.js`
+(the page's side), `src/components/home/ExportStage.jsx` (a collapsed "Owner sign in"
+row that becomes an Owner badge), `src/data/business.js` (copy), `test/owner.test.mjs`
+(16 checks), `AGENTS.md` (that project's instruction file, written under the charter)
+and a README section on the two secrets.
+
+State of conformance, in the charter's vocabulary: **implemented**, not conforming. It
+has never been deployed, and until `OWNER_ACCESS_CODE` and `OWNER_SESSION_KEY` are set on
+that Worker, nobody there is an owner — it fails closed.
+
+Verified while building it, all on a clean checkout with the patch applied: the 16 tests
+pass; `npm run build` succeeds; `wrangler dev` serves the app and answers the route; and
+in a browser on the local Worker the row opens, a wrong code says "That code is not
+valid.", the right code replaces the row with the badge, Sign out restores it, and the
+sixth wrong code says "Too many attempts. Try again in a minute."
+
+Seen and deliberately not changed: with an owner signed in, "Your first packet is free."
+still shows under the badge. It is true — the allowance really is untouched — but it
+reads oddly beside "Unlimited exports". One condition in `ExportStage.jsx` would hide it.
+
+The kit's older owner path is left alone: `src/wron-kit/cloud.js` still stores a pass and
+sends `X-Wron-Owner`, and the Worker's `auth` action still answers `501 not_supported`.
+A pass the page can read is a pass an attacker can read; the HttpOnly cookie replaces it
+rather than reviving it.

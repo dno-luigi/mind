@@ -1,0 +1,759 @@
+diff --git a/AGENTS.md b/AGENTS.md
+new file mode 100644
+index 0000000..61b56fd
+--- /dev/null
++++ b/AGENTS.md
+@@ -0,0 +1,40 @@
++# AGENTS.md
++
++Read this before changing anything in this repository.
++
++EZ EXHIBITZ is subordinate to `mind` (`dno-luigi/mind`), which is the authority for
++brand, secrets, model roles and standards. The rules in that repository's `AGENTS.md`
++apply here as well; its `docs/MIND-AUTHORITY.md` is the charter. This file records only
++what is specific to this project, and only invariants: if a fact can change without
++anyone editing this file, it does not belong here.
++
++## What this is
++
++A packet builder: the front end in `src/` (React + Vite) and the API in `worker/`, served
++from one origin on Cloudflare. The browser reaches the API through `location.origin`.
++
++## Owner entitlement
++
++- **Two axes.** `role` (`owner` | `customer`) is separate from `plan`. The owner is not an
++  admin, and nothing in this repository grants admin rights.
++- **The server decides the role.** `worker/owner.js` (`roleFor`) is the only place that
++  answers "is this the owner". `src/lib/owner.js` carries the request and reports the
++  answer; it never decides anything, and `ExportStage` only renders what the server said.
++- **The code is exchanged, not kept.** It arrives in `X-Owner-Code`, is compared after
++  hashing both sides to equal-length digests, and becomes an HMAC-signed `HttpOnly;
++  Secure; SameSite=Lax` cookie (`ezx_owner`). Nothing is bound to an IP or a user agent,
++  and nothing is written to page storage.
++- **An owner export is recorded, never counted.** `used` and `credits` do not move.
++- **Five wrong codes per source per minute, then `429`.** A wrong code is a `401` with one
++  generic message.
++- **Fail closed.** With `OWNER_ACCESS_CODE` or `OWNER_SESSION_KEY` unset, the route
++  answers `401` and nobody is an owner.
++- **Secrets by name only:** `OWNER_ACCESS_CODE`, `OWNER_SESSION_KEY`. Never echo, log,
++  commit or paste a value. Locally they belong in `.dev.vars`, which is ignored.
++- **Verify:** `node --test test/owner.test.mjs`, then `npm run build`.
++
++## Checks
++
++    npm ci
++    npm run build
++    node --test test/owner.test.mjs
+diff --git a/README.md b/README.md
+index beb9e42..bc7dc7b 100644
+--- a/README.md
++++ b/README.md
+@@ -85,3 +85,30 @@ Issue a code, one per paid packet, from the dashboard (KV → the namespace in
+ 
+ Send it to the buyer; they enter it in the export step and the code is deleted as
+ soon as it is used. `{"packets":20}` adds twenty.
++
++## Owner access
++
++The owner uses the product without paying, and their exports are not counted. That is a
++`role`, not a plan: `role` is `owner` or `customer`, decided only by the Worker, and it
++sits beside `plan` rather than replacing it.
++
++Two secrets must be set before anyone can sign in:
++
++    npx wrangler secret put OWNER_ACCESS_CODE     # the code the owner types
++    npx wrangler secret put OWNER_SESSION_KEY     # a long random string; signs the cookie
++
++`OWNER_ACCESS_CODE` is the credential: generate it once, keep it out of the repository,
++and change it to revoke access. `OWNER_SESSION_KEY` signs the session cookie, so rotating
++it signs every owner out. Neither value belongs in `wrangler.jsonc`, in a commit, or in a
++message. For local `npm run api`, put both names in `.dev.vars`, which is ignored.
++
++The owner signs in on the Export step: **Owner sign in**, then the code. The code is sent
++once in `X-Owner-Code` and exchanged for a 30-day `HttpOnly; Secure; SameSite=Lax`
++cookie; it is never stored in the page, and no visitor is recognised by IP or user agent.
++The badge appears only when the server reports `role: "owner"`, and signing out brings
++the free-packet allowance back exactly as it was.
++
++With either secret missing the route fails closed with `401`, so a half-configured
++deployment is not an open one.
++
++    node --test test/owner.test.mjs     # the owner checks, no Cloudflare needed
+diff --git a/src/components/home/ExportStage.jsx b/src/components/home/ExportStage.jsx
+index bbd7290..9ddd756 100644
+--- a/src/components/home/ExportStage.jsx
++++ b/src/components/home/ExportStage.jsx
+@@ -5,6 +5,7 @@ import Button from "../Button";
+ import PreviewStrip from "./PreviewStrip";
+ import PackRequest from "./PackRequest";
+ import { quota } from "../../lib/quota";
++import { owner } from "../../lib/owner";
+ import { formatDate, removalDate } from "../../lib/packet";
+ import { COPY } from "../../data/business";
+ import { PAY_PLANS } from "../../data/plans";
+@@ -24,9 +25,15 @@ export default function ExportStage({ b }) {
+   const [code, setCode] = useState("");
+   const [redeeming, setRedeeming] = useState(false);
+   const [codeNote, setCodeNote] = useState(null);
++  const [ownerOpen, setOwnerOpen] = useState(false);
++  const [ownerCode, setOwnerCode] = useState("");
++  const [ownerBusy, setOwnerBusy] = useState(false);
++  const [ownerNote, setOwnerNote] = useState(null);
+   const share = b.share;
+   const expires = share ? removalDate(share.createdAt, 30) : null;
+   const blocked = allowance ? allowance.allowed === false : false;
++  // The server decides the role and names it in every reply; the page only shows it.
++  const isOwner = allowance?.role === "owner";
+ 
+   // Building and previewing need no server; this only says whether an export can go.
+   useEffect(() => {
+@@ -128,6 +135,40 @@ export default function ExportStage({ b }) {
+     }
+   };
+ 
++  /** Re-read the role and the allowance after a sign-in or sign-out. */
++  const refreshAllowance = async () => {
++    const next = await quota.status(b).catch(() => null);
++    if (next) setAllowance(next);
++  };
++
++  const ownerSignIn = async () => {
++    setOwnerBusy(true);
++    setOwnerNote(null);
++    try {
++      await owner.signIn(ownerCode.trim());
++      setOwnerCode("");
++      setOwnerOpen(false);
++      await refreshAllowance();
++      toast.success(COPY.ownerOk);
++    } catch (err) {
++      setOwnerNote(err?.message || COPY.ownerBad);
++    } finally {
++      setOwnerBusy(false);
++    }
++  };
++
++  const ownerSignOut = async () => {
++    setOwnerBusy(true);
++    setOwnerNote(null);
++    try {
++      await owner.signOut();
++    } catch {
++      /* already signed out, or this visit never signed in */
++    }
++    await refreshAllowance();
++    setOwnerBusy(false);
++  };
++
+   return (
+     <div className="grid gap-8 lg:grid-cols-12">
+       <div className="order-2 lg:order-1 lg:col-span-5">
+@@ -249,6 +290,65 @@ export default function ExportStage({ b }) {
+             </div>
+           ) : null}
+ 
++          <div className="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line pt-4">
++            {isOwner ? (
++              <>
++                <span className="inline-flex items-center gap-1.5 rounded-full border border-primary px-3 py-1 t-label text-primary">
++                  <Check className="h-4 w-4" aria-hidden="true" /> {COPY.ownerBadge}
++                </span>
++                <span className="t-meta text-muted">{COPY.ownerNote}</span>
++                <button
++                  type="button"
++                  onClick={ownerSignOut}
++                  disabled={ownerBusy}
++                  className="ml-auto min-h-11 t-label text-ink underline underline-offset-2 hover:text-accent"
++                >
++                  {COPY.ownerSignOut}
++                </button>
++              </>
++            ) : ownerOpen ? (
++              <div className="w-full">
++                <label htmlFor="owner-code" className="t-label text-ink">
++                  {COPY.ownerCode}
++                </label>
++                <div className="mt-2 flex gap-2">
++                  <input
++                    id="owner-code"
++                    type="password"
++                    value={ownerCode}
++                    onChange={(e) => {
++                      setOwnerCode(e.target.value);
++                      setOwnerNote(null);
++                    }}
++                    onKeyDown={(e) => {
++                      if (e.key === "Enter" && ownerCode.trim() && !ownerBusy) ownerSignIn();
++                    }}
++                    autoComplete="off"
++                    spellCheck="false"
++                    className="h-12 min-w-0 flex-1 rounded-[12px] border border-line bg-bg px-3 text-[15px] tracking-wide text-ink"
++                  />
++                  <Button variant="outline" onClick={ownerSignIn} disabled={!ownerCode.trim() || ownerBusy}>
++                    {ownerBusy ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : null}
++                    {COPY.ownerGo}
++                  </Button>
++                </div>
++                {ownerNote ? (
++                  <p role="alert" className="mt-2 text-[15px] text-accent">
++                    {ownerNote}
++                  </p>
++                ) : null}
++              </div>
++            ) : (
++              <button
++                type="button"
++                onClick={() => setOwnerOpen(true)}
++                className="min-h-11 t-meta text-muted underline underline-offset-2 hover:text-primary"
++              >
++                {COPY.ownerSignIn}
++              </button>
++            )}
++          </div>
++
+           <p className="mt-6 t-meta text-muted">
+             Check the packet against your court's rules before filing. This tool does not provide legal advice or promise court acceptance.
+           </p>
+diff --git a/src/data/business.js b/src/data/business.js
+index c1129c2..498ad91 100644
+--- a/src/data/business.js
++++ b/src/data/business.js
+@@ -86,5 +86,13 @@ export const COPY = {
+   codeApply: "Use code",
+   codeBad: "That code did not work. Check it and try again.",
+   codeOk: "Packet added to this browser.",
++  ownerSignIn: "Owner sign in",
++  ownerCode: "Owner access code",
++  ownerGo: "Sign in",
++  ownerOk: "Signed in as owner.",
++  ownerBadge: "Owner",
++  ownerNote: "Unlimited exports. Nothing is counted against the free packet.",
++  ownerSignOut: "Sign out",
++  ownerBad: "That access code did not work.",
+   deleted: "Deleted after 30 days.",
+ };
+diff --git a/src/lib/owner.js b/src/lib/owner.js
+new file mode 100644
+index 0000000..796eb53
+--- /dev/null
++++ b/src/lib/owner.js
+@@ -0,0 +1,26 @@
++// Signing in as the owner, from the page's side.
++//
++// The code is sent once, in a header, and never stored: the reply is a session
++// cookie the browser keeps and the server verifies. Nothing here decides a role —
++// it only carries the request and reports what the server answered.
++const HEADER = "X-Owner-Code";
++
++async function call(method, init = {}) {
++  let res;
++  try {
++    res = await fetch("/api/owner/session", { method, credentials: "same-origin", ...init });
++  } catch {
++    throw new Error("Couldn't reach the server. Check your connection and try again.");
++  }
++  const data = await res.json().catch(() => ({}));
++  if (!res.ok) throw new Error(data.message || "That code is not valid.");
++  return data;
++}
++
++export const owner = {
++  /** { role: "owner" | "customer" } */
++  status: () => call("GET"),
++  /** Swap the code for a session. The code is not kept anywhere afterwards. */
++  signIn: (code) => call("POST", { headers: { [HEADER]: String(code || "") } }),
++  signOut: () => call("DELETE"),
++};
+diff --git a/test/owner.test.mjs b/test/owner.test.mjs
+new file mode 100644
+index 0000000..3aa7a1a
+--- /dev/null
++++ b/test/owner.test.mjs
+@@ -0,0 +1,222 @@
++// The owner entitlement: the server decides the role, and the page only reports it.
++//
++//   node --test test/owner.test.mjs
++//
++// Nothing here needs Cloudflare. The Worker handlers are plain functions, the stores
++// are Maps, and the client library is driven through a stubbed fetch.
++import assert from "node:assert/strict";
++import test from "node:test";
++
++import { handleOwner, signClaim } from "../worker/owner.js";
++import { handleUsage } from "../worker/usage.js";
++import { owner } from "../src/lib/owner.js";
++
++const CODE = "TEST-CODE-0123456789abcdef0123456789abcdef";
++const KEY = "test-session-key-0000000000000000";
++
++function memKV() {
++  const m = new Map();
++  return {
++    get: async (k) => (m.has(k) ? m.get(k) : null),
++    put: async (k, v) => void m.set(k, v),
++    delete: async (k) => void m.delete(k),
++  };
++}
++
++function memR2() {
++  const m = new Map();
++  return {
++    get: async (k) => (m.has(k) ? { json: async () => JSON.parse(m.get(k)) } : null),
++    put: async (k, v) => void m.set(k, String(v)),
++  };
++}
++
++const newEnv = () => ({ OWNER_ACCESS_CODE: CODE, OWNER_SESSION_KEY: KEY, KV: memKV(), FILES: memR2() });
++const ownerReq = (headers = {}, method = "POST") =>
++  new Request("https://ezxhibitz.test/api/owner/session", { method, headers });
++const usageReq = (headers = {}) =>
++  new Request("https://ezxhibitz.test/api/site/ezxhibitz/usage", { method: "POST", headers });
++
++const setCookie = (res) => String(res.headers.get("set-cookie") || "");
++const sessionOf = (res) => setCookie(res).split(";")[0];
++
++async function signedIn(env) {
++  const res = await handleOwner(ownerReq({ "x-owner-code": CODE }), env);
++  assert.equal(res.status, 200);
++  return sessionOf(res);
++}
++
++test("a wrong code is refused, and sets no cookie", async () => {
++  const res = await handleOwner(ownerReq({ "x-owner-code": "not-the-code" }), newEnv());
++  assert.equal(res.status, 401);
++  assert.equal(setCookie(res), "");
++  assert.match((await res.json()).message, /not valid/i);
++});
++
++test("the right code returns a session cookie with the hardened attributes", async () => {
++  const res = await handleOwner(ownerReq({ "x-owner-code": CODE }), newEnv());
++  assert.equal(res.status, 200);
++  const cookie = setCookie(res);
++  assert.match(cookie, /HttpOnly/);
++  assert.match(cookie, /Secure/);
++  assert.match(cookie, /SameSite=Lax/);
++  assert.match(cookie, /^ezx_owner=/);
++  const body = await res.json();
++  assert.equal(body.role, "owner");
++  assert.equal(typeof body.exp, "number");
++});
++
++test("a session reports the owner role", async () => {
++  const env = newEnv();
++  const session = await signedIn(env);
++  const res = await handleOwner(ownerReq({ cookie: session }, "GET"), env);
++  assert.equal(res.status, 200);
++  assert.equal((await res.json()).role, "owner");
++});
++
++test("a tampered signature is only a customer", async () => {
++  const env = newEnv();
++  const session = await signedIn(env);
++  const parts = session.split("=");
++  const [claim, sig] = parts[1].split(".");
++  const tampered = `${parts[0]}=${claim}.${sig.slice(0, -2)}${sig.endsWith("aa") ? "bb" : "aa"}`;
++  const res = await handleOwner(ownerReq({ cookie: tampered }, "GET"), env);
++  assert.equal((await res.json()).role, "customer");
++});
++
++test("an old claim version is only a customer", async () => {
++  const env = newEnv();
++  const exp = Math.floor(Date.now() / 1000) + 3600;
++  const token = await signClaim(env, { role: "owner", v: 2, exp });
++  const res = await handleOwner(ownerReq({ cookie: `ezx_owner=${token}` }, "GET"), env);
++  assert.equal((await res.json()).role, "customer");
++});
++
++test("an expired session is only a customer", async () => {
++  const env = newEnv();
++  const token = await signClaim(env, { role: "owner", v: 1, exp: Math.floor(Date.now() / 1000) - 5 });
++  const res = await handleOwner(ownerReq({ cookie: `ezx_owner=${token}` }, "GET"), env);
++  assert.equal((await res.json()).role, "customer");
++});
++
++test("the sixth wrong attempt in a minute is rate limited, and says so", async () => {
++  const env = newEnv();
++  for (let i = 0; i < 5; i += 1) {
++    assert.equal((await handleOwner(ownerReq({ "x-owner-code": "wrong" }), env)).status, 401);
++  }
++  const limited = await handleOwner(ownerReq({ "x-owner-code": "wrong" }), env);
++  assert.equal(limited.status, 429);
++  const body = await limited.json();
++  assert.equal(body.error, "too_many_attempts");
++  assert.match(body.message, /too many attempts/i);
++});
++
++test("with no secrets configured the route fails closed", async () => {
++  const env = { KV: memKV(), FILES: memR2() };
++  const res = await handleOwner(ownerReq({ "x-owner-code": CODE }), env);
++  assert.equal(res.status, 401);
++});
++
++test("a customer gets one free export, then is refused", async () => {
++  const env = newEnv();
++  const first = await (await handleUsage(usageReq(), env, { op: "consume", sig: "abc123", pages: 2 })).json();
++  const second = await (await handleUsage(usageReq(), env, { op: "consume", sig: "def456", pages: 2 })).json();
++  assert.equal(first.allowed, true);
++  assert.equal(first.reason, "free");
++  assert.equal(first.role, "customer");
++  assert.equal(second.allowed, false);
++  assert.equal(second.reason, "payment_required");
++});
++
++test("an owner export is recorded but never counted", async () => {
++  const env = newEnv();
++  const session = await signedIn(env);
++  const first = await (await handleUsage(usageReq({ cookie: session }), env, { op: "consume", sig: "0aa111", pages: 2 })).json();
++  const second = await (await handleUsage(usageReq({ cookie: session }), env, { op: "consume", sig: "0bb222", pages: 2 })).json();
++  assert.equal(first.allowed, true);
++  assert.equal(first.reason, "owner");
++  assert.equal(second.allowed, true);
++  assert.equal(second.reason, "owner");
++  assert.equal(second.used, 0);
++  assert.equal(second.credits, 0);
++});
++
++test("a code header alone, or a role in the body, grants nothing", async () => {
++  const env = newEnv();
++  const byHeader = await (await handleUsage(usageReq({ "x-owner-code": CODE }), env, { op: "consume", sig: "aaa111", pages: 1 })).json();
++  const byBody = await (await handleUsage(usageReq(), env, { op: "consume", sig: "bbb222", pages: 1, role: "owner" })).json();
++  assert.equal(byHeader.role, "customer");
++  assert.equal(byBody.role, "customer");
++});
++
++test("status names the role", async () => {
++  const env = newEnv();
++  const session = await signedIn(env);
++  assert.equal((await (await handleUsage(usageReq(), env, { op: "status", sig: "abc123" })).json()).role, "customer");
++  const asOwner = await (await handleUsage(usageReq({ cookie: session }), env, { op: "status", sig: "abc123" })).json();
++  assert.equal(asOwner.role, "owner");
++  assert.equal(asOwner.allowed, true);
++});
++
++// ── the page's side ────────────────────────────────────────────────────────────
++
++function stubFetch(status, body) {
++  const seen = [];
++  const real = globalThis.fetch;
++  globalThis.fetch = async (url, init = {}) => {
++    seen.push({ url, method: init.method, headers: init.headers, credentials: init.credentials });
++    return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
++  };
++  return { seen, restore: () => (globalThis.fetch = real) };
++}
++
++test("the page shows the rate-limit wording, not 'invalid code'", async () => {
++  const { restore } = stubFetch(429, { error: "too_many_attempts", message: "Too many attempts. Try again in a minute." });
++  try {
++    await assert.rejects(() => owner.signIn("anything"), {
++      message: "Too many attempts. Try again in a minute.",
++    });
++  } finally {
++    restore();
++  }
++});
++
++test("the page shows the wrong-code wording for a 401", async () => {
++  const { restore } = stubFetch(401, { error: "not_owner", message: "That code is not valid." });
++  try {
++    await assert.rejects(() => owner.signIn("anything"), { message: "That code is not valid." });
++  } finally {
++    restore();
++  }
++});
++
++test("the code travels only in X-Owner-Code, on a same-origin POST, and is not stored", async () => {
++  const { seen, restore } = stubFetch(200, { role: "owner" });
++  const writes = [];
++  const realStorage = globalThis.localStorage;
++  globalThis.localStorage = { setItem: (k) => writes.push(k), getItem: () => null, removeItem: () => {} };
++  try {
++    const out = await owner.signIn("THE-CODE");
++    assert.equal(out.role, "owner");
++    assert.equal(seen.length, 1);
++    assert.equal(seen[0].method, "POST");
++    assert.equal(seen[0].headers["X-Owner-Code"], "THE-CODE");
++    assert.equal(seen[0].credentials, "same-origin");
++    assert.deepEqual(writes, []);
++  } finally {
++    globalThis.localStorage = realStorage;
++    restore();
++  }
++});
++
++test("a dead network does not blame the code", async () => {
++  const real = globalThis.fetch;
++  globalThis.fetch = async () => {
++    throw new TypeError("network down");
++  };
++  try {
++    await assert.rejects(() => owner.status(), /connection/i);
++  } finally {
++    globalThis.fetch = real;
++  }
++});
+diff --git a/worker/index.js b/worker/index.js
+index 88accae..a70a581 100644
+--- a/worker/index.js
++++ b/worker/index.js
+@@ -9,6 +9,7 @@
+ //   POST /api/site/:siteId/db      { op, table, values }     -> share_links
+ //   POST /api/site/:siteId/upload  multipart "file"          -> stored in R2
+ //   POST /api/site/:siteId/usage   { op, sig, pages }        -> free-packet allowance
++//   POST /api/owner/session        X-Owner-Code header       -> owner session cookie
+ //   GET  /f/:id                                              -> the shared file
+ //   POST /api/site/:siteId/hit | errors                      -> accepted, not stored
+ //
+@@ -19,6 +20,7 @@ import { handleForms } from "./forms.js";
+ import { ensureSchema } from "./schema.js";
+ import { handleUsage } from "./usage.js";
+ import { fail, readBody, sameOrigin } from "./util.js";
++import { handleOwner } from "./owner.js";
+ 
+ const ACTION = /^\/api\/site\/([A-Za-z0-9_-]{1,64})\/([a-z]+)\/?$/;
+ const FILE = /^\/f\/([A-Za-z0-9-]{8,64})\/?$/;
+@@ -36,6 +38,13 @@ export default {
+     // File URLs are not app routes: a broken share link is a 404, like an expired one.
+     if (url.pathname === "/f" || url.pathname.startsWith("/f/")) return fail(404, "not_found", "No such file.");
+ 
++    // The owner entitlement is its own endpoint: the code is exchanged here for a
++    // signed session, and the role is decided by the server, never by the page.
++    if (url.pathname === "/api/owner/session") {
++      if (!sameOrigin(request)) return fail(403, "not_allowed", "Requests must come from this site.");
++      return handleOwner(request, env);
++    }
++
+     const match = ACTION.exec(url.pathname);
+     if (!match) {
+       if (url.pathname === "/api" || url.pathname.startsWith("/api/")) return fail(404, "not_found", "No such endpoint.");
+diff --git a/worker/owner.js b/worker/owner.js
+new file mode 100644
+index 0000000..5b695ae
+--- /dev/null
++++ b/worker/owner.js
+@@ -0,0 +1,166 @@
++// Owner entitlement for EZ EXHIBITZ.
++//
++// A role, kept apart from the plan. `plan` is what someone bought (free, personal,
++// professional, founder); `role` is whether this browser proved it holds the owner
++// credential. Only the role lifts the commercial gates, and only the server decides
++// it — the page may show a badge, never grant itself one.
++//
++// The code is exchanged once for a signed session, so the code itself is not sent
++// on every request and cannot reach a referrer or an access log. Nothing in the
++// session is bound to an address or a user agent: moving networks or changing
++// browsers must not lock the owner out, and the code is the recovery path.
++//
++//   POST   /api/owner/session   code in the X-Owner-Code header -> sets the cookie
++//   GET    /api/owner/session                                    -> { role }
++//   DELETE /api/owner/session                                    -> clears it
++//
++// Secrets, set by the owner with `wrangler secret put`:
++//   OWNER_ACCESS_CODE   the code, at least 32 bytes of entropy
++//   OWNER_SESSION_KEY   the HMAC key that signs sessions, separate so sessions can
++//                       be invalidated without changing the code
++import { fail, ipHash, json, sha256Hex } from "./util.js";
++
++export const COOKIE = "ezx_owner";
++export const VERSION = 1;
++
++/** 30 days, in seconds. Long enough to be invisible, short enough to expire. */
++const MAX_AGE = 30 * 24 * 60 * 60;
++
++/** Failed attempts per source inside the window, and the window itself. */
++const ATTEMPT_LIMIT = 5;
++const ATTEMPT_WINDOW = 60;
++
++const HEADER = "x-owner-code";
++const enc = new TextEncoder();
++const dec = new TextDecoder();
++
++function b64url(bytes) {
++  let text = "";
++  for (const byte of bytes) text += String.fromCharCode(byte);
++  return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
++}
++
++function unb64url(text) {
++  const padded = text.replace(/-/g, "+").replace(/_/g, "/");
++  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
++}
++
++async function hmacKey(env) {
++  const secret = String(env?.OWNER_SESSION_KEY || "");
++  if (!secret) return null;
++  return crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, [
++    "sign",
++    "verify",
++  ]);
++}
++
++/** A signed claim, or null when no session key is configured. */
++export async function signClaim(env, claim) {
++  const key = await hmacKey(env);
++  if (!key) return null;
++  const body = b64url(enc.encode(JSON.stringify(claim)));
++  const mac = await crypto.subtle.sign("HMAC", key, enc.encode(body));
++  return `${body}.${b64url(new Uint8Array(mac))}`;
++}
++
++/** The claim behind a token, or null. Signature first, then version, then expiry. */
++export async function verifyClaim(env, token) {
++  const key = await hmacKey(env);
++  if (!key || typeof token !== "string" || !token) return null;
++  const split = token.split(".");
++  if (split.length !== 2 || !split[0] || !split[1]) return null;
++  let valid = false;
++  try {
++    valid = await crypto.subtle.verify("HMAC", key, unb64url(split[1]), enc.encode(split[0]));
++  } catch {
++    return null;
++  }
++  if (!valid) return null;
++  let claim;
++  try {
++    claim = JSON.parse(dec.decode(unb64url(split[0])));
++  } catch {
++    return null;
++  }
++  if (!claim || claim.role !== "owner") return null;
++  if (Number(claim.v) !== VERSION) return null;
++  if (!Number.isFinite(claim.exp) || claim.exp * 1000 <= Date.now()) return null;
++  return claim;
++}
++
++/**
++ * Compare a supplied code to the stored one without a timing signal.
++ *
++ * Both sides are hashed first, so the comparison is over equal-length hex and the
++ * length of the real code cannot be narrowed from response times.
++ */
++async function codeMatches(env, provided) {
++  const expected = String(env?.OWNER_ACCESS_CODE || "");
++  if (!expected || !provided) return false;
++  const a = await sha256Hex(`owner-code:${expected}`);
++  const b = await sha256Hex(`owner-code:${provided}`);
++  let diff = 0;
++  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
++  return diff === 0;
++}
++
++function sessionCookie(token) {
++  return `${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${MAX_AGE}`;
++}
++
++function clearCookie() {
++  return `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
++}
++
++function readCookie(request, name) {
++  const raw = request.headers.get("cookie") || "";
++  for (const part of raw.split(";")) {
++    const eq = part.indexOf("=");
++    if (eq < 0) continue;
++    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim());
++  }
++  return "";
++}
++
++/** The only place a role is decided. Everything else asks this. */
++export async function roleFor(request, env) {
++  if (!env?.OWNER_ACCESS_CODE || !env?.OWNER_SESSION_KEY) return "customer";
++  const token = readCookie(request, COOKIE);
++  if (!token) return "customer";
++  const claim = await verifyClaim(env, token);
++  return claim ? "owner" : "customer";
++}
++
++export async function handleOwner(request, env) {
++  if (request.method === "GET") return json({ role: await roleFor(request, env) });
++
++  if (request.method === "DELETE") {
++    return json({ role: "customer" }, 200, { "set-cookie": clearCookie() });
++  }
++  if (request.method !== "POST") return fail(405, "method_not_allowed", "Use GET, POST or DELETE.");
++
++  // Fail closed and say nothing about which secret is missing — an unconfigured
++  // site must not become an open one, nor advertise that owner access exists.
++  if (!env?.OWNER_ACCESS_CODE || !env?.OWNER_SESSION_KEY) {
++    return fail(401, "not_owner", "That code is not valid.");
++  }
++
++  const provided = String(request.headers.get(HEADER) || "").trim();
++  const ip = await ipHash(request);
++  const bucket = `owner:try:${ip}`;
++  const tries = env.KV ? Number(await env.KV.get(bucket)) || 0 : 0;
++  if (env.KV && tries >= ATTEMPT_LIMIT) {
++    return fail(429, "too_many_attempts", "Too many attempts. Try again in a minute.");
++  }
++
++  if (!(await codeMatches(env, provided))) {
++    if (env.KV) await env.KV.put(bucket, String(tries + 1), { expirationTtl: ATTEMPT_WINDOW });
++    return fail(401, "not_owner", "That code is not valid.");
++  }
++
++  if (env.KV) await env.KV.delete(bucket);
++  const exp = Math.floor(Date.now() / 1000) + MAX_AGE;
++  const token = await signClaim(env, { role: "owner", v: VERSION, exp });
++  if (!token) return fail(401, "not_owner", "That code is not valid.");
++  return json({ role: "owner", exp }, 200, { "set-cookie": sessionCookie(token) });
++}
+diff --git a/worker/usage.js b/worker/usage.js
+index c76c76f..f71d272 100644
+--- a/worker/usage.js
++++ b/worker/usage.js
+@@ -28,6 +28,7 @@
+ // stop somebody using a second browser or a second machine. Without accounts,
+ // nothing can.
+ import { fail, ipHash, json, nowIso, sha256Hex } from "./util.js";
++import { roleFor } from "./owner.js";
+ 
+ /** Change this one number to change the free allowance. */
+ export const FREE_PACKETS = 1;
+@@ -173,6 +174,8 @@ async function save(env, record, s, fp, ip, sig) {
+ export async function handleUsage(request, env, body) {
+   if (!env.FILES) return fail(503, "not_connected", "This site is not connected to its file storage yet.");
+ 
++  // Decided here, from the session cookie, before anything is counted.
++  const role = await roleFor(request, env);
+   const op = String(body.op || "status");
+   const s = readSignals(request);
+   const ip = await ipHash(request);
+@@ -182,7 +185,8 @@ export async function handleUsage(request, env, body) {
+ 
+   if (op === "status") {
+     const record = await findRecord(env, s, fp, sig);
+-    return json(view(record, sig));
++    const state = view(record, sig);
++    return json(role === "owner" ? { ...state, role, allowed: true } : { ...state, role });
+   }
+ 
+   if (op === "redeem") {
+@@ -224,6 +228,14 @@ export async function handleUsage(request, env, body) {
+   const entry = { at: nowIso(), sig, pages, ip };
+   let reason = "revision";
+ 
++  if (role === "owner") {
++    // Recorded, never counted: the owner's exports do not spend the allowance.
++    entry.owner = true;
++    record.exports = [entry, ...(record.exports || [])];
++    await save(env, record, s, fp, ip, sig);
++    return json({ ...view(record, sig), role, owner: true, allowed: true, reason: "owner" });
++  }
++
+   if (isRevision(record, sig)) {
+     entry.revision = true;
+   } else if (Number(record.credits || 0) > 0) {
+@@ -237,10 +249,10 @@ export async function handleUsage(request, env, body) {
+     entry.denied = true;
+     record.exports = [entry, ...(record.exports || [])];
+     await save(env, record, s, fp, ip, sig);
+-    return json({ ...view(record, sig), allowed: false, reason: "payment_required" });
++    return json({ ...view(record, sig), role, allowed: false, reason: "payment_required" });
+   }
+ 
+   record.exports = [entry, ...(record.exports || [])];
+   await save(env, record, s, fp, ip, sig);
+-  return json({ ...view(record, sig), allowed: true, reason });
++  return json({ ...view(record, sig), role, allowed: true, reason });
+ }
