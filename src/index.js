@@ -6,7 +6,6 @@ import {
   publicPresets,
   findPreset,
   openRouterBackedPresets,
-  withStoredPrompt,
   truthPromptInfo,
   DEFAULT_PRESET,
 } from './presets.js';
@@ -167,7 +166,7 @@ async function health(env) {
     bindings: bindingReport(env),
     // Which prompt the Truth preset actually runs, and a hash of it: enough to
     // tell the store's text from the built-in copy without publishing either.
-    truthPrompt: await truthPromptInfo(env),
+    truthPrompt: await truthPromptInfo(),
     models: {
       text: cf.TEXT_MODEL,
       asr: cf.ASR_MODEL,
@@ -375,9 +374,9 @@ async function openUpstream(
     // OpenRouter shallow-merges messages over the preset, which is exactly the
     // intent here; the preset still supplies the model and sampling params.
     // Prompts written for one provider keep the old behaviour and are stripped.
-    const storePrompt = usesPreset && preset?.systemFrom === 'store' && preset?.system;
+    const ownPrompt = usesPreset && preset?.systemFrom === 'code' && preset?.system;
     const base =
-      usesPreset && !storePrompt ? messages.filter((message) => message.role !== 'system') : messages;
+      usesPreset && !ownPrompt ? messages.filter((message) => message.role !== 'system') : messages;
     const payload = base.map((message, index) =>
       index === base.length - 1 && images.length
         ? { ...message, content: or.withImages(message.content, images) }
@@ -566,10 +565,9 @@ async function chat(request, env, ctx) {
     : pinned
       ? requestedPreset
       : (decision.preset && findPreset(decision.preset)) || requestedPreset || findPreset(DEFAULT_PRESET);
-  // The Truth Engine Prompt is read from the TEP secret here, before the cache
-  // check, so a served truth and a generated one see the same prompt. Any other
-  // preset keeps the prompt written for it.
-  const preset = await withStoredPrompt(env, chosen);
+  // Every preset carries its own prompt from src/prompts, so a served truth and a
+  // generated one see the same text and no store can substitute another.
+  const preset = chosen;
 
   // Report the preset that actually ran, not the one the decision model named:
   // they diverge whenever it suggests a preset that no longer exists.

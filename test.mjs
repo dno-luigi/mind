@@ -12,7 +12,7 @@ import { parseCookies, cookieValue, sessionCookie, clearCookie } from './src/coo
 import { DEFAULT_PRESET } from './src/presets.js';
 import { LADDER, within, decide, _resetDecisionCache } from './src/decide.js';
 import { upsertBody, upsertPath, syncPlan } from './src/preset-sync.js';
-import { PRESETS, findPreset, _resetStoredPrompt } from './src/presets.js';
+import { PRESETS, findPreset } from './src/presets.js';
 import { stateKv, objects, bindingReport } from './src/bindings.js';
 import {
   truthKey,
@@ -130,8 +130,6 @@ function fakeAI(overrides = {}) {
 function makeEnv(over = {}) {
   _resetBudget();
   _resetDecisionCache();
-  // The TEP prompt is cached per isolate like the worker caches it.
-  _resetStoredPrompt();
   // The engine switch is cached per isolate; a test that flips it must not turn
   // Cloudflare off for every test after it.
   _resetEngine();
@@ -482,16 +480,17 @@ test('a length cut on the non-stream path is an error, not a 200', async () => {
 
 test('health names which Truth prompt is in force, without the text', async () => {
   const plain = await (await call(makeEnv(), '/api/health')).json();
-  assert.equal(plain.truthPrompt.source, 'builtin');
+  assert.equal(plain.truthPrompt.source, 'code');
   assert.match(plain.truthPrompt.version, /^[0-9a-f]{12}$/);
   assert.ok(plain.truthPrompt.chars > 0);
-  assert.equal(JSON.stringify(plain).includes('verified fact'), false);
+  assert.equal(JSON.stringify(plain).includes('Truth Engine'), false);
 
-  const stored = await (
+  // The store is not consulted at all, so binding one cannot change the answer.
+  const withStore = await (
     await call(makeEnv({ TEP: { async get() { return 'A DIFFERENT CANONICAL PROMPT'; } } }), '/api/health')
   ).json();
-  assert.equal(stored.truthPrompt.source, 'store');
-  assert.notEqual(stored.truthPrompt.version, plain.truthPrompt.version);
+  assert.equal(withStore.truthPrompt.source, 'code');
+  assert.equal(withStore.truthPrompt.version, plain.truthPrompt.version);
 });
 
 test('chat rejects an unknown preset instead of silently substituting', async () => {
@@ -597,7 +596,7 @@ test('chat falls back to OpenRouter when the AI binding is absent', async () => 
   }
 });
 
-test('the openrouter rung references the preset and leaves its config alone', async () => {
+test('the openrouter rung references the preset and leaves its sampling alone', async () => {
   const original = globalThis.fetch;
   let sent = null;
   globalThis.fetch = async (url, init) => {
@@ -622,13 +621,16 @@ test('the openrouter rung references the preset and leaves its config alone', as
     // Request fields shallow-merge over the preset, so ours must be absent.
     assert.equal(sent.temperature, undefined);
     assert.equal(sent.max_tokens, undefined);
-    assert.equal(sent.messages.some((m) => m.role === 'system'), false);
+    // Truth carries its own prompt on both rungs by design; the preset still owns
+    // the model and the sampling params.
+    assert.equal(sent.messages[0].role, 'system');
+    assert.match(sent.messages[0].content, /^You are the AI-N Truth Engine/);
   } finally {
     globalThis.fetch = original;
   }
 });
 
-test('the stored truth prompt is the one openrouter sends too', async () => {
+test('the same Truth prompt is what openrouter sends', async () => {
   const original = globalThis.fetch;
   let sent = null;
   globalThis.fetch = async (url, init) => {
@@ -649,12 +651,14 @@ test('the stored truth prompt is the one openrouter sends too', async () => {
     });
     await res.text();
 
-    // The preset still owns model and sampling; the prompt is the store's.
+    // The preset still owns model and sampling; the prompt is the repo's, and a
+    // store binding is ignored rather than allowed to substitute another.
     assert.equal(sent.model, '@preset/truth');
     assert.equal(sent.temperature, undefined);
     assert.equal(sent.max_tokens, undefined);
     assert.equal(sent.messages[0].role, 'system');
-    assert.equal(sent.messages[0].content, 'ONE PROMPT FOR BOTH RUNGS');
+    assert.match(sent.messages[0].content, /^You are the AI-N Truth Engine/);
+    assert.equal(sent.messages[0].content.includes('ONE PROMPT FOR BOTH RUNGS'), false);
   } finally {
     globalThis.fetch = original;
   }
@@ -681,12 +685,11 @@ test('the workers-ai rung still uses the local prompt and sampling', async () =>
 
   const body = seen.at(-1);
   assert.equal(body.messages[0].role, 'system');
-  assert.match(body.messages[0].content, /verified fact/);
+  assert.match(body.messages[0].content, /Truth Engine/);
   assert.equal(body.temperature, 0.3);
 });
 
 test('the truth prompt comes from the TEP secret when it is bound', async () => {
-  _resetStoredPrompt();
   const seen = [];
   const env = makeEnv({
     TEP: { async get() { return '  STORED TRUTH PROMPT  '; } },
@@ -706,14 +709,13 @@ test('the truth prompt comes from the TEP secret when it is bound', async () => 
     body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth', stream: false }),
   });
 
-  assert.equal(seen.at(-1).messages[0].content, 'STORED TRUTH PROMPT');
-  // Diagnostics name the binding, never the value.
-  const health = await (await call(env, '/api/health')).json();
-  assert.equal(health.bindings.secretsStore.truthPrompt, true);
+  // The prompt the worker runs is the one in src/prompts/truth.md. A binding that
+  // answers with something else is ignored rather than substituted.
+  assert.match(seen.at(-1).messages[0].content, /^You are the AI-N Truth Engine/);
+  assert.equal(seen.at(-1).messages[0].content.includes('STORED TRUTH PROMPT'), false);
 });
 
-test('an unreadable TEP secret falls back to the built-in truth prompt', async () => {
-  _resetStoredPrompt();
+test('an unreadable TEP secret does not affect the truth prompt', async () => {
   const seen = [];
   const env = makeEnv({
     TEP: { async get() { throw new Error('denied'); } },
@@ -734,11 +736,10 @@ test('an unreadable TEP secret falls back to the built-in truth prompt', async (
   });
 
   assert.equal(res.status, 200);
-  assert.match(seen.at(-1).messages[0].content, /verified fact/);
+  assert.match(seen.at(-1).messages[0].content, /Truth Engine/);
 });
 
-test('the TEP secret never overwrites another preset prompt', async () => {
-  _resetStoredPrompt();
+test('no preset overwrites another preset prompt', async () => {
   const seen = [];
   const env = makeEnv({
     TEP: { async get() { return 'STORED TRUTH PROMPT'; } },
@@ -855,7 +856,7 @@ test('preset upserts send the prompt as a system message', () => {
   assert.equal(body.temperature, 0.3);
   // messages is ignored for storage, but a system message is extracted as system_prompt
   assert.equal(body.messages[0].role, 'system');
-  assert.match(body.messages[0].content, /verified fact/);
+  assert.match(body.messages[0].content, /Truth Engine/);
   // Not part of preset config, so it must not be sent
   assert.equal(body.max_tokens, undefined);
 });

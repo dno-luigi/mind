@@ -1,5 +1,5 @@
 import { sha256Hex } from './util.js';
-import { MNL_PROMPT, MICRO_PROMPT, DOC_PROMPT } from './prompts.js';
+import { TRUTH_PROMPT, MNL_PROMPT, MICRO_PROMPT, DOC_PROMPT } from './prompts.js';
 
 /**
  * Presets are server data: prompt + model + params, one rung per provider.
@@ -9,11 +9,12 @@ import { MNL_PROMPT, MICRO_PROMPT, DOC_PROMPT } from './prompts.js';
  * OpenRouter shallow-merges request fields over preset fields, so anything sent
  * alongside the reference replaces what the preset holds.
  *
- * The Truth prompt is not written here: it comes from the TEP secret, and that
- * one text is now used on both rungs. On Workers AI it is the system turn; on
+ * The prompts are the owner's, in src/prompts/*.md and compiled into
+ * src/prompts.js. Truth, MNL, Micro and Doc each carry their own text, and the
+ * Truth one is used on both rungs: on Workers AI it is the system turn, and on
  * OpenRouter it overrides the referenced preset's own prompt, leaving the preset
- * to supply the model and sampling params. Operator and MNL still keep a local
- * copy and the OpenRouter preset's prompt on their own rungs.
+ * to supply the model and sampling params. Operator keeps a local copy for the
+ * rung the pipeline generates on when nothing is pinned.
  */
 
 /** Used when no preset is picked and the decision model declines to route. */
@@ -32,8 +33,11 @@ export const PRESETS = [
     // 0.1 stalls on this model: a long ask can run for minutes emitting nothing.
     temperature: 0.3,
     maxTokens: 4096,
-    system:
-      'You separate verified fact from plausible inference from speculation. Label each claim, cite the reasoning, and say plainly when something cannot be known from the information given. Never invent sources. Answer at the length the request calls for: when it asks for a set number of paragraphs, words or steps, deliver all of them and label claims as you go, rather than answering in one sentence.',
+    // The owner's Truth Engine prompt (src/prompts/truth.md). `systemFrom: 'code'`
+    // tells the OpenRouter rung to send this text over the preset's own prompt, so
+    // one prompt is what answers on both rungs.
+    system: TRUTH_PROMPT,
+    systemFrom: 'code',
   },
   {
     id: 'operator',
@@ -94,59 +98,18 @@ export function findPreset(id) {
 }
 
 /**
- * The Truth Engine Prompt is a secret, not source: it lives in the account's
- * Secrets Store under the TEP binding, so it can be rewritten without a deploy
- * and never appears in this file, in git, or in a chat message.
+ * What the Truth preset will run, without the text itself: `version` identifies
+ * the prompt by hash, so an edit is visible from outside without publishing it.
  *
- * The built-in string above is the fallback, which makes every failure mode
- * boring: no binding, an empty edit, or a store that will not answer leaves the
- * truth preset answering with what it always did rather than failing.
+ * The text lives in src/prompts/truth.md. The Secrets Store binding that used to
+ * hold a prompt answered with a 24,205-character value that took most of a turn's
+ * twenty-second opening budget and was not this text, so the file is now the only
+ * source and nothing can quietly substitute something else.
  */
-export const promptStore = (env) => (typeof env?.TEP?.get === 'function' ? env.TEP : null);
-
-// One read per isolate: the secret only changes on an edit, and a healthy read
-// is worth keeping. A failed read is not cached, so the next turn retries.
-let storedPrompt = null;
-
-export async function truthPromptFromStore(env) {
-  if (storedPrompt) return storedPrompt;
-  const store = promptStore(env);
-  if (!store) return null;
-  const value = await store.get().catch(() => null);
-  const prompt = String(value ?? '').trim();
-  if (!prompt) return null;
-  storedPrompt = prompt;
-  return storedPrompt;
-}
-
-/**
- * The preset as it will actually run: the stored prompt wins when there is one.
- *
- * `systemFrom` travels with it so the provider rungs can tell a prompt that came
- * from the store from one written for a single provider. Only the Truth preset
- * reads the store: cycling through Operator or MNL must keep those prompts.
- */
-export async function withStoredPrompt(env, preset) {
-  if (!preset || preset.id !== DEFAULT_PRESET) return preset;
-  const prompt = await truthPromptFromStore(env);
-  return prompt ? { ...preset, system: prompt, systemFrom: 'store' } : preset;
-}
-
-/** Tests read the same isolate the worker does, so the cache needs a reset. */
-export function _resetStoredPrompt() {
-  storedPrompt = null;
-}
-
-/**
- * What the Truth preset will actually run, without the text itself: `source`
- * says whether the store answered, and `version` identifies the prompt by hash
- * so an edit can be seen from outside without the prompt ever being published.
- */
-export async function truthPromptInfo(env) {
-  const stored = await truthPromptFromStore(env);
-  const text = stored || BY_ID.get(DEFAULT_PRESET)?.system || '';
+export async function truthPromptInfo() {
+  const text = BY_ID.get(DEFAULT_PRESET)?.system || '';
   return {
-    source: stored ? 'store' : 'builtin',
+    source: 'code',
     version: text ? (await sha256Hex(text)).slice(0, 12) : null,
     chars: text.length,
   };

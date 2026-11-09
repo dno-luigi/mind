@@ -13,6 +13,7 @@ import path from 'node:path';
 
 const dir = path.join(import.meta.dirname, '..', 'src', 'prompts');
 const sources = [
+  ['TRUTH_PROMPT', 'truth'],
   ['MNL_PROMPT', 'mnl'],
   ['MICRO_PROMPT', 'micro'],
   ['DOC_PROMPT', 'doc'],

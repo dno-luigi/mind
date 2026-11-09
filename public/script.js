@@ -1691,6 +1691,10 @@ class App {
         const el = document.querySelector(`.flip-card[data-id="${id}"] .response-content`);
         if (el) el.innerHTML = cleanHtml;
 
+        // A document is the answer, and reading it is the whole point, so it opens
+        // fullscreen on arrival instead of waiting to be found inside a card.
+        if (!this.fullscreenId && this.looksLikeDocument(cleanText)) this.openFullscreen(id);
+
         if (this.fullscreenId === id) {
             document.getElementById('fsResponse').innerHTML = cleanHtml;
             const fsPane = document.getElementById('fsResponsePane');
