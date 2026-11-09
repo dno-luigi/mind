@@ -340,7 +340,20 @@ button.btn { padding: 10px 16px; border-radius: 8px; border: none; cursor: point
 .doc-shell { margin: 10px 0 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fff; }
 .doc-frame { display: block; width: 100%; height: 60vh; min-height: 240px; border: 0; background: #fff; }
 .doc-frame-full { height: calc(100dvh - 130px); min-height: 420px; }
-@media (max-width: 480px) { .doc-frame { height: 70vh; } }
+/* A card that holds a document is the document, not a card with a document in it:
+   the frame fills the card it is given instead of stopping at a fixed slice of
+   the viewport, which is what left the page cut short with a blank band under it.
+   In list view the card itself is given the screen, so the page scrolls inside
+   the frame the way a page should. */
+body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-height: 320px; }
+.flip-card:has(.doc-frame) .card-face { overflow: hidden; }
+.flip-card:has(.doc-frame) .response-content {
+    flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+}
+.flip-card:has(.doc-frame) .doc-shell {
+    flex: 1 1 auto; min-height: 0; margin-top: 0; display: flex; flex-direction: column;
+}
+.flip-card:has(.doc-frame) .doc-frame { flex: 1 1 auto; height: auto; min-height: 0; }
 
 /* Attachments: what is about to be sent, and what a card was made from. */
 #attachBtn, #micBtn {
