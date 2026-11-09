@@ -345,3 +345,46 @@ questions in `HANDOFF.md`, so they live here now. Neither is a rule.
    second-hand rather than verified. With a Cloudflare API token the deployed `cods`
    Worker can be pulled read-only (`tools/pull-worker.mjs`) and section 7 checked
    against what actually runs.
+
+---
+
+## 10. Open item: two publishers deploy `mind` on every push to `main`
+
+Found on 2026-11-09 while verifying the deploy of `1dcd8ae`. A push to `main` now
+reaches production twice, through two independent paths.
+
+Evidence, from the run's own step log — `deploy` run `42620458272`, commit `1dcd8ae`:
+
+| time (UTC) | event |
+| --- | --- |
+| 12:51:17 | push lands on `main` |
+| 12:51:20–21 | job set up |
+| 12:51:21.9–22.6 | checkout |
+| 12:51:22.7–36.2 | setup-node |
+| **12:51:31.17** | **version 161 published — mid `setup-node`, before `npm ci`** |
+| 12:51:36.6–43.8 | `npm ci` |
+| 12:51:43.9–45.3 | `npm test` — 111 pass, 0 fail |
+| 12:51:45.3–47.9 | `npm run build` |
+| 12:51:48.2–56.3 | Deploy step (`cloudflare/wrangler-action@v3`) |
+| **12:51:53.93** | **version 162 published — inside the Deploy step** |
+| 12:51:56.7 | job completes |
+
+Version 161 cannot come from this job: it was published eight seconds before
+`npm ci` ran, when the job had no dependencies installed. Both versions carry
+`workers/triggered_by: version_upload` and the same fourteen bindings. Version 162
+is the live one, so the tested path won that race.
+
+The two paths are (1) something reacting to the commit on the GitHub side, and (2)
+the workflow's `wrangler deploy` using `secrets.CLOUDFLARE_API_TOKEN`. Path (1) is
+not visible from this repository: the Cloudflare Builds endpoints answer
+`12006 Invalid token` for the project token, so it can be neither enumerated nor
+switched off from here — that has to happen in the worker's Git/Builds integration.
+
+Why it matters: `concurrency: deploy-main` serialises the workflow against itself and
+has no authority over the other publisher. Whichever finishes last becomes the live
+version. Today both build the same commit so the collision is silent; on a real code
+change production could land on an artifact `npm test` never touched.
+
+Decision: keep the workflow path, because it runs `npm test` and `npm run build`
+before deploying, and switch off the other. Until then, read version history knowing
+that every push to `main` publishes twice.

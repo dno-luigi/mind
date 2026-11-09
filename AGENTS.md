@@ -102,6 +102,7 @@ network or the browser. Say what was verified and what was only read.
 | `docs/JUSTICE-ECOSYSTEM-BASELINE.md` | what the `justice` Worker and its four resources actually are — bindings, IDs, auth, gaps — confirmed read-only |
 | `docs/JUSTICE-ARCHITECTURE.md` | the target EITL architecture, with §9 measuring it against the deployed system |
 | `docs/MIND-AUTHORITY.md` | what `mind` may do to subordinate projects and what it may not — inspection and instruction, never their runtime |
+| `docs/EZ-EXHIBITZ-OWNER-ENTITLEMENT.md` | the instruction for that project's owner tier: role apart from plan, server-side credential, no IP recognition |
 
 ## 6. Data and bindings
 
