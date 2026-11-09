@@ -270,7 +270,12 @@ export async function decide(
   // because a KV read can lag the write that produced it.
   if (kv) {
     const truth = await resolveTruth(env, lastUser).catch(() => null);
-    if (truth?.layer === 'master' || truth?.layer === 'provisional') {
+    // A candidate is an answer this pipeline already produced for this exact
+    // question, so it is a cache hit too. Dropping it here meant every repeated
+    // ask was generated again — and came back with a different answer, which is
+    // the one thing a cache exists to prevent. Whether a candidate is good
+    // enough to stand in for the ask is decided by the caller (a brief ask only).
+    if (truth?.layer === 'master' || truth?.layer === 'provisional' || truth?.layer === 'candidate') {
       return {
         preset: presetId || DEFAULT_PRESET,
         task: 'chat',

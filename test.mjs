@@ -1941,6 +1941,34 @@ test('candidates keep accumulating with no write route at all', async () => {
   assert.equal(candidate.suggested, true);
 });
 
+test('a repeated brief question is answered from the stored candidate', async () => {
+  const { kv } = kvStore();
+  const env = makeEnv({ MEM: kv });
+  const ask = () =>
+    call(env, '/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'what is the filing deadline' }],
+        stream: false,
+      }),
+    }).then((res) => res.json());
+
+  const first = await ask();
+  assert.notEqual(first.route, 'truth');
+
+  // The same question again must not run a model at all: the answer is stored,
+  // and with Cloudflare switched off re-running it costs money and returns
+  // something different each time.
+  const second = await ask();
+  assert.equal(second.route, 'truth');
+  assert.equal(second.model, 'candidate');
+  assert.equal(second.text, first.text);
+
+  const [candidate] = await listCandidates(env);
+  assert.equal(candidate.hits, 2);
+});
+
 
 const ENGINE_KEY = 'engine-secret';
 

@@ -588,6 +588,23 @@ async function chat(request, env, ctx) {
   const mayServeCache = !pinned || preset?.id === DEFAULT_PRESET;
   if (cachedTruth && mayServeCache) {
     const truth = decision.truth;
+    // A candidate is the answer this question got last time. Serving it is what
+    // makes a repeat free, so the repetition promotion counts has to be recorded
+    // here: a served candidate never runs the write at the end of the turn, and
+    // without this a question answered forever could never reach PROMOTE_AT.
+    if (truth.layer === 'candidate') {
+      await recordCandidate(
+        env,
+        {
+          input: question,
+          answer: truth.answer,
+          preset: preset?.id,
+          route: truth.route || 'truth',
+          model: truth.model || 'candidate',
+        },
+        ctx,
+      );
+    }
     if (!wantsStream) {
       await recordReview(
         env,
