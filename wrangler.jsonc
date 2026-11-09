@@ -34,10 +34,15 @@
     }
   ],
 
-  // TRUTH is the separate worker the standalone admin writes to. The binding
+  // Service bindings. A deploy sets bindings from this file, so anything added in
+  // the dashboard and not declared here is deleted by the next push — that is how
+  // ezxhibitz lost an R2 binding ninety minutes after it was added. Every binding
+  // the account already deploys is therefore listed below, in the shape it deploys.
+  //
+  // TRUTH is the separate worker the standalone admin writes to: the binding
   // exposes its /api/truth/* routes here, so the first cache check asks it the
-  // same question the console asks; AGENT-BROWSING is a browsing tool this app
-  // does not use. Declared in the shape the account already deploys.
+  // same question the console asks. The eight after it are not read by the code
+  // yet; they are declared so a deploy stops removing them.
   "unsafe": {
     "bindings": [
       // The agent-browsing worker: ABROWSER is this account's name for it,
@@ -62,6 +67,62 @@
         "service": "truth",
         "environment": "production",
         "entrypoint": "default"
+      },
+      // The rest of the worker-to-worker graph, as the dashboard has it. Nothing
+      // in src/ calls env.CODS, env.EZXHIBITZ, env.OPENCODE, env.PI, env.TEW,
+      // env['TRUTH-ENGINE'], env.VIBE or env.WATCHER today; declaring them keeps
+      // the deployed set stable and makes the dependency visible. Deleting any of
+      // these targets makes this worker refuse to deploy until its line is gone.
+      {
+        "name": "CODS",
+        "type": "service",
+        "service": "cods",
+        "environment": "production"
+      },
+      {
+        "name": "EZXHIBITZ",
+        "type": "service",
+        "service": "ezxhibitz",
+        "environment": "production"
+      },
+      {
+        "name": "OPENCODE",
+        "type": "service",
+        "service": "opencode-harness-example",
+        "environment": "production",
+        "entrypoint": "default"
+      },
+      {
+        "name": "PI",
+        "type": "service",
+        "service": "pi-harness-example",
+        "environment": "production",
+        "entrypoint": "default"
+      },
+      {
+        "name": "TEW",
+        "type": "service",
+        "service": "tew",
+        "environment": "production",
+        "entrypoint": "default"
+      },
+      {
+        "name": "TRUTH-ENGINE",
+        "type": "service",
+        "service": "truth-engine",
+        "environment": "production"
+      },
+      {
+        "name": "VIBE",
+        "type": "service",
+        "service": "vibe-microsite-builder",
+        "environment": "production"
+      },
+      {
+        "name": "WATCHER",
+        "type": "service",
+        "service": "sbcounty-probe",
+        "environment": "production"
       }
     ]
   },
