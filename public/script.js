@@ -46,6 +46,18 @@ const DEFAULT_PRESETS = {
     'mnl': {
         name: 'MNL',
         key: 'mnl' // OpenRouter preset slug
+    },
+    'micro': {
+        name: 'Micro',
+        key: 'micro'
+    },
+    'doc': {
+        name: 'Doc',
+        key: 'doc'
+    },
+    'tarot': {
+        name: 'Tarot',
+        key: 'tarot'
     }
 };
 

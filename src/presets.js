@@ -57,6 +57,42 @@ export const PRESETS = [
     // same on the Workers AI rung.
     system: '',
   },
+  // Micro, Doc and Tarot are OpenRouter presets in the same way Operator and MNL
+  // are: the account holds their model, prompt and sampling. Truth is the only
+  // preset this repo writes a prompt for, and it reads that from the Secrets
+  // Store. Until a Workers AI prompt is written for these three, that rung runs
+  // the default text model with no system turn — exactly what MNL does now.
+  {
+    id: 'micro',
+    name: 'Micro',
+    cf: '@cf/google/gemma-4-26b-a4b-it',
+    orPreset: 'micro',
+    or: null,
+    // Only the Workers AI rung reads these: the OpenRouter preset owns its own.
+    temperature: 0.3,
+    maxTokens: 4096,
+    system: '',
+  },
+  {
+    id: 'doc',
+    name: 'Doc',
+    cf: '@cf/google/gemma-4-26b-a4b-it',
+    orPreset: 'doc',
+    or: null,
+    temperature: 0.3,
+    maxTokens: 4096,
+    system: '',
+  },
+  {
+    id: 'tarot',
+    name: 'Tarot',
+    cf: '@cf/google/gemma-4-26b-a4b-it',
+    orPreset: 'tarot',
+    or: null,
+    temperature: 0.3,
+    maxTokens: 4096,
+    system: '',
+  },
 ];
 
 const BY_ID = new Map(PRESETS.map((p) => [p.id, p]));

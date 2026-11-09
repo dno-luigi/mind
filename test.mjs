@@ -259,8 +259,8 @@ test('health reports which rungs and bindings are live', async () => {
 test('presets never leak prompts or model slugs', async () => {
   const res = await call(makeEnv(), '/api/presets');
   const { presets } = await res.json();
-  assert.equal(presets.length, 3);
-  assert.deepEqual(presets.map((p) => p.id).sort(), ['mnl', 'operator', 'truth']);
+  assert.equal(presets.length, 6);
+  assert.deepEqual(presets.map((p) => p.id).sort(), ['doc', 'micro', 'mnl', 'operator', 'tarot', 'truth']);
   assert.deepEqual(Object.keys(presets[0]).sort(), ['id', 'name']);
 });
 
@@ -870,7 +870,14 @@ test('the sync plan covers every slugged preset and skips local-only ones', () =
   const plan = syncPlan({ model: 'openai/gpt-4o' });
   const slugged = PRESETS.filter((p) => p.orPreset);
   assert.equal(plan.length, slugged.length);
-  assert.deepEqual(plan.map((item) => item.slug).sort(), ['mnl', 'operator', 'truth']);
+  assert.deepEqual(plan.map((item) => item.slug).sort(), [
+    'doc',
+    'micro',
+    'mnl',
+    'operator',
+    'tarot',
+    'truth',
+  ]);
   assert.equal(upsertPath('truth'), '/presets/truth/chat/completions');
 });
 
