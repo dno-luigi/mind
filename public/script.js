@@ -35,10 +35,6 @@ User requests are natural language. Be efficient.`;
 // Default presets - these reference OpenRouter presets by their slug
 // Configure your presets at: https://openrouter.ai/presets
 const DEFAULT_PRESETS = {
-    'none': {
-        name: 'No preset',
-        key: null
-    },
     'truth': {
         name: 'Truth',
         key: 'truth' // OpenRouter preset slug
@@ -53,9 +49,10 @@ const DEFAULT_PRESETS = {
     }
 };
 
-// Every preset is an OpenRouter preset. Truth is also the fallback the Worker
-// uses when neither the user nor the decision model picks one, so it is the one
-// entry that cannot be deleted.
+// Every preset is an OpenRouter preset, and this table is exactly the three the
+// Worker publishes at /api/presets. Truth is also the fallback the Worker uses
+// when neither the user nor the decision model picks one, so it is the one entry
+// that cannot be deleted.
 const FALLBACK_PRESET_KEY = 'truth';
 
 // Selecting "No preset" sends this sentinel: no preset prompt, no @preset/ slug.
@@ -67,7 +64,9 @@ class App {
         this.history = [];
         this.sessionId = "sess_" + Date.now();
         this.presets = this.loadPresets();
-        this.currentPresetKey = FALLBACK_PRESET_KEY;
+        // Off is a state, not a preset: no preset is applied until one is picked,
+        // and the Worker decides the rung on its own.
+        this.currentPresetKey = NO_PRESET_KEY;
         this.theme = {
             name: 'ai-Ncards',
             primary: '#c41e3a',
@@ -140,10 +139,14 @@ class App {
                 const parsed = JSON.parse(saved);
                 for (const [key, preset] of Object.entries(parsed || {})) {
                     if (!preset || typeof preset !== 'object') continue;
+                    // "No preset" was never a preset: it is the off state, and an
+                    // older build saved it as if it were one.
+                    if (key === NO_PRESET_KEY) continue;
 
                     const copy = { ...preset, name: preset.name || key };
                     if (copy.key === null) {
-                        // "No preset" is the one entry that deliberately has no slug.
+                        // A stored entry with no slug stays as it was saved. Off is
+                        // not one of these: it has no row and no entry at all.
                     } else if (typeof copy.key === 'string' && copy.key) {
                         // Already the current shape.
                     } else if (typeof copy.prompt === 'string' && copy.prompt) {
@@ -174,8 +177,9 @@ class App {
         }
     }
 
+    /** The preset in force, or null when it is off — never a silent stand-in. */
     getCurrentPreset() {
-        return this.presets[this.currentPresetKey] || this.presets['truth'];
+        return this.presets[this.currentPresetKey] || null;
     }
 
     getCurrentSystemPrompt() {
@@ -221,12 +225,14 @@ class App {
         }
     }
 
+    /** One place decides what the bar says and whether it reads as switched on. */
     updatePresetButtonLabel() {
+        const preset = this.presets[this.currentPresetKey];
         const label = document.getElementById('currentPresetLabel');
-        if (label) {
-            const preset = this.presets[this.currentPresetKey];
-            label.textContent = preset ? preset.name : 'Default';
-        }
+        if (label) label.textContent = preset ? preset.name : 'Off';
+        const btn = document.getElementById('presetSelectorBtn');
+        // A restored preset is still on: the label and the lit state must agree.
+        if (btn) btn.classList.toggle('active', Boolean(preset));
     }
 
     /**
@@ -265,13 +271,14 @@ class App {
         
         let html = '';
         Object.entries(this.presets).forEach(([key, preset]) => {
-            const isDefault = key === FALLBACK_PRESET_KEY;
-            const isProtected = isDefault || key === NO_PRESET_KEY;
+            // Off is the default and has no row: it is not a preset. Truth stays
+            // undeletable because the Worker falls back to it.
+            const isProtected = key === FALLBACK_PRESET_KEY;
             html += `
                 <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px; background: var(--bg); border-radius: 8px; margin-bottom: 8px;">
                     <div>
                         <strong>${this.escapeHtml(preset.name)}</strong>
-                        ${isDefault ? '<span style="font-size: 11px; opacity: 0.6; margin-left: 6px;">(default)</span>' : ''}
+                        ${isProtected ? '<span style="font-size: 11px; opacity: 0.6; margin-left: 6px;">(fallback)</span>' : ''}
                     </div>
                     <div style="display: flex; align-items: center; gap: 6px;">
                         ${key === this.currentPresetKey
@@ -320,9 +327,10 @@ class App {
         
         delete this.presets[key];
         
-        // If the deleted preset was current, fall back to the protected one.
+        // If the deleted preset was current, go back to off rather than
+        // silently switching the session to a different preset.
         if (key === this.currentPresetKey) {
-            this.currentPresetKey = FALLBACK_PRESET_KEY;
+            this.currentPresetKey = NO_PRESET_KEY;
         }
         
         this.savePresets();
@@ -406,31 +414,24 @@ class App {
     }
 
     selectPresetForNextQuery(presetKey) {
-        if (!this.presets[presetKey]) return;
-        
+        const off = presetKey === NO_PRESET_KEY;
+        const preset = off ? null : this.presets[presetKey];
+        if (!off && !preset) return;
+
         this.currentPresetKey = presetKey;
-        // A pick from the menu is a choice: the Worker pins it rather than
-        // letting the decision model swap the preset out.
-        this.presetChosen = true;
-        
-        // Update button label
-        const label = document.getElementById('currentPresetLabel');
-        if (label) {
-            label.textContent = this.presets[presetKey].name;
-        }
-        
+        // A real pick is pinned, so the decision model cannot swap it out. Off
+        // is the opposite: nothing is pinned and the Worker routes the turn.
+        this.presetChosen = !off;
+
         const btn = document.getElementById('presetSelectorBtn');
         if (btn) {
-            btn.classList.add('active');
+            btn.classList.toggle('active', !off);
         }
-        
-        // Always confirm: selecting No preset changes nothing visible otherwise,
-        // which reads as the option being unselectable.
-        const preset = this.presets[presetKey];
+
         this.updatePresetButtonLabel();
         this.saveState();
         this.renderPresetsList();
-        this.showToast(`Preset set: ${preset.name}`);
+        this.showToast(off ? 'Preset off' : `Preset set: ${preset.name}`);
     }
 
     openPresetSelectModal() {
@@ -678,12 +679,11 @@ class App {
                     this.settings = { ...this.settings, ...data.settings };
                     this.sessionId = data.sessionId || this.sessionId;
 
-                    // Restore the selected preset, but only if it still exists.
-                    if (data.currentPresetKey && this.presets[data.currentPresetKey]) {
+                    // Restore the selection: off, or a preset that still exists.
+                    if (data.currentPresetKey === NO_PRESET_KEY || this.presets[data.currentPresetKey]) {
                         this.currentPresetKey = data.currentPresetKey;
-                    }
-                    if (!this.presets[this.currentPresetKey]) {
-                        this.currentPresetKey = FALLBACK_PRESET_KEY;
+                    } else {
+                        this.currentPresetKey = NO_PRESET_KEY;
                     }
                 } catch (e) {
                     console.error("Load failed", e);
