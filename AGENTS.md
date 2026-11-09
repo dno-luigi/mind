@@ -1,10 +1,3 @@
-Understood — `mind` is authoritative, and the other repo appears in that file as a capability inventory, not its own rulebook. Let me ground the mind half in what this repo actually is before I write it.
-
-This changes the design in an important way: if one file governs both repos, it has to be the only place the rules live, and `cods` needs a one-line pointer here or an agent opened in that repo never sees it. Writing the file now, with `cods` as an inventory rather than a second rulebook.
-
-My file-writing tools aren't available in this session right now (the workspace tools are unavailable), so here's the full draft inline — paste it as `AGENTS.md` at the root of `mind`, or switch this chat to Build and I'll write it directly and show it in the file panel.
-
-```markdown
 # AGENTS.md
 
 Rules and map for this repository, written for an agent starting cold. Read this,
@@ -27,8 +20,28 @@ anyone editing this file, it does not belong here.
    `.github/workflows/deploy.yml` runs `npm ci` → `npm test` → `npm run build` →
    `wrangler deploy`. Treat a push as a deploy. Cloudflare API writes, uploads and
    deletes are always off-limits without an explicit request.
-2. **The brand and domain are `ai-nspired.com`.** One "i", never "inspired". Copy
-   it from this line, never from memory.
+2. **Brand identity — exact spelling and pronunciation.**
+   - Emerging brand: `nspired.cc`. New brand architecture, new documentation and new
+     interfaces use it. It is the direction of travel, not a settled replacement.
+   - Current identity during the transition: `AI-Nspired` at `ai-nspired.com` — correct
+     for today's prose and URLs, not permanently canonical. Do not present the old brand
+     as the settled name, and do not retro-edit historical references.
+   - Brand name: `AI-Nspired`
+   - Pronunciation: “A-I inspired” — say A-I as two letters, then the word “inspired”.
+   - Exact spelling: `AI-Nspired` — A-I, hyphen, Nspired. The hyphen is part of the name,
+     not a separator you may move or drop.
+   - One string, three capitalisations: `AI-Nspired`, `ai-Nspired`, `ai-nspired`.
+     Same letters, same hyphen, only case differs; `ai-nspired.com` is the
+     all-lowercase form of `AI-Nspired` — one string, never re-hyphenated, never a
+     different word.
+   - Primary domain: `ai-nspired.com` — current; legacy during the transition.
+   - Use `AI-Nspired` in prose and branding; use lowercase `ai-nspired.com` in URLs.
+   - Never substitute `Inspired`, `AI Inspired`, or `AI-Inspired` for the brand name:
+     those are different letters, so they name a different word.
+   - Preserve this spelling in generated documentation, interfaces, metadata,
+     prompts, agent responses, and speech-oriented output.
+   - This rule does not rename the product: `ai-Ncards` is the product name today,
+     and its relationship to `nspired.cc` is a separate product-naming decision.
 3. **Do not create workers.** The account already has more than it needs; fix the
    ones that exist. `PROJECTS.md` has the current count and never drifts.
 4. **Ask before changing code or stored data.** One question, then continue. Do not
@@ -82,6 +95,8 @@ network or the browser. Say what was verified and what was only read.
 | `test.mjs` | all tests |
 | `PROJECTS.md` | every Worker and repo, plus which of them have README/AGENTS — generated, never hand-edited |
 | `scripts/overview.mjs` | rebuilds `PROJECTS.md` from the account and GitHub |
+| `docs/JUSTICE-ECOSYSTEM-BASELINE.md` | what the `justice` Worker and its four resources actually are — bindings, IDs, auth, gaps — confirmed read-only |
+| `docs/JUSTICE-ARCHITECTURE.md` | the target EITL architecture, with §9 measuring it against the deployed system |
 
 ## 6. Data and bindings
 
@@ -163,10 +178,3 @@ from its 2026-10-31 handoff.
 Invariants only, one line each, no line numbers, no counts that drift, no open
 questions (those belong in `HANDOFF.md`). Delete a rule when it stops being true —
 a stale rule is worse than no rule.
-```
-
-Two things about the hierarchy mechanism, since it decides whether this actually works:
-
-- An agent opened **in** `cods` never sees a file in `mind`. That repo needs its own three-line `AGENTS.md`: "Rules live in `dno-luigi/mind` `AGENTS.md`; read it first. This repo is described in §7 there. Nothing here overrides it."
-- I can't read `cods` from this workspace (separate repo, separate worktree), so §7 is built from your handoff text, and I've labelled it that way rather than presenting it as verified.
-

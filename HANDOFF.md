@@ -325,3 +325,23 @@ Ready-to-paste brief for the next agent:
 > overwriting a stored pair. `mind` must not gain a truth-write route; the console
 > edits through the separate `truth` worker. Keep `npm test` (71) and `npm run build`
 > green.
+
+---
+
+## 9. Open items moved out of `AGENTS.md`
+
+These sat at the bottom of `AGENTS.md` as prose. Section 10 of that file keeps open
+questions in `HANDOFF.md`, so they live here now. Neither is a rule.
+
+1. **`cods` needs its own pointer file.** An agent opened *in* `cods`, or in another
+   cf repo, never sees a file inside `mind`. For section 7 there to reach it, that repo
+   needs a three-line `AGENTS.md`:
+
+   > Rules live in `dno-luigi/mind` `AGENTS.md`; read it first. This repo is described
+   > in section 7 there. Nothing here overrides it.
+
+2. **Section 7 came from handoff text, not from the code.** `cods` is a separate repo
+   and was not readable from the `mind` workspace, so that section is labelled
+   second-hand rather than verified. With a Cloudflare API token the deployed `cods`
+   Worker can be pulled read-only (`tools/pull-worker.mjs`) and section 7 checked
+   against what actually runs.
