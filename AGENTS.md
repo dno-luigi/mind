@@ -11,6 +11,10 @@ anyone editing this file, it does not belong here.
 - `cods` appears in §7 as a capability inventory, not a second rulebook. These
   rules apply when working there too; its own `AGENTS.md` is a three-line pointer
   back to this one, so an agent opened in that repo still finds the rules.
+- Supervisory authority: `mind` inspects, audits and sets standards for the
+  ecosystem, and may write the agent instruction files of subordinate projects. It
+  does not own their runtime — deployment, source, data and enforcement stay with
+  them. The full charter is `docs/MIND-AUTHORITY.md`.
 - The code is the truth. When this file and the code disagree, say so and fix the
   file in the same change.
 
@@ -97,6 +101,7 @@ network or the browser. Say what was verified and what was only read.
 | `scripts/overview.mjs` | rebuilds `PROJECTS.md` from the account and GitHub |
 | `docs/JUSTICE-ECOSYSTEM-BASELINE.md` | what the `justice` Worker and its four resources actually are — bindings, IDs, auth, gaps — confirmed read-only |
 | `docs/JUSTICE-ARCHITECTURE.md` | the target EITL architecture, with §9 measuring it against the deployed system |
+| `docs/MIND-AUTHORITY.md` | what `mind` may do to subordinate projects and what it may not — inspection and instruction, never their runtime |
 
 ## 6. Data and bindings
 
