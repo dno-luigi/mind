@@ -505,6 +505,8 @@
     </div>
     <label for="adminKey">ADMIN_KEY</label>
     <input type="password" id="adminKey" placeholder="the value you set with wrangler secret put ADMIN_KEY" autocomplete="current-password">
+    <label for="truthKeyGate">Truth worker key (only if it differs)</label>
+    <input type="password" id="truthKeyGate" placeholder="leave empty when both workers share one key" autocomplete="off">
     <div class="melody-btns">
       <button id="adminUnlockBtn">Unlock Console</button>
       <button id="adminForgetBtn">Forget Key</button>
@@ -682,6 +684,12 @@
         // editor's key should already be loaded.
         clearRows();
         loadAll();
+        // The truth worker has its own ADMIN_KEY. One password on both workers is
+        // the common case, so carry the console key across; a different one is
+        // typed in the gate or in the editor and never guessed after this point.
+        const gateTruthKey = (document.getElementById('truthKeyGate').value || '').trim();
+        if (!truthKeyInput.value) truthKeyInput.value = gateTruthKey || adminKey;
+        if (truthKeyInput.value) sessionStorage.setItem('mind-truth-key', truthKeyInput.value);
         if (document.getElementById('query').value.trim()) {
           document.getElementById('loadBtn').click();
         }
@@ -1065,9 +1073,14 @@
 
         if (resp.status === 401) {
           sessionStorage.removeItem('mind-truth-key');
+          truthKeyInput.value = "";
           saveMsg.textContent =
-            "Rejected (401): the truth worker wants its own ADMIN_KEY. Enter it in " +
-            "\"Truth worker key\" above - it can differ from the console key.";
+            "Rejected (401): the truth worker wants its own ADMIN_KEY, not the console key. " +
+            "Type it into \"Truth worker key\" (the password box just above Save), then press Save again.";
+          // The box sits above Save, off-screen on a phone: bring it into view and
+          // put the cursor in it rather than leaving the user hunting for it.
+          truthKeyInput.scrollIntoView({ block: 'center' });
+          truthKeyInput.focus();
           return;
         }
 
