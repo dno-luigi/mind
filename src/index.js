@@ -1,6 +1,6 @@
 import { json, fail, has, options, b64FromBytes, bytesFromB64, clientIp, keyMatches } from './util.js';
 import { charge } from './budget.js';
-import { askAra, reportOutcome } from './ara.js';
+import { askAra, reportOutcome, sendVerdict } from './ara.js';
 import { stateKv, objects, bindingReport, browserBinding, browsingServiceName } from './bindings.js';
 import { engineFor, setEngineFor, canUseCloudflare } from './engine.js';
 import {
@@ -94,6 +94,22 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === 'OPTIONS') return options();
+
+    if (url.pathname === '/api/verdict' && request.method === 'POST') {
+      let verdict = {};
+      try {
+        verdict = await request.json();
+      } catch {
+        return fail(400, 'invalid_json', 'Send { id, correct, correctedTo }.');
+      }
+      const sent = await sendVerdict(env, {
+        id: verdict.id,
+        correct: verdict.correct,
+        correctedTo: verdict.correctedTo ?? null,
+      });
+      if (!sent) return fail(502, 'verdict_failed', 'Her row did not take the verdict.');
+      return json({ ok: true, id: verdict.id, correct: !!verdict.correct, correctedTo: verdict.correctedTo ?? null });
+    }
 
     if (url.pathname.startsWith('/api/')) {
       try {

@@ -52,3 +52,20 @@ export async function reportOutcome(env, id, what = {}) {
     return false;
   }
 }
+
+/** His verdict on a decision, in his words, sent to the row that made it. */
+export async function sendVerdict(env, { id, correct, correctedTo = null } = {}) {
+  const binder = env && env.ARA;
+  if (!binder || typeof binder.fetch !== 'function' || id == null || correct == null) return false;
+  try {
+    const response = await binder.fetch('https://ara/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, correct, correctedTo }),
+      signal: AbortSignal.timeout(3000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
