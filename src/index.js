@@ -620,10 +620,19 @@ async function chat(request, env, ctx) {
   const ara = await askAra(env, question || lastUser, 'general', body.araChoice || null, peeked);
   if (!ara.ok) return fail(502, 'ara_no_decision', `ARA did not decide (${ara.reason}).`);
   // She is unsure: he is asked on a card, and no model is called behind her.
+  // Her "nothing stored under that key" card waits: the pair may be in truth and
+  // not in this worker's store, and she should not say there is none until that
+  // is settled. Every other question she asks stops the request here.
+  let noPairCard = null;
   if (ara.clarify) {
+    const askedFirst = (ara.clarify.questions || [])[0] || null;
+    const offers = (askedFirst && askedFirst.options) || [];
+    const looksNoPair =
+      offers.some((o) => o && o.value === 'none') && offers.some((o) => o && o.value === 'write');
+    if (!looksNoPair) {
     // Streamed, because the client reads this endpoint as events: a bare JSON
     // body looked like nothing had happened.
-    const question = (ara.clarify.questions || [])[0] || null;
+    const question = askedFirst;
     // Her words first, then the options: a card with an empty pane is not a card.
     const said = ara.clarify.text || (question && question.q) || '';
     const body = [
@@ -634,6 +643,8 @@ async function chat(request, env, ctx) {
       '',
     ].join('\n\n');
     return new Response(body + '\n', { headers: SSE_HEADERS });
+    }
+    noPairCard = ara;
   }
 
   // A preset the user picked wins; decide() only fills the gap.
@@ -704,6 +715,23 @@ async function chat(request, env, ctx) {
       ].join('\n\n');
       return new Response(payload + '\n', { headers: SSE_HEADERS });
     }
+  }
+
+  // Nothing to look at: now her card about the key is the right answer.
+  // A pair written by this request is not a pair he has: she asked what to do
+  // about the key, and that answer still stands.
+  const writtenJustNow = !servedPair || !servedPair.origin || servedPair.origin.fresh === true;
+  if (noPairCard && writtenJustNow) {
+    const asked = (noPairCard.clarify.questions || [])[0] || null;
+    const said = noPairCard.clarify.text || (asked && asked.q) || '';
+    const payload = [
+      ...(said ? [`data: ${JSON.stringify({ type: 'delta', text: said })}`, ''] : []),
+      `data: ${JSON.stringify({ type: 'clarify', question: asked, ara: { id: noPairCard.id, move: noPairCard.move } })}`,
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n\n');
+    return new Response(payload + '\n', { headers: SSE_HEADERS });
   }
 
   const wantsStream = body.stream !== false;
