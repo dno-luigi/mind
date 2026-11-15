@@ -9,7 +9,7 @@
  * Unbound (tests, local dev) falls through untouched, so nothing that already
  * works starts failing for want of a binding.
  */
-export async function askAra(env, text, domain = 'mind', choice = null) {
+export async function askAra(env, text, domain = 'mind', choice = null, stored = null) {
   const binder = env && env.ARA;
   if (!binder || typeof binder.fetch !== 'function') {
     return { ok: true, bound: false, id: null, move: null, route: null };
@@ -24,6 +24,7 @@ export async function askAra(env, text, domain = 'mind', choice = null) {
         domain: 'mind',
         surface: 'mind',
         ...(choice ? { choice } : {}),
+        ...(stored ? { stored } : {}),
       }),
       signal: AbortSignal.timeout(8000),
     });

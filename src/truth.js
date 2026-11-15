@@ -728,3 +728,32 @@ export async function listCandidates(env, { limit = 40 } = {}) {
 
   return out.sort((a, b) => (b.hits || 0) - (a.hits || 0));
 }
+
+/**
+ * What is already stored for this ask, read from KV only. No service call and no
+ * generation: this is the pair she is shown before she decides, so a stored
+ * non-answer can be judged before anything is written.
+ */
+export async function peekTruth(env, input) {
+  const mem = stateKv(env);
+  const master = masterKv(env);
+  const query = truthKey(input);
+  if (!query) return null;
+
+  const stores = [master, mem].filter((store, index, all) => store && all.indexOf(store) === index);
+  if (!stores.length) return null;
+
+  const id = await sha256Hex(query);
+  const layers = ['master', 'provisional', 'candidate'];
+  const keys = [truthKeyOf('master', id), truthKeyOf('provisional', id), candidateKey(id)];
+
+  const reads = [];
+  for (const store of stores) keys.forEach((key, i) => reads.push(readTruth(store, key, layers[i], id, query)));
+  const hits = (await Promise.all(reads)).filter(Boolean);
+
+  for (const layer of layers) {
+    const hit = hits.find((entry) => entry.layer === layer);
+    if (hit) return { layer: hit.layer, answer: hit.answer, id: hit.id, key: hit.key || null };
+  }
+  return null;
+}
