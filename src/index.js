@@ -743,7 +743,11 @@ async function chat(request, env, ctx) {
       });
       if (card.clarify) {
         const asked = (card.clarify.questions || [])[0] || null;
+        const said = card.clarify.text || (asked && asked.q) || '';
         const payload = [
+          `data: ${JSON.stringify({ type: 'meta', route: 'truth', model: truth.layer, preset: preset?.id ?? null, decision: reported })}`,
+          '',
+          ...(said ? [`data: ${JSON.stringify({ type: 'delta', text: said })}`, ''] : []),
           `data: ${JSON.stringify({ type: 'clarify', question: asked, ara: { id: card.id, move: card.move } })}`,
           '',
           'data: [DONE]',
