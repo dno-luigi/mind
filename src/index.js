@@ -679,6 +679,33 @@ async function chat(request, env, ctx) {
       route: decision.task || null,
     });
   }
+  // Any pair he did not author and nobody verified is her call before it is
+  // served. Master truth is never second-guessed.
+  const servedPair = decision.truth && decision.truth.answer ? decision.truth : null;
+  const unverifiedPair = servedPair && servedPair.layer !== 'master' && !(servedPair.origin && servedPair.origin.verified === true);
+  if (unverifiedPair && !body.araChoice) {
+    const card = await askAra(env, question || lastUser, 'general', null, {
+      layer: servedPair.layer,
+      answer: servedPair.answer,
+      key: servedPair.key || null,
+      id: servedPair.id || null,
+    });
+    if (card.clarify) {
+      const asked = (card.clarify.questions || [])[0] || null;
+      const said = card.clarify.text || (asked && asked.q) || '';
+      const payload = [
+        `data: ${JSON.stringify({ type: 'meta', route: 'truth', model: servedPair.layer, preset: preset?.id ?? null, decision: reported })}`,
+        '',
+        ...(said ? [`data: ${JSON.stringify({ type: 'delta', text: said })}`, ''] : []),
+        `data: ${JSON.stringify({ type: 'clarify', question: asked, ara: { id: card.id, move: card.move } })}`,
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n\n');
+      return new Response(payload + '\n', { headers: SSE_HEADERS });
+    }
+  }
+
   const wantsStream = body.stream !== false;
 
   // She routes, so this is where her answer changes what happens rather than
@@ -732,38 +759,6 @@ async function chat(request, env, ctx) {
   if (cachedTruth && mayServeCache && hisChoice !== 'write') {
     const truth = decision.truth;
 
-    // An unverified pair is not an answer until she has looked at it. She gets
-    // the pair itself, and if she says it asks him back, her card goes out in
-    // place of the stored text. Master truth is never second-guessed.
-    // Not "ends with a question mark": any pair he did not author and nobody
-    // verified is her call to make, whatever shape it is in.
-    const unverified = truth.layer !== 'master' && !(truth.origin && truth.origin.verified === true);
-    if (unverified && !hisChoice) {
-      const card = await askAra(env, question || lastUser, 'general', null, {
-        layer: truth.layer,
-        answer: truth.answer,
-        key: truth.key || null,
-        id: truth.id || null,
-      });
-      if (card.clarify) {
-        const asked = (card.clarify.questions || [])[0] || null;
-        const said = card.clarify.text || (asked && asked.q) || '';
-        const payload = [
-          `data: ${JSON.stringify({ type: 'meta', route: 'truth', model: truth.layer, preset: preset?.id ?? null, decision: reported })}`,
-          '',
-          ...(said ? [`data: ${JSON.stringify({ type: 'delta', text: said })}`, ''] : []),
-          `data: ${JSON.stringify({ type: 'clarify', question: asked, ara: { id: card.id, move: card.move } })}`,
-          '',
-          'data: [DONE]',
-          '',
-        ].join('\n\n');
-        return new Response(payload + '\n', { headers: SSE_HEADERS });
-      }
-    }
-    // A candidate is the answer this question got last time. Serving it is what
-    // makes a repeat free, so the repetition promotion counts has to be recorded
-    // here: a served candidate never runs the write at the end of the turn, and
-    // without this a question answered forever could never reach PROMOTE_AT.
     if (truth.layer === 'candidate') {
       await recordCandidate(
         env,
