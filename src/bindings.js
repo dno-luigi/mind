@@ -32,9 +32,22 @@ export const browserBinding = (env) => env?.BROWSER || env?.MYBROWSER || null;
 
 /**
  * The agent-browsing worker, which does the reading rather than the rendering.
- * ABROWSER is this account's name for it; AGENT-BROWSING is the older spelling.
+ * This deployment names it ABROWSER and AGENT-BROWSER; AGENT-BROWSING is the
+ * older spelling, and the short one is accepted so a config slip cannot leave the
+ * agent unreachable at runtime. The same binding can appear twice — callers get
+ * whichever name actually resolved.
  */
-export const browsingService = (env) => env?.ABROWSER || env?.['AGENT-BROWSING'] || null;
+export const browsingService = (env) =>
+  env?.ABROWSER || env?.ABROSWER || env?.['AGENT-BROWSER'] || env?.['AGENT-BROWSING'] || null;
+
+/** The name the agent binding resolved under, for /api/health. */
+export function browsingServiceName(env) {
+  if (env?.ABROWSER) return 'ABROWSER';
+  if (env?.ABROSWER) return 'ABROSWER';
+  if (env?.['AGENT-BROWSER']) return 'AGENT-BROWSER';
+  if (env?.['AGENT-BROWSING']) return 'AGENT-BROWSING';
+  return null;
+}
 
 /** What is actually attached, by its deployed name, for /api/health. */
 export function bindingReport(env) {

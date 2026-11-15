@@ -536,6 +536,148 @@ class App {
                 </a>`;
     }
 
+    /* ─── mini web browser ─── */
+    // A page inside the app: address bar, history, a live frame, and a picture for
+    // sites that refuse to be framed. The picture comes from this Worker's own
+    // /api/shot, so no page HTML is ever proxied through here.
+    mb = { history: [], at: -1, mode: 'live' };
+
+    mbModes = ['live', 'picture', 'text'];
+
+    openBrowser(startUrl) {
+        let el = document.getElementById('miniBrowser');
+        if (!el) el = this.buildMiniBrowser();
+        el.classList.add('show');
+        if (startUrl) this.mbGo(startUrl);
+        else setTimeout(() => { const i = document.getElementById('mbUrl'); if (i) i.focus(); }, 60);
+    }
+
+    closeBrowser() {
+        const el = document.getElementById('miniBrowser');
+        if (el) el.classList.remove('show');
+    }
+
+    normalizeUrl(raw) {
+        const t = String(raw || '').trim();
+        if (!t) return '';
+        if (/^https?:\/\//i.test(t)) return t;
+        if (/^[\w-]+(\.[\w-]+)+([/?#].*)?$/i.test(t)) return 'https://' + t;
+        return 'https://duckduckgo.com/?q=' + encodeURIComponent(t);
+    }
+
+    buildMiniBrowser() {
+        const el = document.createElement('div');
+        el.id = 'miniBrowser';
+        el.className = 'mb-overlay';
+        el.innerHTML =
+            '<div class="mb-shell">' +
+            '<div class="mb-bar">' +
+            '<button type="button" id="mbBack" title="Back"><i class="fas fa-arrow-left"></i></button>' +
+            '<button type="button" id="mbFwd" title="Forward"><i class="fas fa-arrow-right"></i></button>' +
+            '<button type="button" id="mbReload" title="Reload"><i class="fas fa-rotate-right"></i></button>' +
+            '<input id="mbUrl" type="text" spellcheck="false" autocomplete="off" placeholder="Address or search">' +
+            '<button type="button" class="mb-go" id="mbGo" title="Go"><i class="fas fa-arrow-right"></i></button>' +
+            '<button type="button" id="mbMode" title="Live page or picture"><i class="fas fa-image"></i></button>' +
+            '<a id="mbTab" target="_blank" rel="noopener noreferrer" title="Open in a tab"><i class="fas fa-up-right-from-square"></i></a>' +
+            '<button type="button" id="mbClose" title="Close"><i class="fas fa-times"></i></button>' +
+            '</div>' +
+            '<div class="mb-view" id="mbView"></div>' +
+            '<div class="mb-note" id="mbNote"></div>' +
+            '</div>';
+        document.body.appendChild(el);
+
+        const input = document.getElementById('mbUrl');
+        if (input) {
+            input.addEventListener('keydown', (e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') { e.preventDefault(); this.mbGo(input.value); }
+                if (e.key === 'Escape') { e.preventDefault(); this.closeBrowser(); }
+            });
+        }
+        const on = (id, fn) => { const b = document.getElementById(id); if (b) b.addEventListener('click', fn); };
+        on('mbGo', () => this.mbGo(input ? input.value : ''));
+        on('mbBack', () => this.mbNav(-1));
+        on('mbFwd', () => this.mbNav(1));
+        on('mbReload', () => this.mbRender());
+        on('mbMode', () => {
+            const i = this.mbModes.indexOf(this.mb.mode);
+            this.mb.mode = this.mbModes[(i + 1) % this.mbModes.length];
+            this.mbRender();
+        });
+        on('mbClose', () => this.closeBrowser());
+        return el;
+    }
+
+    mbGo(raw) {
+        const url = this.normalizeUrl(raw);
+        if (!url) return;
+        this.mb.history = this.mb.history.slice(0, this.mb.at + 1);
+        this.mb.history.push(url);
+        this.mb.at = this.mb.history.length - 1;
+        this.mbRender();
+    }
+
+    mbNav(step) {
+        const next = this.mb.at + step;
+        if (next < 0 || next >= this.mb.history.length) return;
+        this.mb.at = next;
+        this.mbRender();
+    }
+
+    mbRender() {
+        const view = document.getElementById('mbView');
+        const input = document.getElementById('mbUrl');
+        const note = document.getElementById('mbNote');
+        const tab = document.getElementById('mbTab');
+        const url = this.mb.history[this.mb.at] || '';
+        if (input) input.value = url;
+        if (tab) tab.href = url || '#';
+        const back = document.getElementById('mbBack');
+        const fwd = document.getElementById('mbFwd');
+        if (back) back.disabled = this.mb.at <= 0;
+        if (fwd) fwd.disabled = this.mb.at >= this.mb.history.length - 1;
+        if (!view) return;
+        view.innerHTML = '';
+        if (!url) {
+            if (note) note.textContent = 'Type an address, or a search, and press Enter.';
+            return;
+        }
+        if (this.mb.mode === 'text') {
+            const pre = document.createElement('pre');
+            pre.className = 'mb-text';
+            pre.textContent = 'Reading the page…';
+            view.appendChild(pre);
+            const base = this.getProxyUrl().replace(/\/api\/chat$/, '');
+            fetch(base + '/api/page?url=' + encodeURIComponent(url))
+                .then((r) => r.json())
+                .then((d) => {
+                    pre.textContent = d && d.text ? d.text : 'That page gave no words (' + ((d && d.error) || 'empty') + ').';
+                })
+                .catch((e) => { pre.textContent = 'That page could not be read: ' + e.message; });
+            if (note) note.textContent = 'Text mode: the page as words, no pictures and no scripts.';
+            return;
+        }
+        if (this.mb.mode === 'picture') {
+            const img = document.createElement('img');
+            img.className = 'mb-shot';
+            img.alt = 'Picture of ' + url;
+            img.src = this.shotUrl(url);
+            img.addEventListener('error', () => {
+                if (note) note.textContent = 'That page would not render. It may be private, behind a login, or too slow.';
+            });
+            view.appendChild(img);
+            if (note) note.textContent = 'Picture mode: this is how the Worker sees the page. Mode again for its words.';
+        } else {
+            const frame = document.createElement('iframe');
+            frame.className = 'mb-frame';
+            frame.setAttribute('referrerpolicy', 'no-referrer');
+            frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox');
+            frame.src = url;
+            view.appendChild(frame);
+            if (note) note.textContent = 'Live page. Sites that forbid framing stay blank — cycle the mode for a picture or the words.';
+        }
+    }
+
     bindEvents() {
         const sendBtn = document.getElementById('sendBtn');
         sendBtn.addEventListener('click', () => this.handleSendClick());

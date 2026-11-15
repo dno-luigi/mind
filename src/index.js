@@ -1,6 +1,6 @@
 import { json, fail, has, options, b64FromBytes, bytesFromB64, clientIp, keyMatches } from './util.js';
 import { charge } from './budget.js';
-import { stateKv, objects, bindingReport, browserBinding } from './bindings.js';
+import { stateKv, objects, bindingReport, browserBinding, browsingServiceName } from './bindings.js';
 import { engineFor, setEngineFor, canUseCloudflare } from './engine.js';
 import {
   publicPresets,
@@ -15,6 +15,7 @@ import { decide, recordReview, within } from './decide.js';
 import { recordCandidate, questionOf } from './truth.js';
 import { adminUnlock, adminListKeys, adminReadKey, adminQueue } from './admin.js';
 import { shot } from './shot.js';
+import { readPage } from './page.js';
 import { wavInfo, wavChunks } from './audio.js';
 import { extractText } from './extract.js';
 import { sessionCookie, clearCookie, tokenFrom } from './cookie.js';
@@ -135,6 +136,12 @@ async function route(request, env, ctx, url) {
   if (path === '/api/session' && method === 'GET') return sessionRoute(request, env);
   // Headless screenshots. Billed per browser-second, so one page, one shot, closed.
   if (path === '/api/shot' && method === 'GET') return shot(url, env, ctx);
+  // The same page as words: what the mini browser's text mode shows, and what an
+  // agent reads when a question names a URL. One launch, one close, capped text.
+  if (path === '/api/page' && method === 'GET') {
+    const page = await readPage(env, url.searchParams.get('url') || '');
+    return json(page, { status: page.ok ? 200 : 400 });
+  }
 
   // The console reads the store; it still cannot write one. Every route below
   // needs ADMIN_KEY, and an unset key fails closed rather than open.
@@ -191,6 +198,8 @@ async function health(env) {
       truth: Boolean(kv),
       // Browser Rendering is opt-in: no binding, no /api/shot.
       screenshots: Boolean(browserBinding(env)),
+      // The agent-browsing service, by whichever name this deployment gave it.
+      agentBrowse: browsingServiceName(env),
       // Uploads are stored in R2; documents are read as text on the way in.
       documents: Boolean(bucket),
       // Login needs both the Durable Object and the shared password.

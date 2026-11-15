@@ -405,3 +405,96 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
     #attachBtn, #micBtn { width: 40px; height: 40px; }
     #inputPanel { gap: 6px; }
 }
+
+/* ─── mini web browser ─── */
+.mb-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    display: none;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: blur(6px);
+}
+
+.mb-overlay.show { display: block; }
+
+.mb-shell {
+    position: absolute;
+    inset: 3vh 2vw;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card-bg);
+    overflow: hidden;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, .45);
+}
+
+.mb-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+.mb-bar button, .mb-bar a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.mb-bar button:disabled { opacity: .35; cursor: default; }
+.mb-bar button:hover:not(:disabled), .mb-bar a:hover { border-color: var(--primary); }
+.mb-bar .mb-go { border-color: color-mix(in srgb, var(--primary) 60%, var(--border)); }
+
+.mb-bar input {
+    flex: 1;
+    min-width: 0;
+    height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    outline: none;
+}
+
+.mb-bar input:focus { border-color: var(--primary); }
+
+.mb-view { flex: 1; min-height: 0; position: relative; background: #fff; }
+.mb-frame { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+.mb-shot { width: 100%; height: 100%; object-fit: contain; object-position: top center; background: var(--bg); }
+
+.mb-note {
+    padding: 6px 12px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    opacity: .65;
+}
+
+@media (max-width: 700px) {
+    .mb-shell { inset: 0; border-radius: 0; border: none; }
+}
+
+.mb-text {
+    margin: 0;
+    padding: 16px 18px;
+    height: 100%;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: var(--card-bg);
+    color: var(--text);
+    font: 13px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
