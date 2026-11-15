@@ -71,7 +71,7 @@ const TRUTH_SCAN_LIMIT = 500;
 const TRUTH_SCAN_READS = 30;
 
 /** Keys this app writes itself. None of them is a stored truth. */
-const INTERNAL_PREFIXES = ['candidate:', 'decision:', 'review:', 'budget:', 'tts:', 'upload:', 'obj:', 'index:'];
+const INTERNAL_PREFIXES = ['candidate:', 'style:', 'decision:', 'review:', 'budget:', 'tts:', 'upload:', 'obj:', 'index:'];
 
 /** Queries that already proved empty in this isolate, so a miss scans once. */
 const SCAN_MISSES = new Set();
@@ -489,6 +489,112 @@ export async function recordCandidate(env, { input, answer, preset, route, model
     });
   }
 
+  return record;
+}
+
+/**
+ * The confidence an answer reports about itself. This reads the model's own
+ * number and clamps it; nothing here judges an answer.
+ */
+export function confidenceOf(text) {
+  const match = String(text || '').match(/confidence\s*[:=]\s*(\d{1,3}(?:\.\d+)?)\s*%?/i);
+  if (!match) return null;
+  let value = Number(match[1]);
+  if (!Number.isFinite(value)) return null;
+  // 0.82 and 82% are the same statement.
+  if (value <= 1 && match[1].includes('.')) value *= 100;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+export const styleKey = (id) => `style:${id}`;
+
+/**
+ * A style answer is generated every time, never served, so it is not a cache.
+ * It is kept so the population follows the palette: the stored answer is
+ * replaced only when the new one reports a higher confidence, and the one that
+ * lost stays beside it with its own number. Both are always logged, and the
+ * number compared is the model's own — this file computes no score.
+ */
+export async function recordStyleCandidate(env, { input, answer, confidence, preset, route, model }) {
+  const kv = stateKv(env);
+  const query = truthKey(input);
+  const text = String(answer || '').trim();
+  if (!kv || !query || !text) return null;
+
+  const id = await sha256Hex(query);
+  const key = styleKey(id);
+  const now = new Date().toISOString();
+
+  let previous = null;
+  try {
+    previous = JSON.parse((await kv.get(key)) || 'null');
+  } catch {
+    previous = null;
+  }
+
+  const stored = typeof previous?.answer === 'string' ? previous.answer.trim() : '';
+  const storedConfidence = typeof previous?.confidence === 'number' ? previous.confidence : null;
+  const incoming = typeof confidence === 'number' ? confidence : null;
+  const alternatives = Array.isArray(previous?.alternatives) ? [...previous.alternatives] : [];
+
+  let answerKept = text;
+  let confidenceKept = incoming;
+  let modelKept = model || null;
+
+  if (!stored) {
+    // The first palette is the stored one: there is nothing to compare against.
+  } else if (stored === text) {
+    answerKept = stored;
+    confidenceKept =
+      incoming != null && (storedConfidence == null || incoming > storedConfidence)
+        ? incoming
+        : storedConfidence;
+    modelKept = previous?.model || model || null;
+  } else {
+    // Better is the higher reported confidence. An unstated one is never better
+    // than a stated one, so a silent model cannot replace a numbered palette.
+    const better = incoming != null && (storedConfidence == null || incoming > storedConfidence);
+    const loser = better ? stored : text;
+    const loserConfidence = better ? storedConfidence : incoming;
+    answerKept = better ? text : stored;
+    confidenceKept = better ? incoming : storedConfidence;
+    modelKept = better ? model || null : previous?.model || null;
+
+    const known = alternatives.find((entry) => entry?.answer === loser);
+    if (known) known.count = (known.count || 1) + 1;
+    else if (alternatives.length < MAX_ALTERNATIVES) {
+      alternatives.push({
+        answer: loser.slice(0, MAX_ANSWER),
+        confidence: loserConfidence,
+        count: 1,
+        at: now,
+        model: better ? previous?.model || null : model || null,
+      });
+    }
+  }
+
+  const record = {
+    layer: 'candidate',
+    kind: 'style',
+    id,
+    query,
+    input: String(input).slice(0, MAX_INPUT),
+    answer: answerKept.slice(0, MAX_ANSWER),
+    confidence: confidenceKept,
+    attempts: (previous?.attempts || 0) + 1,
+    ...(alternatives.length ? { alternatives } : {}),
+    firstAt: previous?.firstAt || now,
+    lastAt: now,
+    preset: preset || null,
+    route: route || null,
+    model: modelKept,
+  };
+
+  try {
+    await kv.put(key, JSON.stringify(record), { expirationTtl: TTL });
+  } catch {
+    return record;
+  }
   return record;
 }
 

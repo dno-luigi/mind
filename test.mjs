@@ -20,6 +20,8 @@ import {
   recordCandidate,
   promote,
   listCandidates,
+  recordStyleCandidate,
+  confidenceOf,
   PROMOTE_AT,
 } from './src/truth.js';
 import { questionOf } from './src/truth.js';
@@ -1224,6 +1226,82 @@ test('a style request never takes the stored answer', async () => {
   assert.equal(text.includes('Mob Green Yellow Madness'), false);
   assert.equal(text.includes('Kill Bill'), true);
   assert.equal(seen.length, 1);
+
+  // Kept in the store, under its own key, with nothing served back to chat.
+  const written = await kv.list({ prefix: 'style:' });
+  assert.equal(written.keys.length, 1);
+  const record = JSON.parse(await kv.get(written.keys[0].name));
+  assert.equal(record.kind, 'style');
+  assert.equal(record.answer.includes('Kill Bill'), true);
+  assert.equal(record.attempts, 1);
+});
+
+test('a palette is generated every time and the better one keeps the record', async () => {
+  const { kv } = kvStore();
+  const env = makeEnv({ MEM: kv });
+  const ask = 'Generate ONLY a style definition. Based on this vibe: cold slate';
+
+  const first = await recordStyleCandidate(env, {
+    input: ask,
+    answer: '!theme:Slate,#111,#222,#eee,#333,#09f!\nconfidence:60',
+    confidence: 60,
+    route: 'openrouter',
+    model: 'free',
+  });
+  assert.equal(first.answer.includes('Slate'), true);
+  assert.equal(first.confidence, 60);
+  assert.equal(first.attempts, 1);
+
+  // Lower confidence: the stored palette stands and the other is logged beside it.
+  const second = await recordStyleCandidate(env, {
+    input: ask,
+    answer: '!theme:Ash,#000,#111,#eee,#333,#09f!\nconfidence:40',
+    confidence: 40,
+    route: 'openrouter',
+    model: 'free',
+  });
+  assert.equal(second.answer.includes('Slate'), true);
+  assert.equal(second.confidence, 60);
+  assert.equal(second.attempts, 2);
+  assert.equal(second.alternatives.length, 1);
+  assert.equal(second.alternatives[0].answer.includes('Ash'), true);
+  assert.equal(second.alternatives[0].confidence, 40);
+
+  // Higher confidence replaces it, and what it replaced is still logged.
+  const third = await recordStyleCandidate(env, {
+    input: ask,
+    answer: '!theme:Cold,#123,#456,#fff,#789,#abc!\nconfidence:90',
+    confidence: 90,
+    route: 'openrouter',
+    model: 'other',
+  });
+  assert.equal(third.answer.includes('Cold'), true);
+  assert.equal(third.confidence, 90);
+  assert.equal(third.model, 'other');
+  assert.equal(third.attempts, 3);
+  assert.equal(third.alternatives.some((a) => a.answer.includes('Slate')), true);
+  assert.equal(third.alternatives.some((a) => a.answer.includes('Ash')), true);
+
+  // A model that states no confidence never replaces one that did.
+  const fourth = await recordStyleCandidate(env, {
+    input: ask,
+    answer: '!theme:Unstated,#123,#456,#fff,#789,#abc!',
+    confidence: null,
+    route: 'openrouter',
+    model: 'free',
+  });
+  assert.equal(fourth.answer.includes('Cold'), true);
+  assert.equal(fourth.confidence, 90);
+  assert.equal(fourth.alternatives.some((a) => a.answer.includes('Unstated')), true);
+});
+
+test('the confidence an answer reports is read, clamped and optional', () => {
+  assert.equal(confidenceOf('!theme:X,#111,#222,#333,#444,#555!\nconfidence:82'), 82);
+  assert.equal(confidenceOf('Confidence: 0.75'), 75);
+  assert.equal(confidenceOf('confidence: 250'), 100);
+  assert.equal(confidenceOf('confidence: -4'), null);
+  assert.equal(confidenceOf('no number here'), null);
+  assert.equal(confidenceOf(''), null);
 });
 
 test('a long ask is generated instead of answered from a provisional cache hit', async () => {

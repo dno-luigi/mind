@@ -2564,10 +2564,11 @@ class App {
 
         // Fixed on purpose: the menu owns styling, so it never has to be coaxed
         // out of a conversation.
-        const prompt = `Generate ONLY a style definition in this exact format:
+        const prompt = `Generate ONLY a style definition, on two lines:
 !theme:Name,BgHex,CardBgHex,TextHex,BorderHex,PrimaryHex!
+confidence:<0-100, how sure you are of that palette>
 Based on this vibe: ${desc}
-${retry ? 'Your previous answer was unusable. Reply with that single line and nothing else, with all five colours as 6-digit hex.\n' : ''}Do not output any other text.`;
+${retry ? 'Your previous answer was unusable. Reply with those two lines and nothing else, with all five colours as 6-digit hex.\n' : ''}Do not output any other text.`;
 
         this.lastThemePrompt = desc;
         this.closeModal('aiThemeModal');

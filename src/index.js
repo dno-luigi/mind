@@ -12,7 +12,7 @@ import {
 import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
 import { decide, recordReview, within } from './decide.js';
-import { recordCandidate, questionOf } from './truth.js';
+import { recordCandidate, recordStyleCandidate, confidenceOf, questionOf } from './truth.js';
 import { adminUnlock, adminListKeys, adminReadKey, adminQueue } from './admin.js';
 import { shot } from './shot.js';
 import { readPage } from './page.js';
@@ -725,8 +725,21 @@ async function chat(request, env, ctx) {
       );
     }
     await recordReview(env, ctx, reviewOf({ preset, decision: reported, route, model, lastUser, text }));
-    // Every answer becomes a candidate, so nothing has to be retyped to promote it.
-    await recordCandidate(env, { input: question, answer: text, preset: preset?.id, route, model }, ctx);
+    // A palette is kept by its own rule: the higher reported confidence wins and
+    // the other answer stays logged beside it. Everything else becomes a
+    // candidate, so nothing has to be retyped to promote it.
+    if (styling) {
+      await recordStyleCandidate(env, {
+        input: question,
+        answer: text,
+        confidence: confidenceOf(text),
+        preset: preset?.id,
+        route,
+        model,
+      });
+    } else {
+      await recordCandidate(env, { input: question, answer: text, preset: preset?.id, route, model }, ctx);
+    }
     return json({ text, route, model, decision: reported });
   }
 
@@ -816,8 +829,20 @@ async function chat(request, env, ctx) {
         ctx,
         reviewOf({ preset, decision: reported, route, model, lastUser, text: answer }),
       );
-      // Stored whether or not it is good: promotion is a later decision.
-      await recordCandidate(env, { input: question, answer, preset: preset?.id, route, model }, ctx);
+      // Stored whether or not it is good: promotion is a later decision. A
+      // palette follows its own rule instead — see recordStyleCandidate.
+      if (styling) {
+        await recordStyleCandidate(env, {
+          input: question,
+          answer,
+          confidence: confidenceOf(answer),
+          preset: preset?.id,
+          route,
+          model,
+        });
+      } else {
+        await recordCandidate(env, { input: question, answer, preset: preset?.id, route, model }, ctx);
+      }
       send(DONE);
       controller.close();
     },
