@@ -27,7 +27,7 @@ export async function askAra(env, text) {
     const data = await response.json();
     if (!data || data.refused || !data.move) return { ok: false, bound: true, reason: 'ara_no_decision' };
 
-    return { ok: true, bound: true, id: data.id ?? null, move: data.move, route: data.route ?? null };
+    return { ok: true, bound: true, id: data.id ?? null, move: data.move, route: data.route ?? null, notes: data.notes ?? null };
   } catch {
     return { ok: false, bound: true, reason: 'ara_error' };
   }

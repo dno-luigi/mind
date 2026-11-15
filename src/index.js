@@ -446,6 +446,26 @@ function withBrowse(messages, decision) {
   return [...messages.slice(0, at), note, ...messages.slice(at)];
 }
 
+/**
+ * Her notes, as a system turn. She decides and writes nothing: the answer is
+ * generated, through orproxy and ai-proxy, so the record she decided from has to
+ * reach the model that writes — otherwise it reads the ask with no history.
+ */
+function withNotes(messages, notes) {
+  const text = typeof notes === 'string' ? notes.trim() : '';
+  if (!text) return messages;
+
+  const note = {
+    role: 'system',
+    content:
+      'The decision record for this surface, kept by ARA. It is what he has accepted and rejected, and what has come back before. Read the ask as he means it in light of it. It is context, not a source to quote.\n\n' +
+      text,
+  };
+  let at = 0;
+  while (at < messages.length && messages[at].role === 'system') at += 1;
+  return [...messages.slice(0, at), note, ...messages.slice(at)];
+}
+
 /** The review record: enough to reconstruct a session, capped so KV stays small. */
 function reviewOf({ preset, decision, route, model, lastUser, text }) {
   return {
@@ -601,7 +621,7 @@ async function chat(request, env, ctx) {
 
   // Report the preset that actually ran, not the one the decision model named:
   // they diverge whenever it suggests a preset that no longer exists.
-  const reported = { ...decision, preset: preset?.id ?? null, ara: ara.bound ? { id: ara.id, move: ara.move, route: ara.route } : null };
+  const reported = { ...decision, preset: preset?.id ?? null, ara: ara.bound ? { id: ara.id, move: ara.move, route: ara.route, notes: ara.notes ? ara.notes.length : 0 } : null };
 
   // Half a record is not a record: she keeps what the run produced beside what
   // she chose, so the next decision is made with the result in view.
@@ -676,7 +696,7 @@ async function chat(request, env, ctx) {
   const system = preset?.system
     ? [{ role: 'system', content: preset.system }, ...messages]
     : messages;
-  const grounded = withBrowse(system, decision);
+  const grounded = withBrowse(withNotes(system, ara.notes), decision);
 
   if (!wantsStream) {
     const { route, model, stream, extract } = await openUpstream(env, {
