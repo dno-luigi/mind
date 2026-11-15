@@ -128,7 +128,17 @@ export default {
       return fail(405, 'wrong_route', `${request.method} ${url.pathname} is not an endpoint; chat is POST /api/chat.`);
     }
 
-    if (env?.ASSETS?.fetch) return env.ASSETS.fetch(request);
+    if (env?.ASSETS?.fetch) {
+      const asset = await env.ASSETS.fetch(request);
+      // The client is the app: a cached script.js meant a fix landed on the
+      // worker and never ran in the browser that asked for it.
+      if (/\.(js|html|css)$/.test(url.pathname)) {
+        const copy = new Response(asset.body, asset);
+        copy.headers.set('cache-control', 'no-store, must-revalidate');
+        return copy;
+      }
+      return asset;
+    }
     return new Response('Not found', { status: 404 });
   },
 };
