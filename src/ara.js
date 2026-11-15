@@ -32,3 +32,23 @@ export async function askAra(env, text) {
     return { ok: false, bound: true, reason: 'ara_error' };
   }
 }
+
+/**
+ * What the decision produced. She decides, the run happens, and the row is told
+ * what came of it — so her record is not just what she picked.
+ */
+export async function reportOutcome(env, id, what = {}) {
+  const binder = env && env.ARA;
+  if (!binder || typeof binder.fetch !== 'function' || id == null) return false;
+  try {
+    const response = await binder.fetch('https://ara/outcome', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, returned: what.returned ?? null, stored: what.stored ?? null, route: what.route ?? null }),
+      signal: AbortSignal.timeout(2000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}

@@ -1,6 +1,6 @@
 import { json, fail, has, options, b64FromBytes, bytesFromB64, clientIp, keyMatches } from './util.js';
 import { charge } from './budget.js';
-import { askAra } from './ara.js';
+import { askAra, reportOutcome } from './ara.js';
 import { stateKv, objects, bindingReport, browserBinding, browsingServiceName } from './bindings.js';
 import { engineFor, setEngineFor, canUseCloudflare } from './engine.js';
 import {
@@ -602,6 +602,16 @@ async function chat(request, env, ctx) {
   // Report the preset that actually ran, not the one the decision model named:
   // they diverge whenever it suggests a preset that no longer exists.
   const reported = { ...decision, preset: preset?.id ?? null, ara: ara.bound ? { id: ara.id, move: ara.move, route: ara.route } : null };
+
+  // Half a record is not a record: she keeps what the run produced beside what
+  // she chose, so the next decision is made with the result in view.
+  if (ara.bound && ara.id) {
+    reportOutcome(env, ara.id, {
+      returned: decision.source === 'cache' ? decision.cacheSource || 'stored' : 'generated',
+      stored: decision.cacheSource || null,
+      route: decision.task || null,
+    }).catch(() => null);
+  }
   const wantsStream = body.stream !== false;
 
   // She routes, so this is where her answer changes what happens rather than
