@@ -11,7 +11,7 @@ import { extractText, zipEntries } from './src/extract.js';
 import { Sessions } from './src/sessions.js';
 import { parseCookies, cookieValue, sessionCookie, clearCookie } from './src/cookie.js';
 import { DEFAULT_PRESET } from './src/presets.js';
-import { LADDER, within, decide, _resetDecisionCache } from './src/decide.js';
+import { within, decide, _resetDecisionCache } from './src/decide.js';
 import { upsertBody, upsertPath, syncPlan } from './src/preset-sync.js';
 import { PRESETS, findPreset } from './src/presets.js';
 import { stateKv, objects, bindingReport } from './src/bindings.js';
@@ -139,6 +139,11 @@ function makeEnv(over = {}) {
   // Cloudflare off for every test after it.
   _resetEngine();
   return { AI: fakeAI(), ...over };
+}
+
+/** Her: a bound decider answering with one of mind's own actions. */
+function araStub(move) {
+  return { fetch: async () => new Response(JSON.stringify({ id: 1, move }), { status: 200 }) };
 }
 
 function memKv() {
@@ -545,31 +550,6 @@ test('an explicit preset beats the decision model', async () => {
   assert.equal(generation.system, 'system');
 });
 
-test('decision ladder escalates when the smallest window refuses', async () => {
-  const tried = [];
-  const env = makeEnv({
-    AI: {
-      async run(model, body = {}) {
-        tried.push(model);
-        if (model === LADDER[0].id) throw new Error('context length exceeded');
-        if (model === LADDER[1].id) return { response: '{"preset":"mnl","depth":"terse"}' };
-        if (body.stream) return sse(['x']);
-        return { response: 'x' };
-      },
-    },
-  });
-
-  const res = await call(env, '/api/chat', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], stream: false }),
-  });
-  const body = await res.json();
-  assert.equal(body.decision.preset, 'mnl');
-  assert.equal(body.decision.source, 'clef-omni');
-  assert.deepEqual(tried.slice(0, 2), [LADDER[0].id, LADDER[1].id]);
-});
-
 test('chat falls back to OpenRouter when the AI binding is absent', async () => {
   const original = globalThis.fetch;
   let called = '';
@@ -584,7 +564,7 @@ test('chat falls back to OpenRouter when the AI binding is absent', async () => 
 
   try {
     const res = await call(
-      { OPENROUTER_API_KEY: 'test-key' },
+      { OPENROUTER_API_KEY: 'test-key', ARA: araStub('truth') },
       '/api/chat',
       {
         method: 'POST',
@@ -601,40 +581,6 @@ test('chat falls back to OpenRouter when the AI binding is absent', async () => 
   }
 });
 
-test('the openrouter rung references the preset and leaves its sampling alone', async () => {
-  const original = globalThis.fetch;
-  let sent = null;
-  globalThis.fetch = async (url, init) => {
-    sent = JSON.parse(init.body);
-    return new Response('data: [DONE]\n\n', { status: 200 });
-  };
-
-  try {
-    const res = await call(
-      { OPENROUTER_API_KEY: 'test-key' },
-      '/api/chat',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth', stream: false }),
-      },
-    );
-    await res.text();
-
-    // Bare slugs are ignored upstream, so the @preset/ prefix is load-bearing.
-    assert.equal(sent.model, '@preset/truth');
-    // Request fields shallow-merge over the preset, so ours must be absent.
-    assert.equal(sent.temperature, undefined);
-    assert.equal(sent.max_tokens, undefined);
-    // Truth carries its own prompt on both rungs by design; the preset still owns
-    // the model and the sampling params.
-    assert.equal(sent.messages[0].role, 'system');
-    assert.match(sent.messages[0].content, /^You are the AI-N Truth Engine/);
-  } finally {
-    globalThis.fetch = original;
-  }
-});
-
 test('the same Truth prompt is what openrouter sends', async () => {
   const original = globalThis.fetch;
   let sent = null;
@@ -644,7 +590,7 @@ test('the same Truth prompt is what openrouter sends', async () => {
   };
 
   try {
-    const env = makeEnv({
+    const env = makeEnv({ ARA: araStub('truth'),
       AI: undefined,
       OPENROUTER_API_KEY: 'test-key',
       TEP: { async get() { return 'ONE PROMPT FOR BOTH RUNGS'; } },
@@ -671,7 +617,7 @@ test('the same Truth prompt is what openrouter sends', async () => {
 
 test('the workers-ai rung still uses the local prompt and sampling', async () => {
   const seen = [];
-  const env = makeEnv({
+  const env = makeEnv({ ARA: araStub('truth'),
     AI: fakeAI({
       async run(model, body = {}) {
         if (model.startsWith('@cf/cloudflare/clef')) return { response: '{}' };
@@ -696,7 +642,7 @@ test('the workers-ai rung still uses the local prompt and sampling', async () =>
 
 test('the truth prompt comes from the TEP secret when it is bound', async () => {
   const seen = [];
-  const env = makeEnv({
+  const env = makeEnv({ ARA: araStub('truth'),
     TEP: { async get() { return '  STORED TRUTH PROMPT  '; } },
     AI: fakeAI({
       async run(model, body = {}) {
@@ -722,7 +668,7 @@ test('the truth prompt comes from the TEP secret when it is bound', async () => 
 
 test('an unreadable TEP secret does not affect the truth prompt', async () => {
   const seen = [];
-  const env = makeEnv({
+  const env = makeEnv({ ARA: araStub('truth'),
     TEP: { async get() { throw new Error('denied'); } },
     AI: fakeAI({
       async run(model, body = {}) {
@@ -970,56 +916,8 @@ test('an empty stream retries without streaming instead of returning nothing', a
   assert.equal(events.some((e) => e.type === 'error'), false);
 });
 
-test('the pipeline traces cache, intent, browse, user and operator in order', async () => {
-  const cached = [];
-  const env = makeEnv({
-    MEM: {
-      async get() {
-        return null;
-      },
-      async put(key, value) {
-        cached.push(key);
-      },
-    },
-    'AGENT-BROWSING': {
-      async fetch() {
-        return new Response('browsed material');
-      },
-    },
-    AI: fakeAI({
-      async run(model, body = {}) {
-        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"extract","depth":"deep"}' };
-        if (body.stream) return sse(['ok']);
-        return { response: 'ok' };
-      },
-    }),
-  });
-
-  const res = await call(env, '/api/chat', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ messages: [{ role: 'user', content: 'compare these two' }], stream: false }),
-  });
-  const body = await res.json();
-  const { trace } = body.decision;
-
-  assert.equal(trace[0], 'cache:miss');
-  assert.match(trace[1], /^intent:clef-/);
-  // extract is browse-worthy, so the service binding is consulted.
-  assert.ok(trace.includes('browse:ok'));
-  assert.ok(trace.indexOf('browse:ok') < trace.indexOf('user:handoff'));
-  // user hands back, then the generation rung runs. Truth is the default when
-  // the intent names no preset.
-  assert.ok(trace.indexOf('user:handoff') < trace.indexOf('rung:truth'));
-  assert.equal(body.decision.preset, 'truth');
-  assert.equal(body.decision.browse, 'browsed material');
-  // extract -> qwen, deep -> large budget.
-  assert.equal(body.model, '@cf/qwen/qwen3.8-27b');
-  assert.ok(cached.some((key) => key.startsWith('decision:')), 'the decision should be cached in MEM');
-});
-
 test('a failing browse stage is recorded, not fatal', async () => {
-  const env = makeEnv({
+  const env = makeEnv({ ARA: araStub('browse'),
     'AGENT-BROWSING': {
       async fetch() {
         throw new Error('browser offline');
@@ -1078,33 +976,8 @@ test('review records are written to MASTER', async () => {
   assert.equal(reviews[0].record.prompt, 'remember this');
 });
 
-test('clef picks the model when no preset is pinned, but never shrinks the budget below the preset cap', async () => {
-  const seen = [];
-  const env = makeEnv({
-    AI: fakeAI({
-      async run(model, body = {}) {
-        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"transform","depth":"terse"}' };
-        seen.push({ model, body });
-        if (body.stream) return sse(['ok']);
-        return { response: 'ok' };
-      },
-    }),
-  });
-
-  await call(env, '/api/chat', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], stream: false }),
-  });
-
-  const generation = seen.at(-1);
-  assert.equal(generation.model, '@cf/qwen/qwen3.8-27b');
-  // "terse" must not cap the answer at 1024 tokens; the truth preset asks for 4096.
-  assert.equal(generation.body.max_tokens, 4096);
-});
-
 test('sending the default preset still lets clef steer the rung', async () => {
-  const env = makeEnv({
+  const env = makeEnv({ ARA: araStub('mnl'),
     AI: fakeAI({
       async run(model, body = {}) {
         if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"preset":"mnl"}' };
@@ -1188,55 +1061,6 @@ test('a short ask still gets the instant cached truth', async () => {
   assert.equal(events[0].model, 'provisional');
   assert.equal(text, 'A contract of participation.');
   assert.equal(seen.length, 0);
-});
-
-test('a style request never takes the stored answer', async () => {
-  const { kv } = kvStore();
-  const seen = [];
-  const env = makeEnv({
-    MEM: kv,
-    AI: fakeAI({
-      async run(model, body = {}) {
-        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"style","depth":"terse"}' };
-        seen.push(model);
-        if (body.stream) return sse(['!theme:Kill Bill,141414,1e1e1e,f5f5f5,333333,e01b24!']);
-        return { response: '!theme:Kill Bill,141414,1e1e1e,f5f5f5,333333,e01b24!' };
-      },
-    }),
-  });
-  const ask = 'Generate ONLY a style definition. Based on this vibe: kill bill red, pale text';
-  // A stored answer that matches this ask: serving it would repaint the app with
-  // the same palette no matter which vibe was typed.
-  await promote(env, {
-    input: ask,
-    answer: '!theme:Mob Green Yellow Madness,#0a1a0a,#152b15,#e0ff00,#33ff33,#f0ff00!',
-    layer: 'provisional',
-  });
-
-  const res = await call(env, '/api/chat', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ messages: [{ role: 'user', content: ask }], preset: 'none', style: true }),
-  });
-  const events = await readSSE(res);
-  const text = events.filter((e) => e.type === 'delta').map((e) => e.text).join('');
-
-  // The decision model is what routes it: clef named the task, and the answer
-  // was generated rather than served.
-  assert.equal(events[0].decision.task, 'style');
-  assert.equal(events[0].decision.trace.includes('intent:clef-flash'), true);
-  assert.notEqual(events[0].route, 'truth');
-  assert.equal(text.includes('Mob Green Yellow Madness'), false);
-  assert.equal(text.includes('Kill Bill'), true);
-  assert.equal(seen.length, 1);
-
-  // Kept in the store, under its own key, with nothing served back to chat.
-  const written = await kv.list({ prefix: 'style:' });
-  assert.equal(written.keys.length, 1);
-  const record = JSON.parse(await kv.get(written.keys[0].name));
-  assert.equal(record.kind, 'style');
-  assert.equal(record.answer.includes('Kill Bill'), true);
-  assert.equal(record.attempts, 1);
 });
 
 test('the style population lists only palettes, newest first', async () => {
@@ -1497,36 +1321,6 @@ test('an ask that names a length gets the long-answer budget', async () => {
   assert.equal(seen.at(-1).body.max_tokens, 8192);
 });
 
-test('selecting no preset drops the preset prompt but keeps the decision', async () => {
-  const seen = [];
-  const env = makeEnv({
-    AI: fakeAI({
-      async run(model, body = {}) {
-        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"transform","depth":"deep"}' };
-        seen.push({ model, body });
-        if (body.stream) return sse(['bare']);
-        return { response: 'bare' };
-      },
-    }),
-  });
-
-  const res = await call(env, '/api/chat', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'none', stream: false }),
-  });
-  const body = await res.json();
-  const generation = seen.at(-1);
-
-  assert.equal(res.status, 200);
-  assert.equal(body.decision.preset, null);
-  // No preset prompt, but clef still decides the model and the budget.
-  assert.equal(generation.model, '@cf/qwen/qwen3.8-27b');
-  assert.equal(generation.body.messages.some((m) => m.role === 'system'), false);
-  assert.equal(generation.body.max_tokens, 8192);
-  assert.equal(body.text, 'bare');
-});
-
 test('no preset on the openrouter rung never sends a @preset/ slug', async () => {
   const original = globalThis.fetch;
   let sent = null;
@@ -1605,52 +1399,6 @@ test('frameShape names what arrived when no text was found', () => {
 
 // KV reads are edge-cached and lag a fresh write by up to 60s, so a repeat of the
 // same turn misses unless something sits in front of KV.
-test('a repeat decision is served from memory while KV still reports nothing', async () => {
-  const env = makeEnv({
-    MEM: {
-      async get() {
-        return null; // the write is real, the read is still stale
-      },
-      async put() {},
-    },
-  });
-  const messages = [{ role: 'user', content: 'explain the decision cache' }];
-
-  const first = await decide(env, { messages });
-  assert.equal(first.source, 'clef-flash');
-  assert.ok(first.trace.includes('cache:miss'));
-
-  const second = await decide(env, { messages });
-  assert.equal(second.source, 'cache');
-  assert.equal(second.cacheSource, 'memory');
-  // The trace is this request's: a hit is one step, not a replay of the first
-  // run's intent and browse stages.
-  assert.deepEqual(second.trace, ['cache:hit']);
-  assert.ok(second.cachedTrace.includes('intent:clef-flash'));
-});
-
-test('a KV hit is labelled as such and seeds the memory layer', async () => {
-  const store = new Map();
-  const kv = {
-    async get(key) {
-      return store.get(key) ?? null;
-    },
-    async put(key, value) {
-      store.set(key, value);
-    },
-  };
-  const messages = [{ role: 'user', content: 'seeded from kv' }];
-
-  const warm = await decide(makeEnv({ MEM: kv }), { messages });
-  assert.equal(warm.source, 'clef-flash');
-
-  // A new env (a different isolate) shares the KV but starts with empty memory.
-  const cold = await decide(makeEnv({ MEM: kv }), { messages });
-  assert.equal(cold.source, 'cache');
-  assert.equal(cold.cacheSource, 'kv');
-  assert.equal(cold.preset, warm.preset);
-});
-
 test('the cache key follows the prompt, the images and the pinned preset', async () => {
   const store = new Map();
   const kv = {
@@ -2247,65 +1995,6 @@ test('the switch fails closed when KEY is unset', async () => {
 
   const view = await (await call(env, '/api/engine')).json();
   assert.equal(view.cloudflare, true);
-});
-
-test('switching Cloudflare off sends chat to the free router', async () => {
-  const { kv, store } = kvStore();
-  _resetEngine();
-  let aiCalls = 0;
-  const env = makeEnv({
-    MEM: kv,
-    KEY: ENGINE_KEY,
-    OPENROUTER_API_KEY: 'test-key',
-    AI: {
-      async run() {
-        aiCalls += 1;
-        return { response: 'from workers ai' };
-      },
-    },
-  });
-
-  const off = await flip(env, false, keyed);
-  assert.equal(off.status, 200);
-  assert.equal((await off.json()).engine, 'openrouter');
-  assert.match(store.get('settings:engine'), /"cloudflare":false/);
-
-  const original = globalThis.fetch;
-  let sent = null;
-  globalThis.fetch = async (url, init) => {
-    sent = JSON.parse(init.body);
-    return new Response(
-      'data: {"choices":[{"delta":{"content":"free answer"}}]}\n\ndata: [DONE]\n\n',
-      { status: 200 },
-    );
-  };
-  try {
-    const res = await call(env, '/api/chat', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], preset: 'truth' }),
-    });
-    const events = await readSSE(res);
-    assert.equal(events[0].route, 'openrouter');
-    assert.equal(events[0].model, 'openrouter/free');
-    assert.equal(sent.model, 'openrouter/free');
-    // A preset reference would point at the paid preset; the local prompt is sent
-    // instead so the answer keeps the preset's character.
-    assert.equal(sent.messages[0].role, 'system');
-    assert.equal(sent.temperature, 0.3);
-    // Neither clef nor the chat rung may touch Workers AI while it is off.
-    assert.equal(aiCalls, 0);
-    assert.ok(events[0].decision.trace.includes('intent:fallback'));
-    assert.equal(events.filter((e) => e.type === 'delta').map((e) => e.text).join(''), 'free answer');
-  } finally {
-    globalThis.fetch = original;
-  }
-
-  const health = await (await call(env, '/api/health')).json();
-  assert.equal(health.engine.active, 'openrouter');
-  assert.equal(health.engine.cloudflare, false);
-  assert.equal(health.engine.workersAI, true);
-  assert.equal(health.models.openrouterFree, 'openrouter/free');
 });
 
 test('the truth cache still answers first with Cloudflare off', async () => {

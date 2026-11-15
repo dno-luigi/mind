@@ -579,6 +579,7 @@ async function chat(request, env, ctx) {
     allowPreset: !noneSelected,
     engine,
     style: styleHint,
+    ara,
   });
   // Clef's answer routes it too: a request it classified as a style ask is the
   // same thing as one the client marked, whichever arrives first.
@@ -603,6 +604,12 @@ async function chat(request, env, ctx) {
   const reported = { ...decision, preset: preset?.id ?? null, ara: ara.bound ? { id: ara.id, move: ara.move, route: ara.route } : null };
   const wantsStream = body.stream !== false;
 
+  // She routes, so this is where her answer changes what happens rather than
+  // just being recorded: `generate` and `card` mean write it, never hand back a
+  // stored one; `truth` means the store is where to look, however long the ask.
+  const araRoute = ara.bound ? ara.route : null;
+  const writeIt = araRoute === 'generate' || araRoute === 'card';
+
   // A curated (master) truth answers in place of the model, and instantly. A
   // provisional one is the truth service's own guess kept on the way past: still
   // a cache hit worth serving, but only when the ask is small enough for one
@@ -610,11 +617,11 @@ async function chat(request, env, ctx) {
   // classified deep, goes to the model, so a report is never replaced by a
   // one-liner. A preset picked from the menu also means "generate".
   const briefAsk = decision.depth !== 'deep' && !ASKS_FOR_LENGTH.test(lastUser);
-  const cachedTruth = decision.truth?.answer && (decision.truth.layer === 'master' || briefAsk);
+  const cachedTruth = decision.truth?.answer && (araRoute === 'truth' || decision.truth.layer === 'master' || briefAsk);
   // Picking Truth from the menu means "answer with the truth preset", and a
   // stored truth is that preset's answer - so the cache still serves. Picking
   // any other preset means generate with it, cache or no cache.
-  const mayServeCache = (!pinned || preset?.id === DEFAULT_PRESET) && !styling;
+  const mayServeCache = (!pinned || preset?.id === DEFAULT_PRESET) && !styling && !writeIt;
   if (cachedTruth && mayServeCache) {
     const truth = decision.truth;
     // A candidate is the answer this question got last time. Serving it is what

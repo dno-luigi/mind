@@ -5,34 +5,9 @@ import { resolveTruth, questionOf } from './truth.js';
 import { DEFAULT_PRESET } from './presets.js';
 
 /**
- * The clef ladder: smallest window first, escalate only when the state does not
- * fit. Platform rules this encodes — `model` must be the short name, not the
- * @cf id, and the window is enforced upstream rather than trimmed for us.
- */
-export const LADDER = [
-  { id: '@cf/cloudflare/clef-flash', model: 'clef-flash', context: 24576 },
-  { id: '@cf/cloudflare/clef-omni', model: 'clef-omni', context: 64000 },
-  { id: '@cf/cloudflare/clef', model: 'clef', context: 65536 },
-];
-
-const CHARS_PER_TOKEN = 3;
-const SAFETY = 0.8;
-
-export const QUESTIONS = {
-  task: { type: 'choice', choices: ['chat', 'transform', 'generate', 'extract', 'compare', 'style'] },
-  preset: { type: 'choice', choices: ['truth', 'operator', 'mnl'] },
-  depth: { type: 'choice', choices: ['terse', 'normal', 'deep'] },
-  tone: { type: 'choice', choices: ['plain', 'precise', 'playful'] },
-};
-
-/** Intents that need material from outside the conversation pay for a lookup. */
-const BROWSE_WORTHY = new Set(['extract', 'compare']);
-
-/**
  * A question that names a page, or asks about the live web, needs the browser
- * whatever the decision model said. With Cloudflare switched off there is no clef
- * at all — the intent falls back to `chat` — so keying the browse stage on the
- * decision alone meant the browser never ran on exactly those deployments.
+ * whatever she said. Keying the browse stage on the decision alone meant the
+ * browser never ran when the decision did not name a page.
  */
 const WEB_HINT = /\b(browse|search|look ?up|fetch|scrape|latest|current|today|news|website|web ?page)\b/i;
 
@@ -43,8 +18,6 @@ function webWanted(query) {
 
 const REVIEW_TTL = 60 * 60 * 24 * 30;
 
-/** A rung that never answers is a failed rung; escalating is cheaper than waiting. */
-const RUNG_TIMEOUT_MS = 5000;
 const BROWSE_TIMEOUT_MS = 4000;
 
 /**
@@ -70,8 +43,7 @@ function cacheHit(cached, via, cacheKey) {
     ...cached,
     source: 'cache',
     // The trace describes this request. Replaying the cached run's stages would
-    // claim clef and browse ran again when they did not; keep that under its own
-    // name instead.
+    // claim browse ran again when it did not; keep that under its own name.
     trace: ['cache:hit'],
     cacheSource: via,
     cachedTrace: cached.trace || [],
@@ -96,71 +68,26 @@ export function within(ms, label, run) {
   return Promise.race([run(), expiry]).finally(() => clearTimeout(timer));
 }
 
-function budgetState(messages, context) {
-  const budget = Math.floor(context * SAFETY * CHARS_PER_TOKEN);
-  const joined = messages
-    .map((m) => (m.role === 'system' ? `[system] ${m.content}` : `${m.role}: ${m.content}`))
-    .join('\n');
-  return joined.length <= budget ? joined : `…${joined.slice(-budget)}`;
-}
+/**
+ * Stage 2 — intent, straight from her. A missing binding falls back to the old
+ * default rather than failing: no decider is the one case she cannot block on.
+ */
+const PRESET_ACTIONS = new Set(['truth', 'operator', 'mnl', 'doc', 'micro']);
 
-function parseDecision(out) {
-  const candidates = [out?.response, out?.result?.response, out?.answers, out?.result];
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    let value = candidate;
-    if (typeof value === 'string') {
-      const match = value.match(/\{[\s\S]*\}/);
-      if (!match) continue;
-      try {
-        value = JSON.parse(match[0]);
-      } catch {
-        continue;
-      }
-    }
-    if (typeof value === 'object') {
-      const pick = (field) => {
-        const raw = value[field];
-        const answer = typeof raw === 'object' && raw !== null ? raw.answer ?? raw.value ?? raw.choice : raw;
-        return typeof answer === 'string' ? answer.toLowerCase() : null;
-      };
-      const result = {};
-      for (const field of Object.keys(QUESTIONS)) {
-        const answer = pick(field);
-        if (answer) result[field] = answer;
-      }
-      if (result.preset || result.depth || result.task) return result;
-    }
+function fromAra(ara, presetId) {
+  if (!ara || !ara.bound) {
+    return { preset: presetId || 'operator', task: 'chat', depth: 'normal', tone: 'plain', source: 'no-decider' };
   }
-  return null;
-}
-
-/** Stage 2 — intent. A decision is an optimisation, never a single point of failure. */
-async function intentFor(env, { messages, images, presetId, engine = 'cloudflare' }) {
-  const fallback = { preset: presetId, depth: 'normal', tone: 'plain', task: 'chat', source: 'fallback' };
-  // With Cloudflare switched off there is no clef to ask, and asking it anyway
-  // would spend exactly the neurons the switch exists to save.
-  if (engine !== 'cloudflare' || !env?.AI || env.DECIDE === 'off') return fallback;
-
-  for (const rung of LADDER) {
-    try {
-      const payload = {
-        model: rung.model,
-        state: budgetState(messages, rung.context),
-        questions: QUESTIONS,
-      };
-      // clef reads images itself, but only as data URIs, never remote URLs.
-      if (images.length) payload.images = images.slice(0, 4);
-
-      const out = await within(RUNG_TIMEOUT_MS, rung.model, () => env.AI.run(rung.id, payload));
-      const parsed = parseDecision(out);
-      if (parsed) return { ...fallback, ...parsed, source: rung.model };
-    } catch {
-      // Window refused or model unavailable — escalate to the next rung.
-    }
-  }
-
-  return fallback;
+  // She picks one of mind's own actions, so there is nothing left to classify:
+  // a preset action is that preset, browse is generation with the web read first.
+  const action = ara.move || 'operator';
+  return {
+    preset: presetId || (PRESET_ACTIONS.has(action) ? action : 'operator'),
+    task: action === 'style' ? 'style' : action === 'truth' ? 'chat' : 'generate',
+    depth: 'normal',
+    tone: 'plain',
+    source: 'ara',
+  };
 }
 
 /**
@@ -229,7 +156,7 @@ export async function recordReview(env, ctx, record) {
  * The decision pipeline, in order:
  *
  *   1. cache    MEM lookup; a hit ends the chain
- *   2. intent   clef ladder classifies task / preset / depth / tone
+ *   2. intent   ARA answers: route, depth, tone, web
  *   3. browse   AGENT-BROWSING, only when the intent needs outside material
  *   4. user     hand the intent back so the answer can be built
  *   5. operator the rung it runs on: @preset/operator unless a preset was pinned
@@ -245,6 +172,7 @@ export async function decide(
     allowPreset = true,
     engine = 'cloudflare',
     style = false,
+    ara = null,
   } = {},
 ) {
   const trace = [];
@@ -314,12 +242,14 @@ export async function decide(
     trace.push('cache:unbound');
   }
 
-  // 2. intent
-  const intent = await intentFor(env, { messages, images, presetId, engine });
+  // 2. intent — her answer, nothing else decides. `truth` is the store's lane;
+  // everything else is written, and the route says which prompt runs.
+  const intent = fromAra(ara, presetId);
   trace.push(`intent:${intent.source}`);
 
   // 3. browse
-  const worthy = BROWSE_WORTHY.has(intent.task) || intent.depth === 'deep' || wantsWeb;
+  const browseWanted = Boolean(ara && ara.bound && ara.move === 'browse');
+  const worthy = browseWanted || wantsWeb;
   const browse = await browseFor(env, { intent, query: lastUser, worthy });
   const material = browse?.ok ? browse.text : null;
   trace.push(
