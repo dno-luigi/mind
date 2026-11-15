@@ -718,6 +718,30 @@ async function chat(request, env, ctx) {
 
   if (cachedTruth && mayServeCache && hisChoice !== 'write') {
     const truth = decision.truth;
+
+    // An unverified pair is not an answer until she has looked at it. She gets
+    // the pair itself, and if she says it asks him back, her card goes out in
+    // place of the stored text. Master truth is never second-guessed.
+    const unverified = truth.layer !== 'master';
+    const looksLikeAQuestion = String(truth.answer || '').trim().length <= 320 && /\?\s*$/.test(String(truth.answer || '').trim());
+    if (unverified && looksLikeAQuestion && !hisChoice) {
+      const card = await askAra(env, question || lastUser, 'general', null, {
+        layer: truth.layer,
+        answer: truth.answer,
+        key: truth.key || null,
+        id: truth.id || null,
+      });
+      if (card.clarify) {
+        const asked = (card.clarify.questions || [])[0] || null;
+        const payload = [
+          `data: ${JSON.stringify({ type: 'clarify', question: asked, ara: { id: card.id, move: card.move } })}`,
+          '',
+          'data: [DONE]',
+          '',
+        ].join('\n\n');
+        return new Response(payload + '\n', { headers: SSE_HEADERS });
+      }
+    }
     // A candidate is the answer this question got last time. Serving it is what
     // makes a repeat free, so the repetition promotion counts has to be recorded
     // here: a served candidate never runs the write at the end of the turn, and
