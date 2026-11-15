@@ -318,11 +318,20 @@ async function resolveRemoteTruth(env, input, { id, query }) {
       const layer = data?.layer === 'master' ? 'master' : data?.layer === 'provisional' ? 'provisional' : null;
       if (!answer || !layer) continue;
 
+      // Provenance: a provisional written seconds ago is not the same thing as
+      // one he wrote before, and not the same as master. The record says which.
+      const created = Number(data?.meta?.created) || null;
       return {
         layer,
         id: typeof data?.id === 'string' && data.id ? data.id : id,
         query,
         answer,
+        origin: {
+          source: data?.source || null,
+          verified: data?.verified === true,
+          created,
+          fresh: created ? Date.now() - created < 120000 : false,
+        },
         citations: citationsOf(data),
         source: 'truth-service',
         key: 'service:truth',

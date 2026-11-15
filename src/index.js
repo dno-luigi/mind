@@ -646,6 +646,7 @@ async function chat(request, env, ctx) {
     await reportOutcome(env, ara.id, {
       returned: decision.source === 'cache' ? decision.cacheSource || 'stored' : 'generated',
       stored: decision.cacheSource || null,
+      origin: decision.truth?.origin || null,
       route: decision.task || null,
     });
   }

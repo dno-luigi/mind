@@ -44,7 +44,13 @@ export async function reportOutcome(env, id, what = {}) {
     const response = await binder.fetch('https://ara/outcome', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, returned: what.returned ?? null, stored: what.stored ?? null, route: what.route ?? null }),
+      body: JSON.stringify({
+        id,
+        returned: what.returned ?? null,
+        stored: what.stored ?? null,
+        route: what.route ?? null,
+        origin: what.origin ?? null,
+      }),
       signal: AbortSignal.timeout(2000),
     });
     return response.ok;
