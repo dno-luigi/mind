@@ -606,6 +606,8 @@ async function chat(request, env, ctx) {
   // She is the first contact: no decision from her, no request.
   const ara = await askAra(env, question || lastUser, 'general');
   if (!ara.ok) return fail(502, 'ara_no_decision', `ARA did not decide (${ara.reason}).`);
+  // She is unsure: he is asked on a card, and no model is called behind her.
+  if (ara.clarify) return json({ clarify: ara.clarify, ara: { id: ara.id, move: ara.move } }, 200);
 
   // A preset the user picked wins; decide() only fills the gap.
   const decision = await decide(env, {

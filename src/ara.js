@@ -25,6 +25,10 @@ export async function askAra(env, text) {
     if (!response.ok) return { ok: false, bound: true, reason: 'ara_status_' + response.status };
 
     const data = await response.json();
+    // She did not understand: the card goes back to him and nothing is generated.
+    if (data && data.clarify) {
+      return { ok: true, bound: true, clarify: data.clarify, id: data.id ?? null, move: data.move ?? null, route: null, notes: data.notes ?? null };
+    }
     if (!data || data.refused || !data.move) return { ok: false, bound: true, reason: 'ara_no_decision' };
 
     return { ok: true, bound: true, id: data.id ?? null, move: data.move, route: data.route ?? null, notes: data.notes ?? null };
