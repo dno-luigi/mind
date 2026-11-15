@@ -1637,10 +1637,21 @@ class App {
      */
     async streamChat({ messages, preset = null, presetLocked = false, style = false, signal = null }, onText) {
         const url = this.getProxyUrl();
+        // His tap on her card is part of this ask, and only this one.
+        const araChoice = this.pendingAraChoice || null;
+        this.pendingAraChoice = null;
+
         const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messages, preset, presetLocked, style, stream: true }),
+            body: JSON.stringify({
+                messages,
+                preset,
+                presetLocked,
+                style,
+                stream: true,
+                ...(araChoice ? { araChoice } : {}),
+            }),
             signal
         });
 
@@ -1662,6 +1673,7 @@ class App {
         let first = true;
         let failure = null;
         let incomplete = null;
+        let clarifyEvent = null;
 
         while (true) {
             const { done, value } = await reader.read();
@@ -1689,10 +1701,18 @@ class App {
                     failure = event.error?.message || event.error?.code || 'stream failed';
                 } else if (event.type === 'incomplete') {
                     incomplete = event.message || 'The answer stopped before it finished.';
+                } else if (event.type === 'clarify') {
+                    clarifyEvent = event;
                 } else if (event.type === 'meta') {
                     this.lastRoute = event;
                 }
             }
+        }
+
+        // She asked instead of writing: the card is hers, and it is answerable.
+        if (clarifyEvent && clarifyEvent.question) {
+            this.renderClarify(this.streamingId, clarifyEvent.question, prompt);
+            return '';
         }
 
         if (failure && !accumulated) throw new Error(failure);
@@ -1704,6 +1724,56 @@ class App {
             onText(accumulated, false);
         }
         return accumulated;
+    }
+
+    /** Her question, with the three results as taps. Not an empty card. */
+    renderClarify(id, question, prompt) {
+        const el = document.querySelector(`.flip-card[data-id="${id}"] .response-content`);
+        if (!el) return;
+
+        el.innerHTML = '';
+        const lead = document.createElement('p');
+        lead.textContent = question.q || 'Which of these is it?';
+        lead.style.margin = '0 0 10px';
+        el.appendChild(lead);
+
+        const row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.flexWrap = 'wrap';
+        row.style.gap = '8px';
+
+        (question.options || []).forEach((option) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = option.label || option.value;
+            button.style.padding = '8px 12px';
+            button.style.borderRadius = '999px';
+            button.style.border = '1px solid currentColor';
+            button.style.background = 'transparent';
+            button.style.color = 'inherit';
+            button.style.font = 'inherit';
+            button.style.cursor = 'pointer';
+            button.addEventListener('click', () => this.answerClarify(prompt, option, id));
+            row.appendChild(button);
+        });
+
+        el.appendChild(row);
+    }
+
+    /** He tapped one: the same ask goes again, with his answer as the decision. */
+    answerClarify(prompt, option, id) {
+        const el = document.querySelector(`.flip-card[data-id="${id}"] .response-content`);
+        if (el) {
+            const row = el.querySelector('div');
+            if (row) row.remove();
+            const note = document.createElement('p');
+            note.textContent = `You said: ${option.label || option.value}`;
+            note.style.opacity = '0.7';
+            note.style.margin = '0';
+            el.appendChild(note);
+        }
+        this.pendingAraChoice = option.value;
+        this.sendRequest(prompt, null);
     }
 
     stopStream() {

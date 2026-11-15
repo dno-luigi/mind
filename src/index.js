@@ -604,10 +604,21 @@ async function chat(request, env, ctx) {
   }
 
   // She is the first contact: no decision from her, no request.
-  const ara = await askAra(env, question || lastUser, 'general');
+  const ara = await askAra(env, question || lastUser, 'general', body.araChoice || null);
   if (!ara.ok) return fail(502, 'ara_no_decision', `ARA did not decide (${ara.reason}).`);
   // She is unsure: he is asked on a card, and no model is called behind her.
-  if (ara.clarify) return json({ clarify: ara.clarify, ara: { id: ara.id, move: ara.move } }, 200);
+  if (ara.clarify) {
+    // Streamed, because the client reads this endpoint as events: a bare JSON
+    // body looked like nothing had happened.
+    const question = (ara.clarify.questions || [])[0] || null;
+    const body = [
+      `data: ${JSON.stringify({ type: 'clarify', question, ara: { id: ara.id } })}`,
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n\n');
+    return new Response(body + '\n', { headers: SSE_HEADERS });
+  }
 
   // A preset the user picked wins; decide() only fills the gap.
   const decision = await decide(env, {
