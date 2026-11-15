@@ -735,9 +735,10 @@ async function chat(request, env, ctx) {
     // An unverified pair is not an answer until she has looked at it. She gets
     // the pair itself, and if she says it asks him back, her card goes out in
     // place of the stored text. Master truth is never second-guessed.
-    const unverified = truth.layer !== 'master';
-    const looksLikeAQuestion = String(truth.answer || '').trim().length <= 320 && /\?\s*$/.test(String(truth.answer || '').trim());
-    if (unverified && looksLikeAQuestion && !hisChoice) {
+    // Not "ends with a question mark": any pair he did not author and nobody
+    // verified is her call to make, whatever shape it is in.
+    const unverified = truth.layer !== 'master' && !(truth.origin && truth.origin.verified === true);
+    if (unverified && !hisChoice) {
       const card = await askAra(env, question || lastUser, 'general', null, {
         layer: truth.layer,
         answer: truth.answer,
