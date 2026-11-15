@@ -74,6 +74,10 @@ export function within(ms, label, run) {
  */
 const PRESET_ACTIONS = new Set(['truth', 'operator', 'mnl', 'doc', 'micro']);
 
+// Her three results, in mind's own terms: the store's result, a preset, or an
+// answer written now.
+const RESULT_ACTIONS = { result: 'truth', preset: 'operator', ask: 'operator' };
+
 function fromAra(ara, presetId) {
   if (!ara || !ara.bound) {
     return { preset: presetId || 'operator', task: 'chat', depth: 'normal', tone: 'plain', source: 'no-decider' };
@@ -82,8 +86,8 @@ function fromAra(ara, presetId) {
   // a preset action is that preset, browse is generation with the web read first.
   const action = ara.move || 'operator';
   return {
-    preset: presetId || (PRESET_ACTIONS.has(action) ? action : 'operator'),
-    task: action === 'style' ? 'style' : action === 'truth' ? 'chat' : 'generate',
+    preset: presetId || (PRESET_ACTIONS.has(action) ? action : RESULT_ACTIONS[action] || 'operator'),
+    task: action === 'style' ? 'style' : action === 'truth' || action === 'result' ? 'chat' : 'generate',
     depth: 'normal',
     tone: 'plain',
     source: 'ara',
