@@ -727,6 +727,18 @@ async function chat(request, env, ctx) {
   // any other preset means generate with it, cache or no cache.
   const mayServeCache = (!pinned || preset?.id === DEFAULT_PRESET) && !styling && !writeIt;
   const hisChoice = body.araChoice || null;
+  if (hisChoice === 'none') {
+    const said = 'Left alone: nothing stored under that key, and nothing written.';
+    const quiet = new ReadableStream({
+      start(controller) {
+        const send = (chunk) => chunk && controller.enqueue(encoder.encode(chunk));
+        send(delta(said));
+        send(DONE);
+        controller.close();
+      },
+    });
+    return new Response(quiet, { headers: SSE_HEADERS });
+  }
 
   // He asked for the record behind a stored non-answer.
   if (hisChoice === 'pair' && decision.truth?.answer) {
