@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
 import worker from './src/index.js';
@@ -1288,6 +1289,54 @@ test('the queue lists the kept palette and the one it beat', async () => {
   assert.equal(data.styles[0].alternatives[0].confidence, 40);
   // A palette is not an answer to a chat question, so it is not in the queue rows.
   assert.equal(data.rows.length, 0);
+});
+
+test('the Stylist reads the palette out of the two-line answer', () => {
+  const source = readFileSync(new URL('./public/script.js', import.meta.url), 'utf8');
+  const method = (name) => {
+    const start = source.indexOf(`    ${name}(`);
+    assert.notEqual(start, -1, `${name} is missing from the client`);
+    const end = source.indexOf('\n    }\n', start);
+    assert.notEqual(end, -1, `${name} has no end`);
+    return source.slice(start + 4, end + 6);
+  };
+  // The two methods are lifted as written, so this fails when the client changes
+  // shape rather than when a copy of it drifts.
+  const app = new Function(`return ({ ${method('normalizeHex')}, ${method('parseThemeResult')} });`)();
+
+  const parsed = app.parseThemeResult(
+    '!theme:Forest Brass,#0B2A1E,#143A2B,#EFE7D2,#5C6B58,#C9A227!\nconfidence:88',
+  );
+  assert.equal(parsed.complete, true);
+  assert.equal(parsed.theme.name, 'Forest Brass');
+  assert.equal(parsed.theme.bg, '#0b2a1e');
+  assert.equal(parsed.theme.cardBg, '#143a2b');
+  assert.equal(parsed.theme.text, '#efe7d2');
+  assert.equal(parsed.theme.border, '#5c6b58');
+  assert.equal(parsed.theme.primary, '#c9a227');
+
+  // The confidence line is not a colour and must not leak into the palette.
+  const second = app.parseThemeResult(
+    '!theme:Deep Forest,#0B3D26,#1A5C3E,#FFFFFF,#C1A05A,#C1A05A!\nconfidence:85',
+  );
+  assert.equal(second.theme.name, 'Deep Forest');
+  assert.equal(second.theme.primary, '#c1a05a');
+  assert.equal(second.missing.length, 0);
+});
+
+test('a palette is never served as an answer to a chat question', async () => {
+  const { kv } = kvStore();
+  const env = makeEnv({ MEM: kv });
+  const ask = 'Generate ONLY a style definition. Based on this vibe: cold slate';
+  await recordStyleCandidate(env, {
+    input: ask,
+    answer: '!theme:Slate,#111,#222,#eee,#333,#09f!',
+    confidence: 60,
+  });
+
+  const resolved = await resolveTruth(env, ask);
+  assert.equal(resolved.layer, 'none');
+  assert.equal(resolved.answer, undefined);
 });
 
 test('a palette is generated every time and the better one keeps the record', async () => {

@@ -45,6 +45,13 @@
   // yet; they are declared so a deploy stops removing them.
   "unsafe": {
     "bindings": [
+      // ARA: the point of contact. She answers before any model is called.
+      {
+        "name": "ARA",
+        "type": "service",
+        "service": "ara",
+        "environment": "production"
+      },
       // The agent-browsing worker: ABROWSER is this account's name for it,
       // AGENT-BROWSING is the older spelling the code also accepts. This is the
       // reading half — the rendering half is BROWSER above, and they are not

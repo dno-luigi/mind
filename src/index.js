@@ -1,5 +1,6 @@
 import { json, fail, has, options, b64FromBytes, bytesFromB64, clientIp, keyMatches } from './util.js';
 import { charge } from './budget.js';
+import { askAra } from './ara.js';
 import { stateKv, objects, bindingReport, browserBinding, browsingServiceName } from './bindings.js';
 import { engineFor, setEngineFor, canUseCloudflare } from './engine.js';
 import {
@@ -566,6 +567,10 @@ async function chat(request, env, ctx) {
     return fail(429, 'budget_exhausted', `Daily budget reached (${gate.used}/${gate.limit} neurons). Resets at 00:00 UTC.`);
   }
 
+  // She is the first contact: no decision from her, no request.
+  const ara = await askAra(env, question || lastUser, 'general');
+  if (!ara.ok) return fail(502, 'ara_no_decision', `ARA did not decide (${ara.reason}).`);
+
   // A preset the user picked wins; decide() only fills the gap.
   const decision = await decide(env, {
     messages,
@@ -595,7 +600,7 @@ async function chat(request, env, ctx) {
 
   // Report the preset that actually ran, not the one the decision model named:
   // they diverge whenever it suggests a preset that no longer exists.
-  const reported = { ...decision, preset: preset?.id ?? null };
+  const reported = { ...decision, preset: preset?.id ?? null, ara: ara.bound ? { id: ara.id, move: ara.move, route: ara.route } : null };
   const wantsStream = body.stream !== false;
 
   // A curated (master) truth answers in place of the model, and instantly. A
