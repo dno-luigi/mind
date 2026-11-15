@@ -463,6 +463,47 @@ function withBrowse(messages, decision) {
 }
 
 /**
+ * A stored answer that asks him a question is not an answer. It is a call he has
+ * to make, and the call belongs on a card, not in the answer pane.
+ */
+function asksBack(text) {
+  const value = String(text || '').trim();
+  if (!value || value.length > 320) return false;
+  if (/\?\s*$/.test(value)) return true;
+  return /\b(what is the call|how would you like|do you want me to|please (specify|clarify)|let me know|can you clarify)\b/i.test(value);
+}
+
+/** The call, as options: take it, look at the pair, or write one. */
+function storedCall(truth) {
+  return {
+    id: 'want',
+    q: `That stored answer comes back as a question, not an answer: "${String(truth.answer).trim().slice(0, 180)}" What should happen?`,
+    options: [
+      { value: 'use', label: 'Use that stored answer as it stands' },
+      { value: 'kv', label: 'Show me the stored pair behind it' },
+      { value: 'write', label: 'Write a new answer now' },
+    ],
+  };
+}
+
+/** The record itself, for the call he asked for. */
+function storedPair(truth) {
+  const origin = truth.origin || {};
+  const when = origin.created ? new Date(origin.created).toISOString() : 'unknown';
+  return [
+    'The stored pair behind this ask:',
+    `- layer: ${truth.layer || 'unknown'}`,
+    `- id: ${truth.id || 'unknown'}`,
+    `- source: ${origin.source || truth.source || 'unknown'}`,
+    `- verified: ${origin.verified === true}`,
+    `- written: ${when}`,
+    `- key: ${truth.key || 'unknown'}`,
+    '',
+    String(truth.answer || ''),
+  ].join('\n');
+}
+
+/**
  * Her notes, as a system turn. She decides and writes nothing: the answer is
  * generated, through orproxy and ai-proxy, so the record she decided from has to
  * reach the model that writes — otherwise it reads the ask with no history.
@@ -683,7 +724,40 @@ async function chat(request, env, ctx) {
   // stored truth is that preset's answer - so the cache still serves. Picking
   // any other preset means generate with it, cache or no cache.
   const mayServeCache = (!pinned || preset?.id === DEFAULT_PRESET) && !styling && !writeIt;
-  if (cachedTruth && mayServeCache) {
+  const hisChoice = body.araChoice || null;
+
+  // A stored answer that is really a question is the case the card exists for.
+  if (cachedTruth && mayServeCache && decision.truth && !hisChoice) {
+    const truth = decision.truth;
+    const unverified = truth.origin ? truth.origin.verified === false : truth.layer !== 'master';
+    if (unverified && asksBack(truth.answer)) {
+      const body = [
+        `data: ${JSON.stringify({ type: 'clarify', question: storedCall(truth), ara: { id: ara.id, move: ara.move } })}`,
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n\n');
+      return new Response(body + '\n', { headers: SSE_HEADERS });
+    }
+  }
+
+  // He looked at the pair: the record speaks for itself.
+  if (hisChoice === 'kv' && decision.truth?.answer) {
+    const text = storedPair(decision.truth);
+    if (!wantsStream) return json({ text, route: 'truth', model: decision.truth.layer, decision: reported });
+    const recordStream = new ReadableStream({
+      start(controller) {
+        const send = (chunk) => chunk && controller.enqueue(encoder.encode(chunk));
+        send(meta({ route: 'truth', model: decision.truth.layer, preset: preset?.id, decision: reported }));
+        send(delta(text));
+        send(DONE);
+        controller.close();
+      },
+    });
+    return new Response(recordStream, { headers: SSE_HEADERS });
+  }
+
+  if (cachedTruth && mayServeCache && hisChoice !== 'write') {
     const truth = decision.truth;
     // A candidate is the answer this question got last time. Serving it is what
     // makes a repeat free, so the repetition promotion counts has to be recorded
