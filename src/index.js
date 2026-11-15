@@ -495,6 +495,7 @@ async function generate(request, env, ctx) {
       messages,
       preset: body.preset,
       presetLocked: body.presetLocked === true || body.presetsLocked === true,
+      style: body.style === true,
       stream: body.stream,
     }),
   });
@@ -551,6 +552,10 @@ async function chat(request, env, ctx) {
     Boolean(requestedPreset) &&
     (requestedPreset.id !== DEFAULT_PRESET || body.presetLocked === true);
 
+  // The Stylist asks for a palette, not for an answer. A stored truth would hand
+  // back the same theme for every vibe, which is the theme never changing.
+  const styling = body.style === true;
+
   const engine = await engineFor(env);
   const useCf = canUseCloudflare(env, engine);
 
@@ -596,7 +601,7 @@ async function chat(request, env, ctx) {
   // Picking Truth from the menu means "answer with the truth preset", and a
   // stored truth is that preset's answer - so the cache still serves. Picking
   // any other preset means generate with it, cache or no cache.
-  const mayServeCache = !pinned || preset?.id === DEFAULT_PRESET;
+  const mayServeCache = (!pinned || preset?.id === DEFAULT_PRESET) && !styling;
   if (cachedTruth && mayServeCache) {
     const truth = decision.truth;
     // A candidate is the answer this question got last time. Serving it is what

@@ -1631,12 +1631,12 @@ class App {
      * The client never learns which provider answered, which is why switching
      * between Workers AI and OpenRouter needs no frontend change.
      */
-    async streamChat({ messages, preset = null, presetLocked = false, signal = null }, onText) {
+    async streamChat({ messages, preset = null, presetLocked = false, style = false, signal = null }, onText) {
         const url = this.getProxyUrl();
         const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messages, preset, presetLocked, stream: true }),
+            body: JSON.stringify({ messages, preset, presetLocked, style, stream: true }),
             signal
         });
 
@@ -2573,11 +2573,12 @@ ${retry ? 'Your previous answer was unusable. Reply with that single line and no
         this.closeModal('aiThemeModal');
         this.showToast(retry ? 'Retrying theme…' : 'Generating theme…');
         
-        const preset = this.getCurrentPreset();
-        const usePreset = Boolean(preset && preset.key);
-
+        // The Stylist is not a chat turn: it must not borrow the picked preset
+        // (a document preset answers in prose and drops the theme line) and it
+        // must not read the store, which would return the same saved theme for
+        // every vibe.
         this.streamChat(
-            { messages: [{ role: 'user', content: prompt }], preset: usePreset ? preset.key : NO_PRESET_KEY },
+            { messages: [{ role: 'user', content: prompt }], preset: NO_PRESET_KEY, style: true },
             () => {}
         )
         .then(fullText => {

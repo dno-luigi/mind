@@ -1185,6 +1185,43 @@ test('a short ask still gets the instant cached truth', async () => {
   assert.equal(seen.length, 0);
 });
 
+test('a style request never takes the stored answer', async () => {
+  const { kv } = kvStore();
+  const seen = [];
+  const env = makeEnv({
+    MEM: kv,
+    AI: fakeAI({
+      async run(model, body = {}) {
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"chat","depth":"terse"}' };
+        seen.push(model);
+        if (body.stream) return sse(['!theme:Kill Bill,141414,1e1e1e,f5f5f5,333333,e01b24!']);
+        return { response: '!theme:Kill Bill,141414,1e1e1e,f5f5f5,333333,e01b24!' };
+      },
+    }),
+  });
+  const ask = 'Generate ONLY a style definition. Based on this vibe: kill bill red, pale text';
+  // A stored answer that matches this ask: serving it would repaint the app with
+  // the same palette no matter which vibe was typed.
+  await promote(env, {
+    input: ask,
+    answer: '!theme:Mob Green Yellow Madness,#0a1a0a,#152b15,#e0ff00,#33ff33,#f0ff00!',
+    layer: 'provisional',
+  });
+
+  const res = await call(env, '/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: ask }], preset: 'none', style: true }),
+  });
+  const events = await readSSE(res);
+  const text = events.filter((e) => e.type === 'delta').map((e) => e.text).join('');
+
+  assert.notEqual(events[0].route, 'truth');
+  assert.equal(text.includes('Mob Green Yellow Madness'), false);
+  assert.equal(text.includes('Kill Bill'), true);
+  assert.equal(seen.length, 1);
+});
+
 test('a long ask is generated instead of answered from a provisional cache hit', async () => {
   const ask = 'Write 8 numbered paragraphs about contract law.';
   const { kv } = kvStore();
