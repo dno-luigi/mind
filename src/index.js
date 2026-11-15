@@ -346,7 +346,7 @@ function pickCfModel(preset, images, { decision, explicit } = {}) {
 /** The provider ladder: Cloudflare first, OpenRouter when CF cannot serve it. */
 async function openUpstream(
   env,
-  { messages, images, preset, decision, explicit, allowCloudflare = true, freeRouter = false, ask = '' },
+  { messages, images, preset, decision, explicit, allowCloudflare = true, freeRouter = false, presetPinned = false, ask = '' },
 ) {
   const failures = [];
 
@@ -372,10 +372,12 @@ async function openUpstream(
     // A referenced OpenRouter preset owns its model, prompt and sampling params.
     // Request fields shallow-merge over preset fields, so sending ours here
     // would override the configuration the preset exists to hold.
-    // Only the switch sends traffic to the free router. A deployment with no AI
-    // binding is not the same thing: OpenRouter is its only engine, so it keeps
-    // the presets and the paid model it always had.
-    const freeOnly = Boolean(freeRouter);
+    // Only the switch sends traffic to the free router, and only for a request
+    // that did not pin a preset. A deployment with no AI binding is not the same
+    // thing: OpenRouter is its only engine, so it keeps the presets and the paid
+    // model it always had. A preset he picked keeps its own model - Doc is the
+    // document model, not whatever free router happens to be serving.
+    const freeOnly = Boolean(freeRouter) && !presetPinned;
     const usesPreset = !freeOnly && Boolean(preset?.orPreset);
     const model = freeOnly ? or.freeModelFor(env) : or.modelFor(env, preset);
     // A prompt that came from the secret store is the single source of truth, so
@@ -650,6 +652,7 @@ async function chat(request, env, ctx) {
       explicit: pinned,
       allowCloudflare: useCf,
       freeRouter: engine === 'openrouter',
+      presetPinned: pinned,
     });
     let text = '';
     let frames = 0;
@@ -723,6 +726,7 @@ async function chat(request, env, ctx) {
     explicit: pinned,
     allowCloudflare: useCf,
     freeRouter: engine === 'openrouter',
+    presetPinned: pinned,
   });
 
   const out = new ReadableStream({
