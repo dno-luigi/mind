@@ -624,7 +624,10 @@ async function chat(request, env, ctx) {
     // Streamed, because the client reads this endpoint as events: a bare JSON
     // body looked like nothing had happened.
     const question = (ara.clarify.questions || [])[0] || null;
+    // Her words first, then the options: a card with an empty pane is not a card.
+    const said = ara.clarify.text || (question && question.q) || '';
     const body = [
+      ...(said ? [`data: ${JSON.stringify({ type: 'delta', text: said })}`, ''] : []),
       `data: ${JSON.stringify({ type: 'clarify', question, ara: { id: ara.id } })}`,
       '',
       'data: [DONE]',
