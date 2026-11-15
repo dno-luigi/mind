@@ -686,7 +686,37 @@ async function chat(request, env, ctx) {
   // stored truth is that preset's answer - so the cache still serves. Picking
   // any other preset means generate with it, cache or no cache.
   const mayServeCache = (!pinned || preset?.id === DEFAULT_PRESET) && !styling && !writeIt;
-  if (cachedTruth && mayServeCache) {
+  const hisChoice = body.araChoice || null;
+
+  // He asked for the record behind a stored non-answer.
+  if (hisChoice === 'pair' && decision.truth?.answer) {
+    const origin = decision.truth.origin || {};
+    const text = [
+      'The stored pair behind this ask:',
+      `- layer: ${decision.truth.layer || 'unknown'}`,
+      `- id: ${decision.truth.id || 'unknown'}`,
+      `- source: ${origin.source || 'unknown'}`,
+      `- verified: ${origin.verified === true}`,
+      `- written: ${origin.created ? new Date(origin.created).toISOString() : 'unknown'}`,
+      `- key: ${decision.truth.key || 'unknown'}`,
+      '',
+      String(decision.truth.answer || ''),
+    ].join('\n');
+
+    if (!wantsStream) return json({ text, route: 'truth', model: decision.truth.layer, decision: reported });
+    const pairStream = new ReadableStream({
+      start(controller) {
+        const send = (chunk) => chunk && controller.enqueue(encoder.encode(chunk));
+        send(meta({ route: 'truth', model: decision.truth.layer, preset: preset?.id, decision: reported }));
+        send(delta(text));
+        send(DONE);
+        controller.close();
+      },
+    });
+    return new Response(pairStream, { headers: SSE_HEADERS });
+  }
+
+  if (cachedTruth && mayServeCache && hisChoice !== 'write') {
     const truth = decision.truth;
     // A candidate is the answer this question got last time. Serving it is what
     // makes a repeat free, so the repetition promotion counts has to be recorded
