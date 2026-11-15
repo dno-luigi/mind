@@ -42,3 +42,8 @@ Rebound to her: 13 tests that pinned no preset now bind `araStub('<action>')`,
 and the trace source reads `intent:ara` instead of `intent:clef-flash`.
 
 At the time of writing: 111 passed, 0 failed (was 120 before the removal).
+
+## 2026-11-15, later
+
+The test file was deleted on the owner's instruction: he learns from her
+decisions, not from tests written without him.
