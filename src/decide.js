@@ -181,11 +181,7 @@ export async function decide(
   // cache or a curated pair is keyed by has to be lifted out of it.
   const lastUser = questionOf([...messages].reverse().find((m) => m.role === 'user')?.content || '');
 
-  // Her answer comes first: a stored truth is a stored answer, and answering
-  // from it before she has said where this goes is how a theme request came back
-  // as "I cannot change themes".
   const intent = fromAra(ara, presetId);
-  const herLane = ara && ara.bound ? intent.task : null;
 
   const kv = stateKv(env);
   const memo = kv ? L1 : null;
@@ -206,10 +202,10 @@ export async function decide(
   if (kv) {
     // A palette request is routed, never answered: a stored truth is an answer,
     // and serving one here is what handed back the same theme for every vibe.
-    // Only an answer or a truth ask may be served from the store; a palette, a
-    // page read or a card op is work, not a lookup.
-    const truthWanted = !herLane || herLane === 'chat';
-    const truth = style || !truthWanted ? null : await resolveTruth(env, lastUser).catch(() => null);
+    // Everything but a palette may take a stored answer, whatever lane she
+    // named: he asked for the store to answer again, and a cache that stays out
+    // of the way is a cache that misses.
+    const truth = style ? null : await resolveTruth(env, lastUser).catch(() => null);
     // A candidate is an answer this pipeline already produced for this exact
     // question, so it is a cache hit too. Dropping it here meant every repeated
     // ask was generated again — and came back with a different answer, which is
