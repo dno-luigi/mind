@@ -758,6 +758,10 @@ class App {
         }
 
         document.getElementById('menuFab').addEventListener('click', () => this.openModal('settingsModal'));
+        // The globe was drawn but never listened to, so the browser it opens
+        // could not be reached from anywhere in the app.
+        const webFab = document.getElementById('webFab');
+        if (webFab) webFab.addEventListener('click', () => this.openBrowser());
         document.getElementById('viewFab').addEventListener('click', () => this.cycleView());
         document.getElementById('undoFabTop').addEventListener('click', () => this.undo());
 
