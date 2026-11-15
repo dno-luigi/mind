@@ -606,11 +606,12 @@ async function chat(request, env, ctx) {
   // Half a record is not a record: she keeps what the run produced beside what
   // she chose, so the next decision is made with the result in view.
   if (ara.bound && ara.id) {
-    reportOutcome(env, ara.id, {
+    // Awaited: a fire-and-forget subrequest is dropped when the stream ends.
+    await reportOutcome(env, ara.id, {
       returned: decision.source === 'cache' ? decision.cacheSource || 'stored' : 'generated',
       stored: decision.cacheSource || null,
       route: decision.task || null,
-    }).catch(() => null);
+    });
   }
   const wantsStream = body.stream !== false;
 
