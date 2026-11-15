@@ -19,7 +19,7 @@ const CHARS_PER_TOKEN = 3;
 const SAFETY = 0.8;
 
 export const QUESTIONS = {
-  task: { type: 'choice', choices: ['chat', 'transform', 'generate', 'extract', 'compare'] },
+  task: { type: 'choice', choices: ['chat', 'transform', 'generate', 'extract', 'compare', 'style'] },
   preset: { type: 'choice', choices: ['truth', 'operator', 'mnl'] },
   depth: { type: 'choice', choices: ['terse', 'normal', 'deep'] },
   tone: { type: 'choice', choices: ['plain', 'precise', 'playful'] },
@@ -244,6 +244,7 @@ export async function decide(
     presetId = null,
     allowPreset = true,
     engine = 'cloudflare',
+    style = false,
   } = {},
 ) {
   const trace = [];
@@ -269,7 +270,9 @@ export async function decide(
   // provisional are checked before the decision cache. Memory sits in front of KV
   // because a KV read can lag the write that produced it.
   if (kv) {
-    const truth = await resolveTruth(env, lastUser).catch(() => null);
+    // A palette request is routed, never answered: a stored truth is an answer,
+    // and serving one here is what handed back the same theme for every vibe.
+    const truth = style ? null : await resolveTruth(env, lastUser).catch(() => null);
     // A candidate is an answer this pipeline already produced for this exact
     // question, so it is a cache hit too. Dropping it here meant every repeated
     // ask was generated again — and came back with a different answer, which is

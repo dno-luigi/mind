@@ -552,9 +552,9 @@ async function chat(request, env, ctx) {
     Boolean(requestedPreset) &&
     (requestedPreset.id !== DEFAULT_PRESET || body.presetLocked === true);
 
-  // The Stylist asks for a palette, not for an answer. A stored truth would hand
-  // back the same theme for every vibe, which is the theme never changing.
-  const styling = body.style === true;
+  // The Stylist asks for a palette, not for an answer. That hint goes to the
+  // decision model, which names the task and is what routes the request.
+  const styleHint = body.style === true;
 
   const engine = await engineFor(env);
   const useCf = canUseCloudflare(env, engine);
@@ -573,14 +573,22 @@ async function chat(request, env, ctx) {
     presetId: pinned ? requested : null,
     allowPreset: !noneSelected,
     engine,
+    style: styleHint,
   });
+  // Clef's answer routes it too: a request it classified as a style ask is the
+  // same thing as one the client marked, whichever arrives first.
+  const styling = styleHint || decision.task === 'style';
   // A deliberate pick wins outright. Otherwise the decision steers, and the
   // preset the client sent (truth, normally) is the fallback prompt.
-  const chosen = noneSelected
+  // A palette is one line of directives: a preset's prompt answers in its own
+  // shape instead (Doc returned "!EmeraldTerminal,…!" with no theme keyword).
+  const chosen = styling
     ? null
-    : pinned
-      ? requestedPreset
-      : (decision.preset && findPreset(decision.preset)) || requestedPreset || findPreset(DEFAULT_PRESET);
+    : noneSelected
+      ? null
+      : pinned
+        ? requestedPreset
+        : (decision.preset && findPreset(decision.preset)) || requestedPreset || findPreset(DEFAULT_PRESET);
   // Every preset carries its own prompt from src/prompts, so a served truth and a
   // generated one see the same text and no store can substitute another.
   const preset = chosen;

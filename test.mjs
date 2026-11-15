@@ -1192,7 +1192,7 @@ test('a style request never takes the stored answer', async () => {
     MEM: kv,
     AI: fakeAI({
       async run(model, body = {}) {
-        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"chat","depth":"terse"}' };
+        if (model.startsWith('@cf/cloudflare/clef')) return { response: '{"task":"style","depth":"terse"}' };
         seen.push(model);
         if (body.stream) return sse(['!theme:Kill Bill,141414,1e1e1e,f5f5f5,333333,e01b24!']);
         return { response: '!theme:Kill Bill,141414,1e1e1e,f5f5f5,333333,e01b24!' };
@@ -1216,6 +1216,10 @@ test('a style request never takes the stored answer', async () => {
   const events = await readSSE(res);
   const text = events.filter((e) => e.type === 'delta').map((e) => e.text).join('');
 
+  // The decision model is what routes it: clef named the task, and the answer
+  // was generated rather than served.
+  assert.equal(events[0].decision.task, 'style');
+  assert.equal(events[0].decision.trace.includes('intent:clef-flash'), true);
   assert.notEqual(events[0].route, 'truth');
   assert.equal(text.includes('Mob Green Yellow Madness'), false);
   assert.equal(text.includes('Kill Bill'), true);
