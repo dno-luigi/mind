@@ -21,10 +21,12 @@ import {
   promote,
   listCandidates,
   recordStyleCandidate,
+  listStyleCandidates,
   confidenceOf,
   PROMOTE_AT,
 } from './src/truth.js';
 import { questionOf } from './src/truth.js';
+import { adminQueue } from './src/admin.js';
 import { sha256Hex } from './src/util.js';
 import { upstreamError, sseData, frameShape, fromWorkersAI } from './src/normalize.js';
 
@@ -1234,6 +1236,58 @@ test('a style request never takes the stored answer', async () => {
   assert.equal(record.kind, 'style');
   assert.equal(record.answer.includes('Kill Bill'), true);
   assert.equal(record.attempts, 1);
+});
+
+test('the style population lists only palettes, newest first', async () => {
+  const { kv } = kvStore();
+  const env = makeEnv({ MEM: kv });
+  const first = await recordStyleCandidate(env, {
+    input: 'vibe one',
+    answer: '!theme:One,#111,#222,#333,#444,#555!',
+    confidence: 50,
+  });
+  await recordStyleCandidate(env, {
+    input: 'vibe two',
+    answer: '!theme:Two,#111,#222,#333,#444,#555!',
+    confidence: 55,
+  });
+  // Pin the older record's clock: the store does not stamp sub-millisecond time.
+  const older = JSON.parse(await kv.get(`style:${first.id}`));
+  older.lastAt = '2026-01-01T00:00:00.000Z';
+  await kv.put(`style:${first.id}`, JSON.stringify(older));
+  await recordCandidate(env, { input: 'a chat question', answer: 'an answer' }, ctx);
+
+  const listed = await listStyleCandidates(env);
+  assert.equal(listed.length, 2);
+  assert.equal(listed[0].answer.includes('Two'), true);
+  assert.equal(listed[1].answer.includes('One'), true);
+  assert.equal(listed.every((entry) => entry.kind === 'style'), true);
+});
+
+test('the queue lists the kept palette and the one it beat', async () => {
+  const { kv } = kvStore();
+  const env = makeEnv({ MEM: kv, ADMIN_KEY: 'test-key' });
+  const ask = 'Generate ONLY a style definition. Based on this vibe: cold slate';
+  await recordStyleCandidate(env, { input: ask, answer: '!theme:Slate,#111,#222,#eee,#333,#09f!', confidence: 60 });
+  await recordStyleCandidate(env, { input: ask, answer: '!theme:Ash,#000,#111,#eee,#333,#09f!', confidence: 40 });
+
+  const url = new URL('https://mind.example/api/admin/queue');
+  const res = await adminQueue(
+    new Request(url.toString(), { headers: { 'x-admin-key': 'test-key' } }),
+    env,
+    url,
+  );
+  const data = await res.json();
+
+  assert.equal(data.styleTotal, 1);
+  assert.equal(data.styles[0].answer.includes('Slate'), true);
+  assert.equal(data.styles[0].confidence, 60);
+  assert.equal(data.styles[0].attempts, 2);
+  assert.equal(data.styles[0].alternatives.length, 1);
+  assert.equal(data.styles[0].alternatives[0].answer.includes('Ash'), true);
+  assert.equal(data.styles[0].alternatives[0].confidence, 40);
+  // A palette is not an answer to a chat question, so it is not in the queue rows.
+  assert.equal(data.rows.length, 0);
 });
 
 test('a palette is generated every time and the better one keeps the record', async () => {

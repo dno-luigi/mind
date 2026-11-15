@@ -547,6 +547,15 @@
     </div>
 
 
+    <div class="keys-panel">
+      <div class="keys-controls">
+        <strong style="font-size:0.95em;">Style palettes</strong>
+        <button id="stylesRefresh">Refresh</button>
+      </div>
+      <div id="stylesStatus" class="status-message">Locked.</div>
+      <div id="stylesBody"></div>
+    </div>
+
     <div id="editor-tab" class="tab-content active">
       <label for="query">Query (exact):</label>
       <input type="text" id="query" placeholder="e.g. what is this?" value="ranger1189">
@@ -684,6 +693,7 @@
         // editor's key should already be loaded.
         clearRows();
         loadAll();
+        loadStyles();
         // The truth worker has its own ADMIN_KEY. One password on both workers is
         // the common case, so carry the console key across; a different one is
         // typed in the gate or in the editor and never guessed after this point.
@@ -740,6 +750,64 @@
         say(keysStatus, 'Stopped: ' + err.message, true);
       } finally {
         scanning = false;
+      }
+    }
+
+    // ========= Style palettes =========
+    // The Stylist keeps one palette per question and logs every answer it beat or
+    // lost to. Both are shown: a confidence on its own says nothing about the
+    // palette it was compared against.
+    const stylesBody = document.getElementById('stylesBody');
+    const stylesStatus = document.getElementById('stylesStatus');
+
+    function escaped(text) {
+      const div = document.createElement('div');
+      div.textContent = text == null ? '' : String(text);
+      return div.innerHTML;
+    }
+
+    async function loadStyles() {
+      if (!adminKey) return;
+      say(stylesStatus, 'Loading palettes…');
+      try {
+        const data = await adminFetch('/api/admin/queue?limit=200');
+        const styles = Array.isArray(data.styles) ? data.styles : [];
+        stylesBody.innerHTML = '';
+        if (!styles.length) {
+          say(stylesStatus, 'No palettes stored yet.');
+          return;
+        }
+        for (const entry of styles) {
+          const card = document.createElement('div');
+          card.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:10px;padding:10px 12px;margin:0 0 10px;';
+
+          const alternatives = (entry.alternatives || []).map((alt) =>
+            '<div style="margin-top:8px;padding-top:6px;border-top:1px dashed rgba(255,255,255,0.18);">' +
+              '<div style="font-size:0.78em;opacity:0.75;">logged' +
+                (alt.confidence == null ? '' : ' · confidence ' + escaped(alt.confidence)) +
+                (alt.model ? ' · ' + escaped(alt.model) : '') +
+                (alt.count ? ' · seen ' + escaped(alt.count) + '×' : '') +
+              '</div>' +
+              '<div style="font-family:ui-monospace,monospace;font-size:0.85em;word-break:break-word;">' + escaped(alt.answer) + '</div>' +
+            '</div>').join('');
+
+          card.innerHTML =
+            '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">' +
+              '<div style="font-weight:600;word-break:break-word;">' + escaped(entry.question) + '</div>' +
+              '<div style="font-size:0.78em;opacity:0.75;">' + escaped(entry.attempts || 0) + ' run' + ((entry.attempts || 0) === 1 ? '' : 's') +
+                (entry.lastAt ? ' · ' + escaped(entry.lastAt) : '') + '</div>' +
+            '</div>' +
+            '<div style="margin-top:8px;font-size:0.78em;opacity:0.75;">kept' +
+              (entry.confidence == null ? ' · no confidence reported' : ' · confidence ' + escaped(entry.confidence)) +
+              (entry.model ? ' · ' + escaped(entry.model) : '') +
+            '</div>' +
+            '<div style="font-family:ui-monospace,monospace;font-size:0.9em;word-break:break-word;">' + escaped(entry.answer) + '</div>' +
+            alternatives;
+          stylesBody.appendChild(card);
+        }
+        say(stylesStatus, styles.length + ' palette' + (styles.length === 1 ? '' : 's') + ' stored.');
+      } catch (err) {
+        say(stylesStatus, 'Could not load palettes: ' + err.message, true);
       }
     }
 
@@ -842,6 +910,7 @@
       say(adminStatus, 'Key forgotten.', false);
     };
     document.getElementById('keysLoadAll').onclick = loadAll;
+    document.getElementById('stylesRefresh').onclick = loadStyles;
     document.getElementById('keysStop').onclick = () => { scanning = false; };
     document.getElementById('keysExport').onclick = () => {
       if (!storeRows.length) { say(keysStatus, 'Nothing loaded to export.', true); return; }

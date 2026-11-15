@@ -599,6 +599,31 @@ export async function recordStyleCandidate(env, { input, answer, confidence, pre
 }
 
 /**
+ * The style population, newest first. One record per question: the palette that
+ * is kept, and every answer it beat or lost to, so both can be read side by side.
+ */
+export async function listStyleCandidates(env, { limit = 40 } = {}) {
+  const kv = stateKv(env);
+  if (!kv || typeof kv.list !== 'function') return [];
+
+  const listed = await kv.list({ prefix: 'style:', limit }).catch(() => null);
+  const keys = listed?.keys || [];
+  const out = [];
+
+  for (const entry of keys) {
+    const raw = await kv.get(entry.name).catch(() => null);
+    if (!raw) continue;
+    try {
+      out.push(JSON.parse(raw));
+    } catch {
+      /* skip a corrupt record */
+    }
+  }
+
+  return out.sort((a, b) => String(b.lastAt || '').localeCompare(String(a.lastAt || '')));
+}
+
+/**
  * Promote a candidate, or save an edit of one, into a truth layer.
  *
  * Master records carry no expiry: a hand-curated answer that vanishes after

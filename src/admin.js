@@ -1,6 +1,6 @@
 import { keyMatches } from './util.js';
 import { stateKv, masterKv } from './bindings.js';
-import { listCandidates, PROMOTE_AT } from './truth.js';
+import { listCandidates, listStyleCandidates, PROMOTE_AT } from './truth.js';
 
 /**
  * The console is a read-and-curate surface, not a chat route: it lists what is
@@ -22,6 +22,7 @@ const KINDS = [
   ['truth:master:', 'master'],
   ['truth:provisional:', 'provisional'],
   ['candidate:', 'candidate'],
+  ['style:', 'style'],
   ['decision:', 'decision'],
   ['review:', 'review'],
   ['budget:', 'budget'],
@@ -136,7 +137,9 @@ function rowFor(store, key, raw) {
     preview: answer.replace(/\s+/g, ' ').trim().slice(0, PREVIEW_CHARS),
     chars: answer.length,
     bytes: typeof raw === 'string' ? raw.length : 0,
-    hits: Number(value?.hits) || 0,
+    hits: Number(value?.hits) || Number(value?.attempts) || 0,
+    confidence: typeof value?.confidence === 'number' ? value.confidence : null,
+    alternatives: Array.isArray(value?.alternatives) ? value.alternatives.length : 0,
     saved: savedOf(value),
   };
 }
@@ -238,7 +241,10 @@ export async function adminQueue(request, env, url) {
   if (gate) return gate;
 
   const limit = clampLimit(url.searchParams.get('limit'));
-  const candidates = await listCandidates(env, { limit }).catch(() => []);
+  const [candidates, styles] = await Promise.all([
+    listCandidates(env, { limit }).catch(() => []),
+    listStyleCandidates(env, { limit }).catch(() => []),
+  ]);
 
   const rows = candidates.map((entry) => ({
     id: entry?.id || null,
@@ -255,12 +261,37 @@ export async function adminQueue(request, env, url) {
     lastAt: entry?.lastAt || null,
   }));
 
+  // Palettes are not answers to a chat question, so they are listed beside the
+  // queue rather than in it. The alternatives travel whole: the point of logging
+  // both is being able to read both.
+  const styleRows = styles.map((entry) => ({
+    key: entry?.id ? `style:${entry.id}` : null,
+    question: String(entry?.query || entry?.input || '').slice(0, 200),
+    answer: String(entry?.answer || '').slice(0, 2000),
+    confidence: typeof entry?.confidence === 'number' ? entry.confidence : null,
+    attempts: Number(entry?.attempts) || 0,
+    alternatives: (Array.isArray(entry?.alternatives) ? entry.alternatives : []).map((alt) => ({
+      answer: String(alt?.answer || '').slice(0, 2000),
+      confidence: typeof alt?.confidence === 'number' ? alt.confidence : null,
+      count: Number(alt?.count) || 0,
+      model: alt?.model || null,
+      at: alt?.at || null,
+    })),
+    preset: entry?.preset || null,
+    route: entry?.route || null,
+    model: entry?.model || null,
+    firstAt: entry?.firstAt || null,
+    lastAt: entry?.lastAt || null,
+  }));
+
   return adminJson({
     ok: true,
     promoteAt: PROMOTE_AT,
     total: rows.length,
     ready: rows.filter((row) => row.suggested).length,
     rows,
+    styleTotal: styleRows.length,
+    styles: styleRows,
   });
 }
 
