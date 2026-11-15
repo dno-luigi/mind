@@ -181,6 +181,12 @@ export async function decide(
   // cache or a curated pair is keyed by has to be lifted out of it.
   const lastUser = questionOf([...messages].reverse().find((m) => m.role === 'user')?.content || '');
 
+  // Her answer comes first: a stored truth is a stored answer, and answering
+  // from it before she has said where this goes is how a theme request came back
+  // as "I cannot change themes".
+  const intent = fromAra(ara, presetId);
+  const herLane = ara && ara.bound ? intent.task : null;
+
   const kv = stateKv(env);
   const memo = kv ? L1 : null;
   const cacheKey = `decision:${await sha256Hex(`${lastUser.slice(-4000)}|${images.length}|${presetId || ''}`)}`;
@@ -200,7 +206,10 @@ export async function decide(
   if (kv) {
     // A palette request is routed, never answered: a stored truth is an answer,
     // and serving one here is what handed back the same theme for every vibe.
-    const truth = style ? null : await resolveTruth(env, lastUser).catch(() => null);
+    // Only an answer or a truth ask may be served from the store; a palette, a
+    // page read or a card op is work, not a lookup.
+    const truthWanted = !herLane || herLane === 'chat';
+    const truth = style || !truthWanted ? null : await resolveTruth(env, lastUser).catch(() => null);
     // A candidate is an answer this pipeline already produced for this exact
     // question, so it is a cache hit too. Dropping it here meant every repeated
     // ask was generated again — and came back with a different answer, which is
@@ -208,8 +217,8 @@ export async function decide(
     // enough to stand in for the ask is decided by the caller (a brief ask only).
     if (truth?.layer === 'master' || truth?.layer === 'provisional' || truth?.layer === 'candidate') {
       return {
-        preset: presetId || DEFAULT_PRESET,
-        task: 'chat',
+        preset: presetId || intent.preset || DEFAULT_PRESET,
+        task: intent.task,
         depth: 'normal',
         tone: 'plain',
         source: 'cache',
@@ -242,9 +251,7 @@ export async function decide(
     trace.push('cache:unbound');
   }
 
-  // 2. intent — her answer, nothing else decides. `truth` is the store's lane;
-  // everything else is written, and the route says which prompt runs.
-  const intent = fromAra(ara, presetId);
+  // 2. intent — already known.
   trace.push(`intent:${intent.source}`);
 
   // 3. browse
