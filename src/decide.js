@@ -194,7 +194,10 @@ export async function decide(
   // corrected preset came back byte-for-byte until the wording changed. Hashing the
   // text means editing a prompt invalidates its cache without anyone tracking a
   // version by hand.
-  const promptText = String(findPreset(presetId || DEFAULT_PRESET)?.prompt || '');
+  // A preset carries its prompt as `system` (src/presets.js); reading `prompt`
+  // hashed an empty string, which made the fingerprint a constant and the whole
+  // guard useless.
+  const promptText = String(findPreset(presetId || DEFAULT_PRESET)?.system || '');
   const promptPrint = (await sha256Hex(promptText)).slice(0, 16);
   const cacheKey = `decision:${await sha256Hex(`${lastUser.slice(-4000)}|${images.length}|${presetId || ''}|${promptPrint}`)}`;
 
