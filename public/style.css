@@ -251,6 +251,32 @@ body.bar-dragging #inputPanel { transition: none; }
    it into a tall sliver on a narrow phone, where four controls leave it little width; the
    direction that earns its keep is shrinking the bar to give the cards the room. */
 body.bar-custom #inputPanel { overflow: hidden; }
+
+/* The bar can leave the rail. A floating bar is for the moments the bottom edge is the
+   wrong place for it; drop it near the rail and it goes home. */
+#barFloatBtn {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 50%; width: 40px; height: 40px; flex-shrink: 0; cursor: pointer;
+    font-size: 12px; display: flex; align-items: center; justify-content: center;
+    opacity: 0.65; transition: opacity 0.2s, border-color 0.2s, color 0.2s;
+}
+#barFloatBtn:hover { opacity: 1; border-color: var(--primary); }
+body.bar-floating #barFloatBtn { opacity: 1; color: var(--primary); border-color: var(--primary); }
+body.bar-floating #inputPanel {
+    left: 0; top: 0; right: auto; bottom: auto;
+    width: min(360px, calc(100vw - 24px));
+    border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.45);
+    cursor: move; touch-action: none;
+}
+body.bar-floating #inputPanel button,
+body.bar-floating #inputPanel input { cursor: pointer; }
+body.bar-floating.bar-dragging #inputPanel { cursor: grabbing; }
+body.bar-floating #inputPanel #userInput { cursor: text; }
+/* Six controls leave a 360px bar no room for a field, so a loose bar stacks: the field
+   gets the whole first row and the controls sit under it. */
+body.bar-floating #inputPanel { flex-wrap: wrap; }
+body.bar-floating #userInput { order: -1; flex: 1 1 100%; }
 #userInput {
     flex: 1; padding: 12px 14px; border-radius: 24px; border: 1px solid var(--border); 
     background: var(--bg); color: var(--text); font-size: 16px; outline: none; 

@@ -269,6 +269,89 @@ class App {
         // touches the handle.
         document.body.classList.toggle('bar-custom', saved > 0);
         panel.style.height = saved > 0 ? saved + 'px' : '';
+        this.applyBarFloat();
+    }
+
+    /** One place decides whether the bar is on the rail or loose on the page. */
+    applyBarFloat() {
+        const panel = document.getElementById('inputPanel');
+        if (!panel) return;
+        const float = this.settings.barFloat;
+        document.body.classList.toggle('bar-floating', Boolean(float));
+        if (float) {
+            panel.style.left = float.x + 'px';
+            panel.style.top = float.y + 'px';
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
+            panel.style.width = Math.min(360, window.innerWidth - 24) + 'px';
+            // Loose, the bar takes the height its stacked rows need; the height handle is
+            // for the docked bar, where it decides how much of the screen the rail takes.
+            panel.style.height = '';
+        } else {
+            panel.style.left = '';
+            panel.style.top = '';
+            panel.style.right = '';
+            panel.style.bottom = '';
+            panel.style.width = '';
+        }
+    }
+
+    /**
+     * Off the rail, or back on it. Docking forgets the loose position, so the next float
+     * starts somewhere sensible instead of where it was dragged hours ago.
+     */
+    setBarFloat(on) {
+        if (on) {
+            // A floating bar that is still hidden reads as a pin that does nothing.
+            if (this.settings.inputHidden) {
+                this.settings.inputHidden = false;
+                this.applyInputBar();
+            }
+            const panel = document.getElementById('inputPanel');
+            const height = panel ? panel.getBoundingClientRect().height : 71;
+            const width = Math.min(360, window.innerWidth - 24);
+            this.settings.barFloat = {
+                x: Math.round(Math.max(8, (window.innerWidth - width) / 2)),
+                y: Math.round(Math.max(8, window.innerHeight - height - 140)),
+            };
+        } else {
+            this.settings.barFloat = null;
+        }
+        this.applyBarFloat();
+        this.saveState();
+    }
+
+    /** A loose bar is dragged by its body; the line above it still sets its height. */
+    beginBarMove(event) {
+        if (!this.settings.barFloat) return;
+        // Buttons and the text field keep their own gestures; the line is the handle, and
+        // while the bar is loose the line moves it rather than resizing it.
+        if (event.target.closest('button, input')) return;
+        const panel = document.getElementById('inputPanel');
+        if (!panel) return;
+        event.preventDefault();
+        const rect = panel.getBoundingClientRect();
+        const grabX = event.clientX - rect.left;
+        const grabY = event.clientY - rect.top;
+        document.body.classList.add('bar-dragging');
+        const move = (e) => {
+            const x = Math.min(window.innerWidth - rect.width - 8, Math.max(8, e.clientX - grabX));
+            const y = Math.min(window.innerHeight - rect.height - 8, Math.max(8, e.clientY - grabY));
+            this.settings.barFloat = { x: Math.round(x), y: Math.round(y) };
+            this.applyBarFloat();
+        };
+        const end = (e) => {
+            document.body.classList.remove('bar-dragging');
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', end);
+            window.removeEventListener('pointercancel', end);
+            // Near the rail it goes home rather than hovering over the bottom edge.
+            if (e && e.clientY > window.innerHeight - 70) this.setBarFloat(false);
+            else this.saveState();
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', end);
+        window.addEventListener('pointercancel', end);
     }
 
     /**
@@ -787,7 +870,19 @@ class App {
         if (showInput) showInput.addEventListener('click', () => this.toggleInputBar(false));
 
         const inputGrab = document.getElementById('inputGrab');
-        if (inputGrab) inputGrab.addEventListener('pointerdown', (e) => this.beginInputResize(e));
+        if (inputGrab) {
+            // Docked, the line sets the height. Loose, it carries the bar around, which is
+            // the one handle that is always under the finger.
+            inputGrab.addEventListener('pointerdown', (e) => {
+                if (this.settings.barFloat) this.beginBarMove(e);
+                else this.beginInputResize(e);
+            });
+        }
+
+        const barFloatBtn = document.getElementById('barFloatBtn');
+        if (barFloatBtn) barFloatBtn.addEventListener('click', () => this.setBarFloat(!this.settings.barFloat));
+        const barPanel = document.getElementById('inputPanel');
+        if (barPanel) barPanel.addEventListener('pointerdown', (e) => this.beginBarMove(e));
         // Rotating a phone changes how many rows fit, so re-lay-out rather than leave a
         // card hanging past the bottom rail.
         let relayoutTimer = null;
@@ -1536,7 +1631,9 @@ class App {
         const panel = document.getElementById('inputPanel');
         const hidden = Boolean(this.settings.inputHidden);
         // The bar is the guardrail when it is up; the window edge when it is away.
-        const barTop = panel && !hidden && panel.offsetHeight ? panel.getBoundingClientRect().top : window.innerHeight;
+        // A loose bar is not a rail: it can sit anywhere, so the screen edge is the guard.
+        const floating = Boolean(this.settings.barFloat);
+        const barTop = !floating && panel && !hidden && panel.offsetHeight ? panel.getBoundingClientRect().top : window.innerHeight;
         const bottomGuard = Math.min(window.innerHeight, barTop) - 8;
         const room = bottomGuard - grid.getBoundingClientRect().top;
         return Math.max(1, Math.min(6, Math.floor((room + rowGap) / (rowHeight + rowGap))));
