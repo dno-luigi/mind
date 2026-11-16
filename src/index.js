@@ -642,9 +642,18 @@ async function chat(request, env, ctx) {
   const peeked = await peekTruth(env, question || lastUser).catch(() => null);
   // He said it is not a key. Told plainly, because the same bare words would
   // otherwise arrive as the same key card every time and the loop never ends.
-  const araAsk = body.notAKey === true
+  // Absence is a question, not a finding. Her answer to a docket audit described
+  // text that had simply never been provided as "corrupted", a cause nobody had
+  // established, and then built the conclusion on it. The rule goes in the ask she
+  // receives: a fact the source does not contain is his to supply, not hers to
+  // explain away.
+  const premiseRule = [
+    '',
+    '(Before you decide: if answering needs a fact the attached text does not contain - a date, a warrant or order type, a notice, a filing, an authority - ask the owner for it on a card with options. Never describe text that is absent as corrupted, unreadable or damaged, and never let an assumption about why it is absent carry an audit. Missing is missing; ask what it is.)',
+  ].join('\n');
+  const araAsk = (body.notAKey === true
     ? `${question || lastUser}\n\n(He has said this is not a lookup key and there is no stored pair. Treat it as ordinary prose and answer it.)`
-    : (question || lastUser);
+    : (question || lastUser)) + premiseRule;
   const ara = await askAra(env, araAsk, 'general', body.araChoice || null, peeked);
   if (!ara.ok) return fail(502, 'ara_no_decision', `ARA did not decide (${ara.reason}).`);
   // She is unsure: he is asked on a card, and no model is called behind her.

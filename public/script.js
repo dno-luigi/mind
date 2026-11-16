@@ -2101,7 +2101,76 @@ class App {
             accumulated += '\n\n---\n*This answer ended early: the stream closed mid-sentence, so the text above is all that arrived.*';
             onText(accumulated, false);
         }
+        // She said what she was missing. That line is stripped from the answer and
+        // becomes a question he can answer, because a gap he never sees is a gap
+        // that gets closed by a guess.
+        const gap = /!gap:([^!]+)!/i.exec(accumulated);
+        if (gap) {
+            const clean = accumulated.replace(gap[0], '').trimEnd();
+            onText(clean, false);
+            this.renderGap(this.streamingId, gap[1].trim(), prompt);
+            return clean;
+        }
         return accumulated;
+    }
+
+    /** What she said she was missing, as a field he can fill. */
+    renderGap(id, facts, prompt) {
+        const el = document.querySelector(`.flip-card[data-id="${id}"] .response-content`);
+        if (!el) return;
+        const box = document.createElement('div');
+        box.style.cssText = 'margin-top:14px; padding-top:10px; border-top:1px solid currentColor;';
+        const lead = document.createElement('p');
+        lead.style.cssText = 'margin:0 0 8px; opacity:0.75; font-size:13px;';
+        lead.textContent = `She needs what the document did not contain: ${facts}`;
+        const row = document.createElement('div');
+        // Stacked, because a card is often narrower than two controls side by side.
+        row.style.cssText = 'display:flex; flex-direction:column; gap:8px;';
+        const field = document.createElement('input');
+        field.type = 'text';
+        field.placeholder = 'Tell her what it is';
+        field.style.cssText = 'width:100%; min-height:0; height:40px; box-sizing:border-box; margin:0; padding:0 12px; border-radius:10px; border:1px solid currentColor; background:transparent; color:inherit; font:inherit;';
+        const send = document.createElement('button');
+        send.type = 'button';
+        send.textContent = 'Answer';
+        send.style.cssText = 'width:100%; height:40px; padding:0 16px; border-radius:10px; border:1px solid currentColor; background:transparent; color:inherit; font:inherit; cursor:pointer;';
+        const submit = () => {
+            const text = field.value.trim();
+            if (!text) { field.focus(); return; }
+            box.remove();
+            this.answerGap(prompt, text);
+        };
+        field.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); submit(); } });
+        send.addEventListener('click', submit);
+        row.append(field, send);
+        box.append(lead, row);
+        el.appendChild(box);
+    }
+
+    /**
+     * His fact, supplied. It goes to her row as the correction, and the same ask
+     * runs again with it in the material - which is the whole point of asking.
+     */
+    answerGap(prompt, text) {
+        const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`);
+        if (el) {
+            const note = document.createElement('p');
+            note.style.cssText = 'margin:0; opacity:0.7;';
+            note.textContent = `You said: ${text}`;
+            el.appendChild(note);
+        }
+        const id = this.lastRoute && this.lastRoute.decision && this.lastRoute.decision.ara
+            ? this.lastRoute.decision.ara.id
+            : null;
+        if (id != null) {
+            const verdictUrl = new URL('/api/verdict', this.getProxyUrl()).toString();
+            fetch(verdictUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, correct: false, correctedTo: text })
+            }).catch(() => this.showToast('Not recorded'));
+        }
+        this.sendRequest(`${prompt}\n\nThe owner supplies the missing fact: ${text}. Treat that as established.`, null);
     }
 
     /** Her question, with the three results as taps. Not an empty card. */
@@ -2216,7 +2285,9 @@ class App {
         // Her record now says the idiom was wrong, so the same words go again as prose;
         // otherwise his words are the ask.
         this.pendingNotAKey = !asIs;
-        this.sendRequest(asIs ? text : prompt, null);
+        // His correction is a premise on the same material: dropping the original
+        // ask threw away the document he was asking about.
+        this.sendRequest(asIs ? `${prompt}\n\nThe owner corrected you: ${text}. Treat that as established.` : prompt, null);
     }
 
     /** He tapped one: the same ask goes again, with his answer as the decision. */
@@ -2231,8 +2302,17 @@ class App {
             note.style.margin = '0';
             el.appendChild(note);
         }
+        const asked = this.clarifyQuestion;
+        this.clarifyQuestion = null;
         this.pendingAraChoice = option.value;
-        this.sendRequest(prompt, null);
+        // His answer belongs in the next pass as an established fact, not only in
+        // her routing choice - otherwise the answer he just gave never reaches the
+        // text that is analysed.
+        const label = option.label || option.value;
+        const withFact = asked && asked.q
+            ? `${prompt}\n\nHe answered your question "${asked.q}": ${label}. Treat that as established.`
+            : `${prompt}\n\nHe answered: ${label}. Treat that as established.`;
+        this.sendRequest(withFact, null);
     }
 
     stopStream() {
