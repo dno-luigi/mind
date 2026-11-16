@@ -103,13 +103,34 @@ export default {
       } catch {
         return fail(400, 'invalid_json', 'Send { id, correct, correctedTo }.');
       }
+      // A challenge is a person disagreeing, so it needs a person. Reading mind
+      // stays open; only the correction is gated, and only when login exists.
+      const gated = loginEnabled(env);
+      const actor = await sessionUser(request, env);
+      if (gated && !actor) {
+        return fail(401, 'sign_in_required', 'Sign in to correct her: a correction carries a name.');
+      }
       const sent = await sendVerdict(env, {
         id: verdict.id,
         correct: verdict.correct,
         correctedTo: verdict.correctedTo ?? null,
       });
       if (!sent) return fail(502, 'verdict_failed', 'Her row did not take the verdict.');
-      return json({ ok: true, id: verdict.id, correct: !!verdict.correct, correctedTo: verdict.correctedTo ?? null });
+      // Her schema has no field for this, so the attribution is kept here: a
+      // correction that cannot say who made it cannot be reviewed later.
+      const kv = stateKv(env);
+      if (kv) {
+        await kv
+          .put(`verdict:${Date.now()}:${verdict.id}`, JSON.stringify({
+            id: verdict.id,
+            actor: actor || 'anonymous',
+            correct: !!verdict.correct,
+            correctedTo: verdict.correctedTo ?? null,
+            at: new Date().toISOString(),
+          }))
+          .catch(() => null);
+      }
+      return json({ ok: true, id: verdict.id, actor: actor || 'anonymous', correct: !!verdict.correct, correctedTo: verdict.correctedTo ?? null });
     }
 
     if (url.pathname.startsWith('/api/')) {
@@ -1105,6 +1126,22 @@ async function chat(request, env, ctx) {
  * A session is a cookie, or a bearer for anything that is not a browser. The
  * token names the account it belongs to, so the right object is asked directly.
  */
+/**
+ * Sign-in is optional for using mind and required for correcting her: a
+ * correction is somebody's judgement, so it carries a name when names exist.
+ */
+const loginEnabled = (env) => Boolean(sessionsBinding(env)) && has(env, 'LOGIN_PASSWORD');
+
+async function sessionUser(request, env) {
+  const token = tokenFrom(request, SESSION_COOKIE);
+  const named = token ? tokenUser(token) : null;
+  if (!token || !named) return null;
+  const data = await readSession(env, token).catch(() => null);
+  if (!data) return null;
+  if (data.expiresAt && data.expiresAt <= Date.now()) return null;
+  return data.user || named;
+}
+
 async function sessionRoute(request, env) {
   const token = tokenFrom(request, SESSION_COOKIE);
   const user = token ? tokenUser(token) : null;

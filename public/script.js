@@ -2193,7 +2193,7 @@ class App {
      * His fact, supplied. It goes to her row as the correction, and the same ask
      * runs again with it in the material - which is the whole point of asking.
      */
-    answerGap(prompt, text) {
+    async answerGap(prompt, text) {
         const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`);
         if (el) {
             const note = document.createElement('p');
@@ -2205,12 +2205,8 @@ class App {
             ? this.lastRoute.decision.ara.id
             : null;
         if (id != null) {
-            const verdictUrl = new URL('/api/verdict', this.getProxyUrl()).toString();
-            fetch(verdictUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id, correct: false, correctedTo: text })
-            }).catch(() => this.showToast('Not recorded'));
+            const outcome = await this.submitVerdict({ id, correct: false, correctedTo: text });
+            if (outcome === 'sign-in-required') return;
         }
         this.sendRequest(`${prompt}\n\nThe owner supplies the missing fact: ${text}. Treat that as established.`, null);
     }
@@ -2311,17 +2307,9 @@ class App {
         const id = this.clarifyRowId;
         this.clarifyRowId = null;
         if (id != null) {
-            try {
-                const verdictUrl = new URL('/api/verdict', this.getProxyUrl()).toString();
-                const res = await fetch(verdictUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id, correct: false, correctedTo: text })
-                });
-                if (!res.ok) this.showToast('She did not take the correction');
-            } catch {
-                this.showToast('Correction not recorded');
-            }
+            const outcome = await this.submitVerdict({ id, correct: false, correctedTo: text });
+            // No name, no correction: the ask is not re-sent as if it had landed.
+            if (outcome === 'sign-in-required') return;
         }
 
         // Her record now says the idiom was wrong, so the same words go again as prose;
@@ -2961,6 +2949,36 @@ class App {
         target.dispatchEvent(new Event('input', { bubbles: true }));
         target.focus();
         this.showToast('Transcribed');
+    }
+
+    /**
+     * One place for a correction, so the sign-in answer is handled once. When the
+     * deployment has login on and nobody is signed in, the card asks for a name
+     * instead of writing an anonymous verdict.
+     */
+    async submitVerdict(payload) {
+        try {
+            const res = await fetch(new URL('/api/verdict', this.getProxyUrl()).toString(), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify(payload)
+            });
+            if (res.status === 401) {
+                const body = await res.json().catch(() => null);
+                this.showToast(body?.error?.message || 'Sign in to correct her');
+                this.openModal('settingsModal');
+                return 'sign-in-required';
+            }
+            if (!res.ok) {
+                this.showToast('She did not take the correction');
+                return 'failed';
+            }
+            return 'ok';
+        } catch {
+            this.showToast('Correction not recorded');
+            return 'failed';
+        }
     }
 
     async loadSession() {
