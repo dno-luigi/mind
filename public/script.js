@@ -3119,6 +3119,11 @@ class App {
         }
     }
 
+    /** A light that is visibly doing something, so a slow palette is not a silent wait. */
+    setThinking(on) {
+        document.body.classList.toggle('thinking', on);
+    }
+
     applyAITheme(retry = false) {
         const input = document.getElementById('aiThemePrompt');
         const desc = (input?.value || this.lastThemePrompt || '').trim();
@@ -3153,6 +3158,7 @@ at least 4.5:1, and Border must be visible against Bg. A style nobody can read i
 ${retry ? 'Your previous answer was unusable. Reply with those two lines and nothing else, with all five colours as 6-digit hex.\n' : ''}Do not output any other text.`;
 
         this.lastThemePrompt = desc;
+        this.setThinking(true);
         this.closeModal('aiThemeModal');
         this.showToast(retry ? 'Retrying theme…' : 'Generating theme…');
         
@@ -3181,6 +3187,7 @@ ${retry ? 'Your previous answer was unusable. Reply with those two lines and not
                 this.applyTheme();
                 this.saveState();
                 this.closeThemeIssue();
+                this.setThinking(false);
                 this.showToast(`Theme: ${built.name} - built from your words`);
                 return;
             }
@@ -3206,8 +3213,12 @@ ${retry ? 'Your previous answer was unusable. Reply with those two lines and not
                 this.showToast(`Theme: ${result.theme.name}`);
             }
             this.closeThemeIssue();
+            this.setThinking(false);
         })
-        .catch(err => this.showThemeIssue(desc, [], err.message));
+        .catch(err => {
+            this.setThinking(false);
+            this.showThemeIssue(desc, [], err.message);
+        });
     }
 
     /**
