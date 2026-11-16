@@ -627,28 +627,14 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
 /* The line under the chips explains; it is not an error. */
 .modal-hint.style-note { color: var(--text); opacity: 0.6; }
 
-/* While the Stylist is working the modal is gone, so the light on the brand carries it:
-   a small dot that breathes between bright and dim until the palette lands. */
-#brandPlaceholder::after {
-    content: '';
-    display: inline-block;
-    width: 7px;
-    height: 7px;
-    margin-left: 8px;
-    border-radius: 50%;
-    background: var(--primary);
-    opacity: 0;
-    transition: opacity 0.2s;
-    vertical-align: middle;
-}
-body.thinking #brandPlaceholder::after {
-    opacity: 1;
-    animation: theme-thinking 1.4s ease-in-out infinite;
-}
-@keyframes theme-thinking {
-    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--primary); }
-    50% { opacity: 0.18; box-shadow: 0 0 6px 1px var(--primary); }
+/* The thing that is about to change is the thing that moves. While a palette is being
+   made, the theme's name breathes, because the name is what is being rewritten - and the
+   same class is there to be put on whatever changes next. */
+.thinking-text { animation: thinking-text 1.4s ease-in-out infinite; }
+@keyframes thinking-text {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
 }
 @media (prefers-reduced-motion: reduce) {
-    body.thinking #brandPlaceholder::after { animation: none; opacity: 0.6; }
+    .thinking-text { animation: none; opacity: 0.6; }
 }

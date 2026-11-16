@@ -3119,9 +3119,14 @@ class App {
         }
     }
 
-    /** A light that is visibly doing something, so a slow palette is not a silent wait. */
-    setThinking(on) {
-        document.body.classList.toggle('thinking', on);
+    /**
+     * Whatever is about to change is what animates, so the movement points at the thing
+     * being rewritten instead of at a status light somewhere else. Defaults to the theme's
+     * name, because that is what the Stylist is about to change.
+     */
+    setThinking(on, target = null) {
+        const el = target || document.getElementById('brandPlaceholder');
+        if (el) el.classList.toggle('thinking-text', Boolean(on));
     }
 
     applyAITheme(retry = false) {
