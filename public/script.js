@@ -3167,7 +3167,21 @@ ${retry ? 'Your previous answer was unusable. Reply with those two lines and not
         .then(fullText => {
             const result = this.parseThemeResult(fullText);
             if (!result.complete) {
-                this.showThemeIssue(desc, result.missing);
+                // One silent second try: a malformed answer is usually a bad roll, not
+                // a sign that he described it wrong.
+                if (!retry) {
+                    this.applyAITheme(true);
+                    return;
+                }
+                // Twice unreadable is not his fault either, so the words become the
+                // palette instead of a card telling him to try again differently.
+                const built = this.paletteFromWords(desc);
+                this.theme = this.withVariants({ ...this.theme, ...built, mode: this.theme.mode || 'dark' });
+                this.rememberTheme(this.theme);
+                this.applyTheme();
+                this.saveState();
+                this.closeThemeIssue();
+                this.showToast(`Theme: ${built.name} - built from your words`);
                 return;
             }
 
@@ -3194,6 +3208,75 @@ ${retry ? 'Your previous answer was unusable. Reply with those two lines and not
             this.closeThemeIssue();
         })
         .catch(err => this.showThemeIssue(desc, [], err.message));
+    }
+
+    /**
+     * The words are enough. A mood, a subject, a colour: this reads what it can and
+     * runs it through the same contrast pass, so a bad model turn still lands on
+     * something readable instead of an apology.
+     */
+    paletteFromWords(desc) {
+        const words = String(desc || '').toLowerCase();
+        const has = (pattern) => pattern.test(words);
+        const title = String(desc || 'Your style')
+            .replace(/[^a-z0-9 ]+/gi, ' ')
+            .trim()
+            .split(/\s+/)
+            .slice(0, 3)
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join('');
+        const name = (title || 'YourStyle').slice(0, 24);
+
+        if (has(/monochrom|black and white|grayscale|greyscale|no colou?r/)) {
+            const stark = has(/high contrast|ultra|stark|hard/);
+            return { name, bg: '#000000', cardBg: stark ? '#111111' : '#141414', text: '#ffffff', border: stark ? '#ffffff' : '#5a5a5a', primary: '#ffffff' };
+        }
+        if (has(/paper|cream|parchment|newsprint|off.white|warm white/)) {
+            return { name, bg: '#f4efe4', cardBg: '#fffdf7', text: '#201b15', border: '#d6cbb6', primary: '#8a3b2a' };
+        }
+        if (has(/terminal|hacker|console|matrix|crt/)) {
+            return { name, bg: '#04110a', cardBg: '#07190f', text: '#b6ffce', border: '#1f4d31', primary: '#35ff8b' };
+        }
+
+        const hue = has(/red|strawberr|wine|blood/) ? 350
+            : has(/orange|amber|rust|autumn/) ? 26
+            : has(/yellow|gold|mustard/) ? 45
+            : has(/green|olive|forest|sage|moss/) ? 140
+            : has(/teal|cyan|aqua|seafoam/) ? 180
+            : has(/purple|violet|plum|indigo/) ? 270
+            : has(/pink|rose|blush/) ? 330
+            : has(/brown|earth|coffee|wood/) ? 28
+            : 210;
+        const light = has(/light|pale|daylight|airy|bright/);
+        const muted = has(/muted|soft|pastel|gentle|quiet|hushed/);
+        const neon = has(/neon|vivid|electric|glow|cyber|saturat/);
+        const sat = neon ? 85 : muted ? 22 : 45;
+
+        const bg = this.hslHex({ h: hue, s: light ? Math.min(sat, 22) : Math.min(sat, 40), l: light ? 95 : 10 });
+        const cardBg = this.hslHex({ h: hue, s: light ? Math.min(sat, 14) : Math.min(sat, 30), l: light ? 99 : 15 });
+        const text = this.readable(this.hslHex({ h: hue, s: Math.min(sat, 30), l: light ? 14 : 94 }), cardBg, 7);
+        const border = this.hslHex({ h: hue, s: Math.min(sat, 35), l: light ? 82 : 30 });
+        const primary = this.readable(this.hslHex({ h: hue, s: Math.max(sat, 55), l: light ? 42 : 62 }), cardBg, 4.6);
+        return { name, bg, cardBg, text, border, primary };
+    }
+
+    /** One tap, no model. Four looks that come up most, applied through the same pass. */
+    applyStylePreset(key) {
+        const presets = {
+            monochrome: { name: 'Monochrome', bg: '#000000', cardBg: '#111111', text: '#ffffff', border: '#ffffff', primary: '#ffffff' },
+            highContrast: { name: 'HighContrast', bg: '#050505', cardBg: '#0d0d0d', text: '#ffffff', border: '#9a9a9a', primary: '#ffd400' },
+            terminal: { name: 'Terminal', bg: '#04110a', cardBg: '#07190f', text: '#b6ffce', border: '#1f4d31', primary: '#35ff8b' },
+            paper: { name: 'WarmPaper', bg: '#f4efe4', cardBg: '#fffdf7', text: '#201b15', border: '#d6cbb6', primary: '#8a3b2a' }
+        };
+        const picked = presets[key];
+        if (!picked) return;
+        this.theme = this.withVariants({ ...this.theme, ...picked, mode: this.theme.mode || 'dark' });
+        this.rememberTheme(this.theme);
+        this.applyTheme();
+        this.saveState();
+        this.closeModal('aiThemeModal');
+        this.closeThemeIssue();
+        this.showToast(`Theme: ${picked.name}`);
     }
 
     /** The page theme's menu entry: the Stylist with no card attached. */
@@ -4023,6 +4106,9 @@ ${source.slice(0, 6000)}`;
         r.setProperty('--card-bg', this.theme.cardBg);
         r.setProperty('--text', this.theme.text);
         r.setProperty('--border', this.theme.border);
+        // White on primary only while white is actually readable on it: a monochrome
+        // theme put white labels on a white button and they vanished.
+        r.setProperty('--on-primary', this.colourContrast('#ffffff', this.theme.primary) >= 4.5 ? '#ffffff' : '#101010');
         const brand = document.getElementById('brandPlaceholder');
         if (brand) brand.textContent = this.theme.name || 'ai-Ncards';
     }

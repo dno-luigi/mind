@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>ai-Ncards</title>
-    <link rel="stylesheet" href="style.css?v=11">
+    <link rel="stylesheet" href="style.css?v=13">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
@@ -284,6 +284,13 @@
             <div class="modal-body">
                 <p style="margin-bottom:8px; font-size:13px; opacity:0.8;">Describe the vibe. The menu applies it.</p>
                 <textarea id="aiThemePrompt" placeholder="Kill Bill red, pale text..."></textarea>
+                <div class="style-chips">
+                    <button type="button" onclick="app.applyStylePreset('monochrome')">Monochrome</button>
+                    <button type="button" onclick="app.applyStylePreset('highContrast')">High contrast</button>
+                    <button type="button" onclick="app.applyStylePreset('terminal')">Terminal</button>
+                    <button type="button" onclick="app.applyStylePreset('paper')">Warm paper</button>
+                </div>
+                <p class="modal-hint style-note">Any description works - a mood, a film, a colour. The chips need no model.</p>
                 <p id="aiThemeStatus" class="modal-hint" hidden></p>
             </div>
             <div class="modal-footer">
@@ -374,6 +381,6 @@
 
     <div id="toast">Action Saved</div>
 
-    <script src="script.js?v=11"></script>
+    <script src="script.js?v=13"></script>
 </body>
 </html>

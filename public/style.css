@@ -60,7 +60,7 @@ body {
     cursor: pointer; box-shadow: var(--shadow); transition: all 0.2s; font-size: 12px; backdrop-filter: blur(5px);
 }
 .fab:hover { transform: scale(1.1); background: var(--bg); }
-.fab.primary { background: var(--primary); color: white; border: none; }
+.fab.primary { background: var(--primary); color: var(--on-primary, #fff); border: none; }
 
 .preset-select {
     padding: 4px 8px;
@@ -81,7 +81,7 @@ body {
 }
 #selectionBar.active { display: flex; transform: translateY(0); }
 #mergeSelected, #deleteSelected, #splitSelected {
-    background: var(--primary); color: white; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; margin-left: 6px;
+    background: var(--primary); color: var(--on-primary, #fff); border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; margin-left: 6px;
     display: flex; align-items: center; gap: 4px;
 }
 #deleteSelected { background: #d32f2f; }
@@ -321,10 +321,10 @@ body.input-hidden.bar-floating #showInput { bottom: auto; left: 0; top: 0; trans
     transition: all 0.2s; flex-shrink: 0;
 }
 #presetSelectorBtn:hover { border-color: var(--primary); }
-#presetSelectorBtn.active { background: var(--primary); color: white; border-color: var(--primary); }
+#presetSelectorBtn.active { background: var(--primary); color: var(--on-primary, #fff); border-color: var(--primary); }
 
 #sendBtn { 
-    background: var(--primary); color: white; border: none; padding: 0 16px; 
+    background: var(--primary); color: var(--on-primary, #fff); border: none; padding: 0 16px; 
     border-radius: 24px; cursor: pointer; font-weight: bold; 
     display: flex; align-items: center; justify-content: center; 
     min-width: 46px; height: 46px; font-size: 22px; 
@@ -401,7 +401,7 @@ textarea, input[type="text"], input[type="file"] {
 }
 
 button.btn { padding: 10px 16px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.2s; }
-.btn-primary { background: var(--primary); color: white; }
+.btn-primary { background: var(--primary); color: var(--on-primary, #fff); }
 .btn-danger { background: #d32f2f; color: white; }
 .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
 
@@ -411,7 +411,7 @@ button.btn { padding: 10px 16px; border-radius: 8px; border: none; cursor: point
 .color-picker input { width: 40px; height: 30px; border: none; padding: 0; border-radius: 4px; cursor: pointer; }
 .toggle-group { display: flex; gap: 6px; flex-wrap: wrap; }
 .toggle-btn { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; cursor: pointer; background: transparent; color: var(--text); }
-.toggle-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+.toggle-btn.active { background: var(--primary); color: var(--on-primary, #fff); border-color: var(--primary); }
 .slider-group { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .slider-group input { flex: 1; }
 .lock-checkbox { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 6px; }
@@ -616,3 +616,13 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
     .template-scroll { max-height: none; overflow: visible; background: none; padding: 0; }
     .template-paper { box-shadow: none; padding: 0; }
 }
+
+/* Quiet by design: a row of suggestions must not compete with the palette it changes. */
+.style-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 6px; }
+.style-chips button { background: none; border: 1px solid var(--border); color: var(--text); opacity: 0.6;
+    font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 999px; cursor: pointer;
+    transition: opacity 0.15s; }
+.style-chips button:hover { opacity: 1; }
+
+/* The line under the chips explains; it is not an error. */
+.modal-hint.style-note { color: var(--text); opacity: 0.6; }
