@@ -1722,7 +1722,7 @@ class App {
         // She asked instead of writing: the card is hers, and it is answerable.
         if (clarifyEvent && clarifyEvent.question) {
             this.clarifyQuestion = clarifyEvent.question;
-            this.renderClarify(this.streamingId, clarifyEvent.question, prompt);
+            this.renderClarify(this.streamingId, clarifyEvent.question, prompt, accumulated);
             return '';
         }
 
@@ -1738,13 +1738,13 @@ class App {
     }
 
     /** Her question, with the three results as taps. Not an empty card. */
-    renderClarify(id, question, prompt) {
+    renderClarify(id, question, prompt, said = '') {
         const el = document.querySelector(`.flip-card[data-id="${id}"] .response-content`);
         if (!el) return;
 
         el.innerHTML = '';
         const lead = document.createElement('p');
-        lead.textContent = question.q || 'Which of these is it?';
+        lead.textContent = (said || '').trim() || question.q || 'Which of these is it?';
         lead.style.margin = '0 0 10px';
         el.appendChild(lead);
 
