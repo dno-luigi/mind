@@ -34,7 +34,7 @@ body.view-full { --view-cols: 1; }
     .fab { width: 36px; height: 36px; font-size: 12px; }
     .view-fab-container { bottom: 95px; right: 10px; }
     .card-face { font-size: 14px; }
-    #cardMenu { min-width: 200px; left: 50% !important; transform: translateX(-50%) !important; top: auto !important; bottom: 80px; }
+    #cardMenu, #quickMenu { min-width: 200px; left: 50% !important; transform: translateX(-50%) !important; top: auto !important; bottom: 80px; }
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -54,7 +54,9 @@ body {
     padding: 0 10px; display: flex; align-items: center; justify-content: space-between;
     z-index: 50; background: linear-gradient(to bottom, var(--bg), transparent); pointer-events: none;
 }
-#brandPlaceholder { pointer-events: none; font-weight: 900; color: var(--primary); text-transform: uppercase; letter-spacing: 1px; font-size: 12px; }
+#brandPlaceholder { background: none; border: none; font-family: inherit; cursor: pointer;
+    padding: 6px 8px; margin-left: 2px; border-radius: 8px; font-weight: 900; color: var(--primary); text-transform: uppercase; letter-spacing: 1px; font-size: 12px; }
+#brandPlaceholder:hover { background: rgba(255,255,255,0.07); }
 .top-fabs { pointer-events: auto; display: flex; gap: 6px; }
 .fab {
     width: 36px; height: 36px; border-radius: 50%; background: var(--card-bg);
@@ -142,8 +144,9 @@ body.view-full #grid .flip-card { height: 100vh; border-radius: 0; border: none;
 .card-actions { display: flex; gap: 4px; }
 .card-actions button { 
     background: none; border: none; color: var(--text); cursor: pointer; 
-    padding: 4px; opacity: 0.4; border-radius: 4px; transition: all 0.2s; 
-    min-width: 30px; min-height: 30px;
+    padding: 4px; opacity: 0.55; border-radius: 8px; transition: all 0.2s;
+    min-width: 38px; min-height: 38px; display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation;
 }
 .card-actions button:hover { opacity: 1; background: rgba(255,255,255,0.1); }
 
@@ -370,12 +373,13 @@ body.input-hidden.view-grid #grid { grid-auto-rows: calc((100dvh - 150px) / 2); 
 body.input-hidden #showInput { opacity: 1; pointer-events: auto; }
 .show-input-label { display: none; }
 
-#cardMenu {
+#cardMenu, #quickMenu {
     position: fixed; background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
     padding: 6px; display: none; flex-direction: column; gap: 2px; z-index: 2000;
     box-shadow: 0 10px 30px rgba(0,0,0,0.5); min-width: 180px; max-height: 60vh; overflow-y: auto;
 }
-#cardMenu.active { display: flex; }
+#cardMenu.active, #quickMenu.active { display: flex; }
+#quickMenu { z-index: 2100; }
 .menu-item { 
     display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 6px; 
     cursor: pointer; color: var(--text); background: transparent; border: none; width: 100%; 
@@ -587,3 +591,16 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
     color: var(--text);
     font: 13px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+/* Floating icons are furniture: drag one and it stays where you put it. */
+.fab[data-fab] { touch-action: none; cursor: grab; }
+.fab[data-fab].dragging { cursor: grabbing; opacity: 0.85; }
+.fab.parked { margin: 0 !important; }
+
+.theme-history { display: flex; flex-direction: column; gap: 8px; max-height: 52vh; overflow-y: auto; }
+.theme-row { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid var(--border);
+    border-radius: 10px; background: transparent; color: var(--text); cursor: pointer; text-align: left;
+    font-size: 13px; font-family: inherit; }
+.theme-row:hover { background: rgba(255,255,255,0.06); }
+.theme-swatches { display: flex; gap: 3px; margin-left: auto; }
+.theme-swatch { width: 14px; height: 14px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.35); }

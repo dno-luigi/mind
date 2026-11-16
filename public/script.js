@@ -18,6 +18,8 @@ function normalizeChatUrl(raw) {
     }
 }
 const STORAGE_KEY = "ai_ndraft_data_v2";
+// Themes are kept beside the session, not inside it: a palette outlives the cards.
+const THEME_HISTORY_KEY = "ai_ndraft_themes_v1";
 const PRESETS_KEY = "ai_ncards_presets_v1";
 
 // Chat is text-only on purpose. Styling and board changes live behind the menus
@@ -1087,6 +1089,12 @@ class App {
         document.getElementById('deleteSelected').addEventListener('click', () => this.bulkDelete());
         document.getElementById('splitSelected').addEventListener('click', () => this.promptAction('split'));
 
+        document.getElementById('quickMenu').addEventListener('click', (e) => {
+            const btn = e.target.closest('.menu-item');
+            if (btn && this.contextMenuTargetId) this.quickAction(btn.dataset.quick, this.contextMenuTargetId);
+            this.closeQuickMenu();
+        });
+
         document.getElementById('cardMenu').addEventListener('click', (e) => {
             const btn = e.target.closest('.menu-item');
             if (btn && this.contextMenuTargetId) {
@@ -1115,7 +1123,10 @@ class App {
             if (!e.target.closest('#cardMenu') && !e.target.closest('.card-actions') && !e.target.closest('.flip-card')) {
                 this.closeCardMenu();
             }
+            if (!e.target.closest('#quickMenu') && !(this.quickMenuGrace > Date.now())) this.closeQuickMenu();
         });
+
+        this.initFloatingIcons();
     }
 
     saveState() {
@@ -1611,8 +1622,8 @@ class App {
                             <span style="font-size:11px; opacity:0.5;">REQ${presetBadge}</span>
                         </div>
                         <div class="card-actions">
-                            <button onclick="app.openCardMenu('${card.id}', event)"><i class="fas fa-ellipsis-v"></i></button>
-                            <button onclick="app.toggleSelect('${card.id}', event)"><i class="fas fa-check-circle"></i></button>
+                            <button onclick="app.toggleSelect('${card.id}', event)" title="Select"><i class="fas fa-check-circle"></i></button>
+                            <button class="card-menu-btn" onclick="app.openCardMenu('${card.id}', event)" title="Card menu"><i class="fas fa-ellipsis-v"></i></button>
                         </div>
                     </div>
                     <div class="content">${this.md(card.q)}</div>
@@ -1623,8 +1634,8 @@ class App {
                     <div class="card-header">
                         <span style="font-size:11px; opacity:0.5;">RESPONSE</span>
                         <div class="card-actions">
-                            <button onclick="app.readCard('${card.id}', event)"><i class="fas fa-volume-up"></i></button>
-                            <button onclick="app.openCardMenu('${card.id}', event)"><i class="fas fa-ellipsis-v"></i></button>
+                            <button onclick="app.readCard('${card.id}', event)" title="Read aloud"><i class="fas fa-volume-up"></i></button>
+                            <button class="card-menu-btn" onclick="app.openCardMenu('${card.id}', event)" title="Card menu"><i class="fas fa-ellipsis-v"></i></button>
                         </div>
                     </div>
                     <div class="response-content">${rHtml}</div>
@@ -1642,6 +1653,7 @@ class App {
 
     attachCardEvents(div, id) {
         div.addEventListener('click', (e) => {
+            if (this.suppressCardClick > Date.now()) return;
             // Quick filters keep links, and the page shot, working as links.
             if (e.target.closest('button') || e.target.closest('.card-actions') || e.target.closest('a') || e.target.closest('.card-grip')) return;
             if (this.selectedIds.size > 0) {
@@ -1672,8 +1684,10 @@ class App {
             if (this.selectedIds.size > 0) return;
             if (e.target.closest('.card-grip') || e.target.closest('.card-resize')) return;
             pressTimer = setTimeout(() => {
-                this.openCardMenu(id, e);
+                this.openQuickMenu(id, e);
                 if (navigator.vibrate) navigator.vibrate(50);
+                // A hold ends in a click on the card; that is not a request to flip it.
+                this.suppressCardClick = Date.now() + 600;
             }, 400);
         });
         div.addEventListener('touchend', () => clearTimeout(pressTimer));
@@ -1831,6 +1845,11 @@ class App {
 
         if (this.settings.asrEnabled && this.recognition) {
             this.recognition.start();
+            return;
+        }
+
+        if (this.applyThemeByName(val)) {
+            input.value = '';
             return;
         }
 
@@ -2348,7 +2367,12 @@ class App {
         const menu = document.getElementById('cardMenu');
         
         let x, y;
-        if (e && e.clientX) {
+        const anchor = e && e.currentTarget && e.currentTarget.getBoundingClientRect ? e.currentTarget : null;
+        if (anchor) {
+            const box = anchor.getBoundingClientRect();
+            x = box.left;
+            y = box.bottom + 6;
+        } else if (e && e.clientX) {
             x = e.clientX;
             y = e.clientY;
         } else if (e && e.touches && e.touches[0]) {
@@ -2366,12 +2390,53 @@ class App {
             }
         }
 
-        if (x + 200 > window.innerWidth) x = window.innerWidth - 210;
-        if (y + 300 > window.innerHeight) y = window.innerHeight - 310;
-
+        menu.classList.add('active');
+        // Measured, not guessed: the menu is whatever height its items make it.
+        const size = menu.getBoundingClientRect();
+        if (x + size.width > window.innerWidth - 8) x = Math.max(8, window.innerWidth - size.width - 8);
+        if (y + size.height > window.innerHeight - 8) {
+            y = anchor ? Math.max(8, anchor.getBoundingClientRect().top - size.height - 6) : Math.max(8, window.innerHeight - size.height - 8);
+        }
         menu.style.left = `${x}px`;
         menu.style.top = `${y}px`;
+        this.closeQuickMenu();
+    }
+
+    /** Holding a card is a smaller question than the button asks. */
+    openQuickMenu(id, e) {
+        if (e && e.preventDefault) e.preventDefault();
+        const menu = document.getElementById('quickMenu');
+        // closeCardMenu() forgets the target, so it has to be remembered afterwards.
+        this.closeCardMenu();
+        this.contextMenuTargetId = id;
         menu.classList.add('active');
+        const size = menu.getBoundingClientRect();
+        let x = window.innerWidth - size.width - 12;
+        let y = window.innerHeight - size.height - 120;
+        const touch = e && e.touches && e.touches[0];
+        if (touch) {
+            x = Math.min(Math.max(8, touch.clientX - size.width / 2), window.innerWidth - size.width - 8);
+            y = Math.min(Math.max(8, touch.clientY - size.height - 14), window.innerHeight - size.height - 8);
+        }
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+        // The touchend that followed the hold arrives as a click; it is not a dismissal.
+        this.quickMenuGrace = Date.now() + 500;
+    }
+
+    closeQuickMenu() {
+        const menu = document.getElementById('quickMenu');
+        if (menu) menu.classList.remove('active');
+    }
+
+    quickAction(action, id) {
+        if (action === 'menu') { this.openCardMenu(id); return; }
+        const el = document.querySelector(`.flip-card[data-id="${id}"]`);
+        if (!el) return;
+        if (action === 'flip') el.classList.toggle('flipped');
+        else if (action === 'select') this.toggleSelect(id);
+        else if (action === 'read') this.readCard(id);
+        else if (action === 'fullscreen') this.openFullscreen(id);
     }
 
     closeCardMenu() {
@@ -3032,6 +3097,7 @@ ${retry ? 'Your previous answer was unusable. Reply with those two lines and not
                 this.showToast(`Card style: ${result.theme.name}`);
             } else {
                 this.theme = { ...this.theme, ...result.theme };
+                this.rememberTheme(this.theme);
                 this.applyTheme();
                 this.saveState();
                 this.showToast(`Theme: ${result.theme.name}`);
@@ -3400,6 +3466,145 @@ ${retry ? 'Your previous answer was unusable. Reply with those two lines and not
         document.getElementById('lockLabel').textContent = this.theme.locked ? "Theme Locked" : "Lock Theme";
         this.showToast(this.theme.locked ? "Global Theme Locked" : "Global Theme Unlocked");
         this.saveState();
+    }
+
+    /**
+     * The screen's small icons move too. Each one keeps its own parked position, so an
+     * arrangement survives a reload the way the bar's pin does.
+     */
+    initFloatingIcons() {
+        this.applyFabPositions();
+        document.querySelectorAll('.fab[data-fab]').forEach((btn) => this.makeFabDraggable(btn));
+        window.addEventListener('resize', () => this.applyFabPositions());
+    }
+
+    applyFabPositions() {
+        const parked = this.settings.fabs || {};
+        document.querySelectorAll('.fab[data-fab]').forEach((btn) => {
+            const pos = parked[btn.id];
+            if (pos) this.parkFab(btn, pos.x, pos.y);
+        });
+    }
+
+    parkFab(btn, x, y) {
+        const box = btn.getBoundingClientRect();
+        const w = box.width || 36;
+        const h = box.height || 36;
+        btn.style.position = 'fixed';
+        btn.style.left = Math.round(Math.min(Math.max(8, x), window.innerWidth - w - 8)) + 'px';
+        btn.style.top = Math.round(Math.min(Math.max(8, y), window.innerHeight - h - 8)) + 'px';
+        btn.style.right = 'auto';
+        btn.style.bottom = 'auto';
+        btn.classList.add('parked');
+    }
+
+    makeFabDraggable(btn) {
+        let from = null;
+        let box = null;
+        let moved = false;
+        btn.addEventListener('pointerdown', (e) => {
+            from = { x: e.clientX, y: e.clientY };
+            box = btn.getBoundingClientRect();
+            moved = false;
+            if (e.pointerId !== undefined && btn.setPointerCapture) {
+                try { btn.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ }
+            }
+        });
+        btn.addEventListener('pointermove', (e) => {
+            if (!from) return;
+            const dx = e.clientX - from.x;
+            const dy = e.clientY - from.y;
+            if (!moved && Math.hypot(dx, dy) < 6) return;
+            moved = true;
+            btn.classList.add('dragging');
+            this.parkFab(btn, box.left + dx, box.top + dy);
+        });
+        btn.addEventListener('pointerup', () => {
+            if (!from) return;
+            from = null;
+            btn.classList.remove('dragging');
+            if (!moved) return;
+            const at = btn.getBoundingClientRect();
+            this.settings.fabs = { ...(this.settings.fabs || {}), [btn.id]: { x: Math.round(at.left), y: Math.round(at.top) } };
+            this.saveState();
+            // The drag leaves a click behind; it is not a press on the icon.
+            btn.addEventListener('click', (ev) => { ev.stopPropagation(); ev.preventDefault(); }, { capture: true, once: true });
+        });
+    }
+
+    loadThemeHistory() {
+        try {
+            const list = JSON.parse(localStorage.getItem(THEME_HISTORY_KEY) || '[]');
+            return Array.isArray(list) ? list.filter(t => t && t.name) : [];
+        } catch { return []; }
+    }
+
+    /** Every palette the Stylist makes is worth keeping; one per name, newest first. */
+    rememberTheme(theme) {
+        if (!theme || !theme.name) return;
+        try {
+            const rest = this.loadThemeHistory().filter(t => t.name.toLowerCase() !== theme.name.toLowerCase());
+            rest.unshift({
+                name: theme.name, primary: theme.primary, bg: theme.bg, cardBg: theme.cardBg,
+                text: theme.text, border: theme.border, at: Date.now()
+            });
+            localStorage.setItem(THEME_HISTORY_KEY, JSON.stringify(rest.slice(0, 40)));
+        } catch (e) {
+            console.warn('Cannot keep theme:', e);
+        }
+    }
+
+    openThemeHistory() {
+        const list = this.loadThemeHistory();
+        const host = document.getElementById('themeHistoryList');
+        host.innerHTML = '';
+        if (!list.length) {
+            const empty = document.createElement('p');
+            empty.className = 'modal-hint';
+            empty.textContent = 'No themes yet - the Stylist keeps them as it makes them.';
+            host.appendChild(empty);
+        }
+        list.forEach((theme) => {
+            const row = document.createElement('button');
+            row.className = 'theme-row';
+            const name = document.createElement('span');
+            name.textContent = theme.name;
+            const swatches = document.createElement('span');
+            swatches.className = 'theme-swatches';
+            [theme.bg, theme.cardBg, theme.text, theme.primary, theme.border].filter(Boolean).forEach((colour) => {
+                const dot = document.createElement('span');
+                dot.className = 'theme-swatch';
+                dot.style.background = colour;
+                swatches.appendChild(dot);
+            });
+            row.append(name, swatches);
+            row.addEventListener('click', () => this.applySavedTheme(theme));
+            host.appendChild(row);
+        });
+        this.openModal('themeHistoryModal');
+    }
+
+    applySavedTheme(theme) {
+        if (!theme) return;
+        this.theme = {
+            ...this.theme,
+            name: theme.name, primary: theme.primary, bg: theme.bg,
+            cardBg: theme.cardBg, text: theme.text, border: theme.border
+        };
+        this.applyTheme();
+        this.saveState();
+        this.closeModal('themeHistoryModal');
+        this.showToast(`Theme: ${theme.name}`);
+    }
+
+    /** Typing a saved theme's name is the shortest way back to it. */
+    applyThemeByName(text) {
+        const wanted = text.trim().replace(/^theme\s+/i, '').toLowerCase();
+        if (!wanted) return false;
+        const hit = this.loadThemeHistory().find(t => t.name.toLowerCase() === wanted);
+        if (!hit) return false;
+        this.applySavedTheme(hit);
+        return true;
     }
 
     applyTheme() {

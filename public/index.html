@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>ai-Ncards</title>
-    <link rel="stylesheet" href="style.css?v=7">
+    <link rel="stylesheet" href="style.css?v=9">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
@@ -15,11 +15,11 @@
     <div id="topBar">
         <div style="display:flex; align-items:center; gap: 8px; pointer-events: auto;">
             <button class="fab" id="undoFabTop" title="Undo Last Action"><i class="fas fa-undo"></i></button>
-            <div id="brandPlaceholder">ai-Ncards</div>
+            <button id="brandPlaceholder" title="Saved themes" onclick="app.openThemeHistory()">ai-Ncards</button>
         </div>
         <div class="top-fabs">
-            <button class="fab" id="webFab" title="Browse"><i class="fas fa-globe"></i></button>
-            <button class="fab" id="menuFab" title="Menu"><i class="fas fa-bars"></i></button>
+            <button class="fab" id="webFab" data-fab="1" title="Browse"><i class="fas fa-globe"></i></button>
+            <button class="fab" id="menuFab" data-fab="1" title="Menu"><i class="fas fa-bars"></i></button>
         </div>
     </div>
 
@@ -72,8 +72,8 @@
     </div>
 
     <div class="view-fab-container">
-        <button class="fab" id="gridFsFab" title="Native fullscreen"><i class="fas fa-expand"></i></button>
-        <button class="fab primary" id="viewFab" title="View"><i class="fas fa-columns"></i></button>
+        <button class="fab" id="gridFsFab" data-fab="1" title="Native fullscreen"><i class="fas fa-expand"></i></button>
+        <button class="fab primary" id="viewFab" data-fab="1" title="View"><i class="fas fa-columns"></i></button>
     </div>
 
     <div id="attachTray"></div>
@@ -93,6 +93,14 @@
     </div>
 
     <button id="showInput" title="Show the bar"><i class="fas fa-thumbtack"></i> <span class="show-input-label">Show bar</span></button>
+
+    <div id="quickMenu">
+        <button class="menu-item" data-quick="flip"><i class="fas fa-sync-alt"></i> Flip</button>
+        <button class="menu-item" data-quick="read"><i class="fas fa-volume-up"></i> Read aloud</button>
+        <button class="menu-item" data-quick="select"><i class="fas fa-check-circle"></i> Select</button>
+        <button class="menu-item" data-quick="fullscreen"><i class="fas fa-expand"></i> Fullscreen</button>
+        <button class="menu-item" data-quick="menu"><i class="fas fa-ellipsis-v"></i> All actions</button>
+    </div>
 
     <div id="cardMenu">
         <button class="menu-item" data-action="continue"><i class="fas fa-redo"></i> Continue</button>
@@ -286,6 +294,19 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="themeHistoryModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Saved themes</h3>
+                <button class="btn btn-ghost" onclick="app.closeModal('themeHistoryModal')"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-hint" style="margin-bottom:10px;">Every theme the Stylist has made. Tap one, or type its name in the bar.</p>
+                <div id="themeHistoryList" class="theme-history"></div>
+            </div>
+        </div>
+    </div>
+
     <div class="modal-overlay" id="styleModal">
         <div class="modal">
             <div class="modal-header">
@@ -331,6 +352,6 @@
 
     <div id="toast">Action Saved</div>
 
-    <script src="script.js?v=16"></script>
+    <script src="script.js?v=9"></script>
 </body>
 </html>
