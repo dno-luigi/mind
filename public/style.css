@@ -638,3 +638,9 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
 @media (prefers-reduced-motion: reduce) {
     .thinking-text { animation: none; opacity: 0.6; }
 }
+
+/* How she read the request, on the request: quiet enough to ignore, there when a
+   cached or surprising answer needs explaining. */
+.decision-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.decision-chips span { font-size: 10px; letter-spacing: 0.02em; opacity: 0.45;
+    border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; }

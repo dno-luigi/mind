@@ -2,7 +2,7 @@ import { sha256Hex } from './util.js';
 import { stateKv, browsingService } from './bindings.js';
 import { readPage, firstUrl } from './page.js';
 import { resolveTruth, questionOf } from './truth.js';
-import { DEFAULT_PRESET } from './presets.js';
+import { findPreset, DEFAULT_PRESET } from './presets.js';
 
 /**
  * A question that names a page, or asks about the live web, needs the browser
@@ -189,7 +189,14 @@ export async function decide(
 
   const kv = stateKv(env);
   const memo = kv ? L1 : null;
-  const cacheKey = `decision:${await sha256Hex(`${lastUser.slice(-4000)}|${images.length}|${presetId || ''}`)}`;
+  // The prompt is part of the question. A decision cached under an older prompt
+  // replays an answer the current instructions would never give - which is how a
+  // corrected preset came back byte-for-byte until the wording changed. Hashing the
+  // text means editing a prompt invalidates its cache without anyone tracking a
+  // version by hand.
+  const promptText = String(findPreset(presetId || DEFAULT_PRESET)?.prompt || '');
+  const promptPrint = (await sha256Hex(promptText)).slice(0, 16);
+  const cacheKey = `decision:${await sha256Hex(`${lastUser.slice(-4000)}|${images.length}|${presetId || ''}|${promptPrint}`)}`;
 
   // A question that names a page must not be answered from a decision recorded
   // when the browser did not run: replaying it would skip the browser for good,

@@ -1120,7 +1120,10 @@ class App {
         document.getElementById('promptConfirmBtn').addEventListener('click', () => this.executePromptAction());
 
         document.addEventListener('click', (e) => {
-            if (!e.target.closest('#cardMenu') && !e.target.closest('.card-actions') && !e.target.closest('.flip-card')) {
+            // "All actions" is opened from the quick menu, so the click that opened it
+            // arrives from outside #cardMenu and shut it again in the same tick.
+            if (!e.target.closest('#cardMenu') && !e.target.closest('.card-actions') && !e.target.closest('.flip-card')
+                && !(this.cardMenuGrace > Date.now())) {
                 this.closeCardMenu();
             }
             if (!e.target.closest('#quickMenu') && !(this.quickMenuGrace > Date.now())) this.closeQuickMenu();
@@ -1627,6 +1630,7 @@ class App {
                         </div>
                     </div>
                     <div class="content">${this.md(card.q)}</div>
+                    ${this.signalsHtml(card.id)}
                     ${this.shotHtml(card)}
                     ${this.attachmentsHtml(card)}
                 </div>
@@ -1649,6 +1653,39 @@ class App {
 
         this.attachCardEvents(div, card.id);
         grid.appendChild(div);
+    }
+
+    /** Off is a stored choice, so a card he has simplified stays simplified. */
+    signalsOn() {
+        if (this.showSignals === undefined) this.showSignals = localStorage.getItem('mind_signals') !== '0';
+        return this.showSignals;
+    }
+
+    toggleSignals() {
+        this.showSignals = !this.signalsOn();
+        localStorage.setItem('mind_signals', this.showSignals ? '1' : '0');
+        this.renderAll();
+        this.showToast(`Decision signals ${this.showSignals ? 'shown' : 'hidden'}`);
+    }
+
+    /** The decision, as chips on the question. Small, and quiet by default. */
+    signalsHtml(id) {
+        if (!this.signalsOn()) return '';
+        const d = (this.decisions || {})[id];
+        if (!d) return '';
+        const bit = (label, value) => (value === null || value === undefined || value === '')
+            ? ''
+            : `<span>${this.escapeHtml(label)}: ${this.escapeHtml(String(value))}</span>`;
+        const via = d.source === 'cache' ? `store - ${d.cacheSource || 'cache'}` : (d.source || 'ara');
+        const chips = [
+            bit('intent', d.task),
+            bit('depth', d.depth),
+            bit('tone', d.tone),
+            bit('preset', d.preset),
+            bit('via', via),
+        ].join('');
+        if (!chips) return '';
+        return `<div class="decision-chips">${chips}</div>`;
     }
 
     attachCardEvents(div, id) {
@@ -2082,6 +2119,10 @@ class App {
                     this.clarifyRowId = event.ara && event.ara.id != null ? event.ara.id : null;
                 } else if (event.type === 'meta') {
                     this.lastRoute = event;
+                    // What she read the request as, kept beside the request it belongs
+                    // to - not on the answer, where it explains nothing.
+                    this.decisions = this.decisions || {};
+                    if (this.streamingId != null && event.decision) this.decisions[this.streamingId] = event.decision;
                 }
             }
         }
@@ -2557,6 +2598,7 @@ class App {
         }
 
         menu.classList.add('active');
+        this.cardMenuGrace = Date.now() + 400;
         // Measured, not guessed: the menu is whatever height its items make it.
         const size = menu.getBoundingClientRect();
         if (x + size.width > window.innerWidth - 8) x = Math.max(8, window.innerWidth - size.width - 8);
@@ -2632,6 +2674,7 @@ class App {
                 this.promptAction('merge');
                 break;
             case 'ai-edit': this.promptAction('ai-edit', id); break;
+            case 'signals': this.toggleSignals(); break;
             case 'create-preset-card':
                 // Open modal to select which preset to create a card for
                 this.selectedIds.clear();
