@@ -1678,6 +1678,7 @@ class App {
             : `<span>${this.escapeHtml(label)}: ${this.escapeHtml(String(value))}</span>`;
         const via = d.source === 'cache' ? `store - ${d.cacheSource || 'cache'}` : (d.source || 'ara');
         const chips = [
+            bit('domain', d.domain),
             bit('intent', d.task),
             bit('depth', d.depth),
             bit('tone', d.tone),

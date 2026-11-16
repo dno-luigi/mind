@@ -78,9 +78,14 @@ const PRESET_ACTIONS = new Set(['truth', 'operator', 'mnl', 'doc', 'micro']);
 // answer written now.
 const RESULT_ACTIONS = { result: 'truth', preset: 'operator', ask: 'operator' };
 
+/** The lane a preset answers in. Cods names this on every card; mind never did. */
+function domainOf(presetId) {
+  return presetId === 'truth' || presetId === 'doc' ? 'legal' : 'general';
+}
+
 function fromAra(ara, presetId) {
   if (!ara || !ara.bound) {
-    return { preset: presetId || 'operator', task: 'chat', depth: 'normal', tone: 'plain', source: 'no-decider' };
+    return { preset: presetId || 'operator', task: 'chat', depth: 'normal', tone: 'plain', source: 'no-decider', domain: null };
   }
   // She picks one of mind's own actions, so there is nothing left to classify:
   // a preset action is that preset, browse is generation with the web read first.
@@ -88,9 +93,11 @@ function fromAra(ara, presetId) {
   return {
     preset: presetId || (PRESET_ACTIONS.has(action) ? action : RESULT_ACTIONS[action] || 'operator'),
     task: action === 'style' ? 'style' : action === 'truth' || action === 'result' ? 'chat' : 'generate',
+    // Her own domain when she sends one; otherwise the lane the preset belongs to.
     depth: 'normal',
     tone: 'plain',
     source: 'ara',
+    domain: ara.domain || null,
   };
 }
 
@@ -233,6 +240,7 @@ export async function decide(
         tone: 'plain',
         source: 'cache',
         trace: ['cache:hit'],
+        domain: intent.domain || domainOf(presetId || intent.preset),
         cacheSource: truth.layer,
         truth,
         cacheKey,
@@ -297,6 +305,9 @@ export async function decide(
 
   const decision = {
     ...intent,
+    // Recorded on the decision so the request card, ARA's outcome and the
+    // cross-project comparison all speak the same word.
+    domain: intent.domain || domainOf(preset || intent.preset),
     preset,
     browse: material,
     browseStatus,
