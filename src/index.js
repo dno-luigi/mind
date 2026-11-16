@@ -14,6 +14,7 @@ import * as cf from './providers/workers-ai.js';
 import * as or from './providers/openrouter.js';
 import { decide, recordReview, within } from './decide.js';
 import { recordCandidate, recordStyleCandidate, confidenceOf, questionOf, peekTruth } from './truth.js';
+import { learnHint, learnReport } from './learn.js';
 import { adminUnlock, adminListKeys, adminReadKey, adminQueue } from './admin.js';
 import { shot } from './shot.js';
 import { readPage } from './page.js';
@@ -492,6 +493,28 @@ function withNotes(messages, notes) {
   return [...messages.slice(0, at), note, ...messages.slice(at)];
 }
 
+/**
+ * What he has taught, as a system turn of its own.
+ *
+ * The ladder is already ordered when TEW assembles it — his own rules, then the
+ * domain rules, then what chat learned — so this hands over that ordering whole
+ * rather than a list this worker would have to rank again.
+ */
+function withLearned(messages, hint) {
+  const text = typeof hint === 'string' ? hint.trim() : '';
+  if (!text) return messages;
+
+  const note = {
+    role: 'system',
+    content:
+      'What this user has taught, from the learning ladder every tool shares. The order is the authority: his own rules outrank the domain rules, and both outrank anything learned in chat. Follow it unless he contradicts it in this conversation.\n\n' +
+      text,
+  };
+  let at = 0;
+  while (at < messages.length && messages[at].role === 'system') at += 1;
+  return [...messages.slice(0, at), note, ...messages.slice(at)];
+}
+
 /** The review record: enough to reconstruct a session, capped so KV stays small. */
 function reviewOf({ preset, decision, route, model, lastUser, text }) {
   return {
@@ -675,6 +698,10 @@ async function chat(request, env, ctx) {
   // generated one see the same text and no store can substitute another.
   const preset = chosen;
 
+  // What he has taught, asked of TEW before anything writes. A rule changed at
+  // the top reaches this turn without a deploy; no key, no binding or a slow TEW
+  // leaves the turn exactly as it was.
+
   // Report the preset that actually ran, not the one the decision model named:
   // they diverge whenever it suggests a preset that no longer exists.
   const reported = { ...decision, preset: preset?.id ?? null, ara: ara.bound ? { id: ara.id, move: ara.move, route: ara.route, notes: ara.notes ? ara.notes.length : 0 } : null };
@@ -755,6 +782,16 @@ async function chat(request, env, ctx) {
   // any other preset means generate with it, cache or no cache.
   const mayServeCache = (!pinned || preset?.id === DEFAULT_PRESET) && !styling && !writeIt;
   const hisChoice = body.araChoice || null;
+  // He picked one of her cards: the one moment a turn says how he wants this kind
+  // of ask handled. Reported up rather than kept here, so the next tool inherits it.
+  const CHOICE_ROWS = {
+    none: 'nothing stored under that key: leave it alone',
+    pair: 'show the stored pair behind the ask',
+    write: 'write a new answer for that key',
+  };
+  if (hisChoice && CHOICE_ROWS[hisChoice]) {
+    learnReport(env, ctx, { q: question, a: CHOICE_ROWS[hisChoice] }).catch(() => false);
+  }
   if (hisChoice === 'none') {
     const said = 'Left alone: nothing stored under that key, and nothing written.';
     const quiet = new ReadableStream({
@@ -836,7 +873,8 @@ async function chat(request, env, ctx) {
   const system = preset?.system
     ? [{ role: 'system', content: preset.system }, ...messages]
     : messages;
-  const grounded = withBrowse(withNotes(system, ara.notes), decision);
+  const learned = await learnHint(env, { prompt: question, domain: preset?.id }).catch(() => null);
+  const grounded = withBrowse(withNotes(withLearned(system, learned?.hint), ara.notes), decision);
 
   if (!wantsStream) {
     const { route, model, stream, extract } = await openUpstream(env, {
@@ -928,7 +966,7 @@ async function chat(request, env, ctx) {
 
   const { route, model, stream, extract } = await openUpstream(env, {
     ask: lastUser,
-    messages: system,
+    messages: grounded,
     images,
     preset,
     decision: reported,

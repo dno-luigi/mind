@@ -76,11 +76,11 @@ answers from it first and saves everything it produces as a candidate.
 ```bash
 npm ci          # dependencies are not preserved between sessions
 npm run check   # node --check over every source file, including public/script.js
-npm test        # node --test test.mjs — 111 tests at the time of writing
+npm run build   # wrangler deploy --dry-run: bundling and bindings, deploys nothing
 ```
 
-A green `check` and `test` is the floor, not proof: the checks do not exercise the
-network or the browser. Say what was verified and what was only read.
+A green `check` and `build` is the floor, not proof: neither exercises the network,
+the browser or a real deploy. Say what was verified and what was only read.
 
 ## 5. Map
 
