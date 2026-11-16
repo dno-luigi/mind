@@ -229,9 +229,26 @@ body.view-grid .card-resize::after {
 
 #inputPanel {
     position: fixed; bottom: 0; left: 0; right: 0; background: var(--card-bg); border-top: 1px solid var(--border); 
-    padding: 12px; display: flex; gap: 10px; z-index: 100; transition: transform 0.25s ease; box-shadow: 0 -4px 20px rgba(0,0,0,0.2); align-items: center;
+    padding: 12px; display: flex; gap: 10px; z-index: 100; transition: transform 0.16s ease-out; box-shadow: 0 -4px 20px rgba(0,0,0,0.2); align-items: center;
     padding-bottom: calc(12px + var(--safe-area-bottom));
 }
+
+/* The bar's top edge is a handle. Its size is a preference, and a preference should be
+   set with a finger rather than guessed at in a menu. */
+#inputGrab {
+    position: absolute; top: -9px; left: 0; right: 0; height: 18px;
+    cursor: ns-resize; touch-action: none; display: flex;
+    align-items: center; justify-content: center; z-index: 2;
+}
+#inputGrab::after {
+    content: ''; width: 46px; height: 4px; border-radius: 2px;
+    background: var(--border); transition: background 0.15s, width 0.15s;
+}
+#inputGrab:hover::after, body.bar-dragging #inputGrab::after { background: var(--primary); width: 66px; }
+/* While the finger is down the bar must follow it exactly, so no transition. */
+body.bar-dragging #inputPanel { transition: none; }
+body.bar-custom #inputPanel { align-items: stretch; }
+body.bar-custom #userInput { height: auto; max-height: none; }
 #userInput {
     flex: 1; padding: 12px 14px; border-radius: 24px; border: 1px solid var(--border); 
     background: var(--bg); color: var(--text); font-size: 16px; outline: none; 
@@ -264,13 +281,18 @@ body.view-grid .card-resize::after {
 /* The bar can be put away: with nothing to type, the cards get the screen. */
 #collapseInput {
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
-    border-radius: 50%; width: 34px; height: 34px; flex-shrink: 0; cursor: pointer;
+    border-radius: 50%; width: 40px; height: 40px; flex-shrink: 0; cursor: pointer;
     font-size: 12px; display: flex; align-items: center; justify-content: center;
     opacity: 0.65; transition: opacity 0.2s, border-color 0.2s;
 }
 #collapseInput:hover { opacity: 1; border-color: var(--primary); }
 
-body.input-hidden #inputPanel { transform: translateY(calc(100% + 20px)); }
+body.input-hidden #inputPanel {
+    transform: translateY(calc(100% + 20px));
+    visibility: hidden;
+    transition: transform 0.16s ease-out, visibility 0s linear 0.16s;
+}
+body:not(.input-hidden) #inputPanel { visibility: visible; transition: transform 0.16s ease-out; }
 body.input-hidden #attachTray { display: none; }
 body.input-hidden { padding-bottom: 16px; }
 body.input-hidden .view-fab-container { bottom: 58px; }
@@ -278,12 +300,14 @@ body.input-hidden.view-grid #grid { grid-auto-rows: calc((100dvh - 150px) / 2); 
 
 #showInput {
     position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
-    z-index: 102; height: 38px; padding: 0 16px; border-radius: 19px;
+    z-index: 102; height: 44px; padding: 0 18px; border-radius: 22px;
     border: 1px solid var(--border); background: var(--card-bg); color: var(--text);
-    display: none; align-items: center; gap: 8px; font-size: 12px;
+    display: flex; align-items: center; gap: 8px; font-size: 12px;
     box-shadow: var(--shadow); cursor: pointer;
+    /* Held back until the bar has slid away, so the pill never sits on a bar still leaving. */
+    opacity: 0; pointer-events: none; transition: opacity 0.12s ease-out 0.1s;
 }
-body.input-hidden #showInput { display: flex; }
+body.input-hidden #showInput { opacity: 1; pointer-events: auto; }
 
 #cardMenu {
     position: fixed; background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;

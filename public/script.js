@@ -261,6 +261,45 @@ class App {
 
     applyInputBar() {
         document.body.classList.toggle('input-hidden', Boolean(this.settings.inputHidden));
+        const panel = document.getElementById('inputPanel');
+        if (!panel) return;
+        const saved = Number(this.settings.inputHeight) || 0;
+        // A height chosen by hand is the bar's size until it is dragged again. Without
+        // one the bar keeps its natural height, so nothing changes for anyone who never
+        // touches the handle.
+        document.body.classList.toggle('bar-custom', saved > 0);
+        panel.style.height = saved > 0 ? saved + 'px' : '';
+    }
+
+    /**
+     * Drag the bar's top edge to decide how much of the screen it takes. The line is the
+     * only control: no menu, no preset sizes, the bar follows the finger and remembers.
+     */
+    beginInputResize(event) {
+        const panel = document.getElementById('inputPanel');
+        if (!panel) return;
+        event.preventDefault();
+        const startY = event.clientY;
+        const startHeight = panel.getBoundingClientRect().height;
+        const min = 76;
+        const max = Math.round(window.innerHeight * 0.55);
+        document.body.classList.add('bar-dragging');
+        const move = (e) => {
+            const next = Math.round(Math.min(max, Math.max(min, startHeight + (startY - e.clientY))));
+            panel.style.height = next + 'px';
+            document.body.classList.add('bar-custom');
+            this.settings.inputHeight = next;
+        };
+        const end = () => {
+            document.body.classList.remove('bar-dragging');
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', end);
+            window.removeEventListener('pointercancel', end);
+            this.saveState();
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', end);
+        window.addEventListener('pointercancel', end);
     }
 
     managePresets() {
@@ -745,6 +784,16 @@ class App {
         if (collapseInput) collapseInput.addEventListener('click', () => this.toggleInputBar(true));
         const showInput = document.getElementById('showInput');
         if (showInput) showInput.addEventListener('click', () => this.toggleInputBar(false));
+
+        const inputGrab = document.getElementById('inputGrab');
+        if (inputGrab) inputGrab.addEventListener('pointerdown', (e) => this.beginInputResize(e));
+        // Rotating a phone changes how many rows fit, so re-lay-out rather than leave a
+        // card hanging past the bottom rail.
+        let relayoutTimer = null;
+        window.addEventListener('resize', () => {
+            clearTimeout(relayoutTimer);
+            relayoutTimer = setTimeout(() => this.renderAll(), 120);
+        });
 
         const fsGrip = document.getElementById('fsGrip');
         if (fsGrip) {
@@ -1451,7 +1500,9 @@ class App {
         div.classList.add('resizing');
         const move = (e) => {
             const cols = Math.min(columns, Math.max(1, startCols + Math.round((e.clientX - start.x) / (cellWidth + gap))));
-            const rows = Math.min(6, Math.max(1, startRows + Math.round((e.clientY - start.y) / (cellHeight + gap))));
+            // Bottom guardrail: a card grows until it reaches the bar or the bottom of the
+            // screen, never past either, however tall its saved span was.
+            const rows = Math.min(this.maxRowsOnScreen(), Math.max(1, startRows + Math.round((e.clientY - start.y) / (cellHeight + gap))));
             card.span = { cols, rows };
             this.applySpan(div, card.span);
         };
@@ -1468,10 +1519,32 @@ class App {
         window.addEventListener('pointercancel', end);
     }
 
+    /**
+     * How many whole rows fit between the top of the grid and the bottom guardrail. The
+     * top was always held (a card grows downward from its cell), but nothing stopped the
+     * growth at the bottom, so a tall card ran off a phone screen. A row is
+     * (100dvh - 230) / 2, which means the cap has to be measured, not assumed.
+     */
+    maxRowsOnScreen() {
+        const grid = document.getElementById('grid');
+        if (!grid) return 1;
+        const styles = getComputedStyle(grid);
+        const rowHeight = parseFloat(styles.gridAutoRows);
+        const rowGap = parseFloat(styles.rowGap) || 0;
+        if (!rowHeight) return 1;
+        const panel = document.getElementById('inputPanel');
+        const hidden = Boolean(this.settings.inputHidden);
+        // The bar is the guardrail when it is up; the window edge when it is away.
+        const barTop = panel && !hidden && panel.offsetHeight ? panel.getBoundingClientRect().top : window.innerHeight;
+        const bottomGuard = Math.min(window.innerHeight, barTop) - 8;
+        const room = bottomGuard - grid.getBoundingClientRect().top;
+        return Math.max(1, Math.min(6, Math.floor((room + rowGap) / (rowHeight + rowGap))));
+    }
+
     /** How many cells a card covers. CSS variables, so other views ignore it. */
     applySpan(el, span) {
         const cols = Math.max(1, Math.min(6, (span && span.cols) || 1));
-        const rows = Math.max(1, Math.min(6, (span && span.rows) || 1));
+        const rows = Math.max(1, Math.min(this.maxRowsOnScreen(), (span && span.rows) || 1));
         el.style.setProperty('--span-cols', cols);
         el.style.setProperty('--span-rows', rows);
     }
