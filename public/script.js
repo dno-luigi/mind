@@ -283,10 +283,16 @@ class App {
             panel.style.top = float.y + 'px';
             panel.style.right = 'auto';
             panel.style.bottom = 'auto';
-            panel.style.width = Math.min(360, window.innerWidth - 24) + 'px';
-            // Loose, the bar takes the height its stacked rows need; the height handle is
-            // for the docked bar, where it decides how much of the screen the rail takes.
-            panel.style.height = '';
+            panel.style.width = Math.min(float.w || 360, window.innerWidth - 16) + 'px';
+            // A loose bar keeps the size it was pulled to; without one it takes the height
+            // its stacked rows need.
+            panel.style.height = float.h ? float.h + 'px' : '';
+            // Minimised, the pin appears where the bar was, not across the bottom.
+            const pill = document.getElementById('showInput');
+            if (pill) {
+                pill.style.left = Math.min(float.x, window.innerWidth - 56) + 'px';
+                pill.style.top = Math.min(float.y, window.innerHeight - 56) + 'px';
+            }
         } else {
             panel.style.left = '';
             panel.style.top = '';
@@ -308,11 +314,15 @@ class App {
                 this.applyInputBar();
             }
             const panel = document.getElementById('inputPanel');
-            const height = panel ? panel.getBoundingClientRect().height : 71;
-            const width = Math.min(360, window.innerWidth - 24);
+            const rect = panel ? panel.getBoundingClientRect() : { width: 360, height: 71 };
+            const width = Math.min(Math.max(rect.width, 240), 360);
             this.settings.barFloat = {
                 x: Math.round(Math.max(8, (window.innerWidth - width) / 2)),
-                y: Math.round(Math.max(8, window.innerHeight - height - 140)),
+                y: Math.round(Math.max(8, window.innerHeight - rect.height - 140)),
+                w: Math.round(width),
+                // No height on the way out: the docked bar's row is shorter than the
+                // stacked loose bar, and carrying it over would clip the field.
+                h: null,
             };
         } else {
             this.settings.barFloat = null;
@@ -321,7 +331,36 @@ class App {
         this.saveState();
     }
 
-    /** A loose bar is dragged by its body; the line above it still sets its height. */
+    /** Pulling the corner sizes a loose bar: width and height, both remembered. */
+    beginBarResize(event) {
+        const panel = document.getElementById('inputPanel');
+        if (!panel || !this.settings.barFloat) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = panel.getBoundingClientRect();
+        const float = this.settings.barFloat;
+        const startX = event.clientX;
+        const startY = event.clientY;
+        document.body.classList.add('bar-dragging');
+        const move = (e) => {
+            const w = Math.round(Math.min(window.innerWidth - float.x - 8, Math.max(240, rect.width + (e.clientX - startX))));
+            const h = Math.round(Math.min(window.innerHeight - float.y - 8, Math.max(70, rect.height + (e.clientY - startY))));
+            this.settings.barFloat = { x: float.x, y: float.y, w: w, h: h };
+            this.applyBarFloat();
+        };
+        const end = () => {
+            document.body.classList.remove('bar-dragging');
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', end);
+            window.removeEventListener('pointercancel', end);
+            this.saveState();
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', end);
+        window.addEventListener('pointercancel', end);
+    }
+
+    /** A loose bar is dragged by its line; the corner is what resizes it. */
     beginBarMove(event) {
         if (!this.settings.barFloat) return;
         // Buttons and the text field keep their own gestures; the line is the handle, and
@@ -883,6 +922,8 @@ class App {
         if (barFloatBtn) barFloatBtn.addEventListener('click', () => this.setBarFloat(!this.settings.barFloat));
         const barPanel = document.getElementById('inputPanel');
         if (barPanel) barPanel.addEventListener('pointerdown', (e) => this.beginBarMove(e));
+        const barResize = document.getElementById('barResize');
+        if (barResize) barResize.addEventListener('pointerdown', (e) => this.beginBarResize(e));
         // Rotating a phone changes how many rows fit, so re-lay-out rather than leave a
         // card hanging past the bottom rail.
         let relayoutTimer = null;

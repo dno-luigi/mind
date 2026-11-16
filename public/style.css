@@ -277,6 +277,25 @@ body.bar-floating #inputPanel #userInput { cursor: text; }
    gets the whole first row and the controls sit under it. */
 body.bar-floating #inputPanel { flex-wrap: wrap; }
 body.bar-floating #userInput { order: -1; flex: 1 1 100%; }
+
+/* Loose, the bar has a corner to pull on: the line still carries it, so the two gestures
+   stay apart. Docked there is nothing to pull on, because the rail already decides. */
+#barResize { display: none; position: absolute; right: 2px; bottom: 2px; width: 22px; height: 22px; cursor: nwse-resize; touch-action: none; }
+#barResize::after {
+    content: ''; position: absolute; right: 5px; bottom: 5px; width: 9px; height: 9px;
+    border-right: 2px solid var(--border); border-bottom: 2px solid var(--border); border-radius: 1px;
+}
+body.bar-floating #barResize { display: block; }
+body.bar-floating #barResize:hover::after { border-color: var(--primary); }
+
+/* Minimised, a loose bar is only the pin - no strip across the bottom offering to bring
+   back something that never lived there. */
+body.input-hidden.bar-floating #showInput {
+    bottom: auto; left: 0; top: 0; transform: none;
+    width: 46px; height: 46px; padding: 0; border-radius: 50%;
+    justify-content: center; gap: 0; font-size: 13px;
+}
+body.input-hidden.bar-floating #showInput .show-input-label { display: none; }
 #userInput {
     flex: 1; padding: 12px 14px; border-radius: 24px; border: 1px solid var(--border); 
     background: var(--bg); color: var(--text); font-size: 16px; outline: none; 
