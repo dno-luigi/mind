@@ -739,6 +739,34 @@ async function chat(request, env, ctx) {
 
   // Report the preset that actually ran, not the one the decision model named:
   // they diverge whenever it suggests a preset that no longer exists.
+  // The owner's override: what is stored is not the answer to this ask. Recorded
+  // before it runs, because an override nobody can review is a silent exception.
+  let overridden = false;
+  if (body.override === true) {
+    const actor = await sessionUser(request, env);
+    // A name when names exist. Before login is configured there is nobody to name,
+    // and refusing would leave the owner without the override he asked for.
+    if (loginEnabled(env) && !actor) {
+      return fail(401, 'sign_in_required', 'An override carries a name: sign in first.');
+    }
+    overridden = true;
+    const store = stateKv(env);
+    if (store) {
+      await store
+        .put(`override:${Date.now()}`, JSON.stringify({
+          actor: actor || 'anonymous',
+          question: String(question || lastUser).slice(0, 300),
+          preset: preset?.id ?? null,
+          at: new Date().toISOString(),
+        }))
+        .catch(() => null);
+    }
+    // Nothing stored answers this run: the store is what is being questioned.
+    decision.truth = null;
+    decision.source = 'override';
+    decision.cacheSource = null;
+  }
+
   const reported = { ...decision, preset: preset?.id ?? null, ara: ara.bound ? { id: ara.id, move: ara.move, route: ara.route, notes: ara.notes ? ara.notes.length : 0 } : null };
 
   // Half a record is not a record: she keeps what the run produced beside what

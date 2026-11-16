@@ -1655,6 +1655,23 @@ class App {
         grid.appendChild(div);
     }
 
+    /**
+     * The owner asking for a fresh run. What is stored is not the answer to this
+     * question, so the store is bypassed and the run is recorded against a name.
+     */
+    async forceFresh(id) {
+        const card = this.cards.find((c) => c.id === id);
+        if (!card) return;
+        if (!this.user) {
+            this.showToast('Sign in to override the store');
+            this.openModal('settingsModal');
+            return;
+        }
+        this.pendingOverride = true;
+        this.showToast('Fresh run: stored answer bypassed');
+        await this.sendRequest(card.q, null);
+    }
+
     /** Off is a stored choice, so a card he has simplified stays simplified. */
     signalsOn() {
         if (this.showSignals === undefined) this.showSignals = localStorage.getItem('mind_signals') !== '0';
@@ -2010,7 +2027,9 @@ class App {
                     preset: usePreset ? preset.key : NO_PRESET_KEY,
                     presetLocked: this.presetChosen,
                     signal,
-                    prompt
+                    prompt,
+                    // Consumed once: an override belongs to the tap that made it.
+                    override: this.pendingOverride === true
                 },
                 (text, first) => this.updateStreamingContent(text, first)
             );
@@ -2045,7 +2064,7 @@ class App {
      * The client never learns which provider answered, which is why switching
      * between Workers AI and OpenRouter needs no frontend change.
      */
-    async streamChat({ messages, preset = null, presetLocked = false, style = false, signal = null, prompt = '' }, onText) {
+    async streamChat({ messages, preset = null, presetLocked = false, style = false, signal = null, prompt = '', override = false }, onText) {
         const url = this.getProxyUrl();
         // His tap on her card is part of this ask, and only this one.
         const araChoice = this.pendingAraChoice || null;
@@ -2064,6 +2083,7 @@ class App {
                 stream: true,
                 ...(araChoice ? { araChoice } : {}),
                 ...(notAKey ? { notAKey } : {}),
+                ...(override ? { override: true } : {}),
             }),
             signal
         });
@@ -2664,6 +2684,7 @@ class App {
                 break;
             case 'ai-edit': this.promptAction('ai-edit', id); break;
             case 'signals': this.toggleSignals(); break;
+            case 'fresh': this.forceFresh(id); break;
             case 'create-preset-card':
                 // Open modal to select which preset to create a card for
                 this.selectedIds.clear();
