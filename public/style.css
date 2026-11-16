@@ -247,12 +247,18 @@ body.view-grid .card-resize::after {
 #inputGrab:hover::after, body.bar-dragging #inputGrab::after { background: var(--primary); width: 66px; }
 /* While the finger is down the bar must follow it exactly, so no transition. */
 body.bar-dragging #inputPanel { transition: none; }
-body.bar-custom #inputPanel { align-items: stretch; }
-body.bar-custom #userInput { height: auto; max-height: none; }
+/* A taller bar is breathing room around the same row. Stretching the field was what turned
+   it into a tall sliver on a narrow phone, where four controls leave it little width; the
+   direction that earns its keep is shrinking the bar to give the cards the room. */
+body.bar-custom #inputPanel { overflow: hidden; }
 #userInput {
     flex: 1; padding: 12px 14px; border-radius: 24px; border: 1px solid var(--border); 
     background: var(--bg); color: var(--text); font-size: 16px; outline: none; 
     transition: border 0.2s; resize: none; height: 46px; max-height: 100px; overflow-y: auto;
+    /* The global input rule gives every text field a 120px floor for modals. That floor
+       is why the bar could not be made smaller than its content: this field is a single
+       line in a row, so it keeps its own height and no margin. */
+    min-height: 46px; margin-bottom: 0;
 }
 #userInput:focus { border-color: var(--primary); }
 

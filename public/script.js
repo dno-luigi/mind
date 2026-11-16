@@ -281,7 +281,8 @@ class App {
         event.preventDefault();
         const startY = event.clientY;
         const startHeight = panel.getBoundingClientRect().height;
-        const min = 76;
+        // The floor is the row's own height: below it the controls would be clipped.
+        const min = 70;
         const max = Math.round(window.innerHeight * 0.55);
         document.body.classList.add('bar-dragging');
         const move = (e) => {
