@@ -2012,6 +2012,8 @@ class App {
         // His tap on her card is part of this ask, and only this one.
         const araChoice = this.pendingAraChoice || null;
         this.pendingAraChoice = null;
+        const notAKey = this.pendingNotAKey === true;
+        this.pendingNotAKey = false;
 
         const res = await fetch(url, {
             method: 'POST',
@@ -2023,6 +2025,7 @@ class App {
                 style,
                 stream: true,
                 ...(araChoice ? { araChoice } : {}),
+                ...(notAKey ? { notAKey } : {}),
             }),
             signal
         });
@@ -2075,6 +2078,8 @@ class App {
                     incomplete = event.message || 'The answer stopped before it finished.';
                 } else if (event.type === 'clarify') {
                     clarifyEvent = event;
+                    // Her row, so a correction can be written against it.
+                    this.clarifyRowId = event.ara && event.ara.id != null ? event.ara.id : null;
                 } else if (event.type === 'meta') {
                     this.lastRoute = event;
                 }
@@ -2131,6 +2136,87 @@ class App {
         });
 
         el.appendChild(row);
+
+        // Two answers her card never offered: that it is not a key at all, and that it
+        // is not what he meant, in his own words. Both are written to her row as a
+        // correction, so the next decision is made with them in front of her.
+        const more = document.createElement('div');
+        more.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;';
+
+        const pill = (label, onTap, dashed = true) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = label;
+            button.style.cssText = `padding:8px 12px; border-radius:999px; border:1px ${dashed ? 'dashed' : 'solid'} currentColor; background:transparent; color:inherit; font:inherit; cursor:pointer; opacity:0.85;`;
+            button.addEventListener('click', onTap);
+            return button;
+        };
+
+        const isKeyCard = (question.options || []).some(option => option.value === 'write');
+        if (isKeyCard) {
+            more.appendChild(pill('Not a key at all', () => this.correctClarify(prompt, {
+                text: 'That was not a key and not a lookup for a stored pair.',
+                said: 'Not a key'
+            })));
+        }
+
+        const words = document.createElement('div');
+        words.hidden = true;
+        words.style.cssText = 'display:flex; gap:6px; width:100%; margin-top:2px;';
+        const field = document.createElement('input');
+        field.type = 'text';
+        field.placeholder = 'What did you mean?';
+        field.style.cssText = 'flex:1; min-width:0; padding:9px 12px; border-radius:10px; border:1px solid currentColor; background:transparent; color:inherit; font:inherit;';
+        field.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); send.click(); } });
+        const send = pill('Send', () => {
+            const text = field.value.trim();
+            if (!text) { field.focus(); return; }
+            this.correctClarify(prompt, { text, said: `That is not what I meant: ${text}`, asIs: true });
+        }, false);
+        words.append(field, send);
+
+        more.appendChild(pill("That's not what I meant", () => { words.hidden = false; field.focus(); }));
+        el.appendChild(more);
+        el.appendChild(words);
+    }
+
+    /**
+     * His correction of her card. It goes to her row as a verdict with his words, and
+     * then the same ask runs again - as prose when the point was that it is not a key,
+     * in his words when the point was that she read it wrong.
+     */
+    async correctClarify(prompt, { text, said, asIs = false }) {
+        const cardId = this.streamingId;
+        const el = document.querySelector(`.flip-card[data-id="${cardId}"] .response-content`);
+        if (el) {
+            el.innerHTML = '';
+            const note = document.createElement('p');
+            note.style.margin = '0';
+            note.style.opacity = '0.7';
+            note.textContent = `You said: ${said || text}`;
+            el.appendChild(note);
+        }
+
+        const id = this.clarifyRowId;
+        this.clarifyRowId = null;
+        if (id != null) {
+            try {
+                const verdictUrl = new URL('/api/verdict', this.getProxyUrl()).toString();
+                const res = await fetch(verdictUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, correct: false, correctedTo: text })
+                });
+                if (!res.ok) this.showToast('She did not take the correction');
+            } catch {
+                this.showToast('Correction not recorded');
+            }
+        }
+
+        // Her record now says the idiom was wrong, so the same words go again as prose;
+        // otherwise his words are the ask.
+        this.pendingNotAKey = !asIs;
+        this.sendRequest(asIs ? text : prompt, null);
     }
 
     /** He tapped one: the same ask goes again, with his answer as the decision. */

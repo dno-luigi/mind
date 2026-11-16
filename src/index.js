@@ -640,7 +640,12 @@ async function chat(request, env, ctx) {
   // What is already stored, read without generating: she sees the pair before
   // she decides, so a stored non-answer is judged before anything is written.
   const peeked = await peekTruth(env, question || lastUser).catch(() => null);
-  const ara = await askAra(env, question || lastUser, 'general', body.araChoice || null, peeked);
+  // He said it is not a key. Told plainly, because the same bare words would
+  // otherwise arrive as the same key card every time and the loop never ends.
+  const araAsk = body.notAKey === true
+    ? `${question || lastUser}\n\n(He has said this is not a lookup key and there is no stored pair. Treat it as ordinary prose and answer it.)`
+    : (question || lastUser);
+  const ara = await askAra(env, araAsk, 'general', body.araChoice || null, peeked);
   if (!ara.ok) return fail(502, 'ara_no_decision', `ARA did not decide (${ara.reason}).`);
   // She is unsure: he is asked on a card, and no model is called behind her.
   // Her "nothing stored under that key" card waits: the pair may be in truth and
