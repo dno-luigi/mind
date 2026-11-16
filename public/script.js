@@ -287,12 +287,7 @@ class App {
             // A loose bar keeps the size it was pulled to; without one it takes the height
             // its stacked rows need.
             panel.style.height = float.h ? float.h + 'px' : '';
-            // Minimised, the pin appears where the bar was, not across the bottom.
-            const pill = document.getElementById('showInput');
-            if (pill) {
-                pill.style.left = Math.min(float.x, window.innerWidth - 56) + 'px';
-                pill.style.top = Math.min(float.y, window.innerHeight - 56) + 'px';
-            }
+            this.positionPin();
         } else {
             panel.style.left = '';
             panel.style.top = '';
@@ -300,6 +295,37 @@ class App {
             panel.style.bottom = '';
             panel.style.width = '';
         }
+        this.positionPin();
+    }
+
+    /**
+     * Where the pin sits when the bar is away. A parked position wins - if he dragged the
+     * pin somewhere, that is where it lives - otherwise it takes the bar's own place: the
+     * rail when docked, the loose spot when floating.
+     */
+    positionPin() {
+        const pill = document.getElementById('showInput');
+        if (!pill) return;
+        const park = this.settings.pinPos;
+        const float = this.settings.barFloat;
+        if (park) {
+            pill.style.left = Math.min(Math.max(8, park.x), window.innerWidth - 56) + 'px';
+            pill.style.top = Math.min(Math.max(8, park.y), window.innerHeight - 56) + 'px';
+            pill.style.bottom = 'auto';
+            pill.style.transform = 'none';
+            return;
+        }
+        if (float) {
+            pill.style.left = Math.min(float.x, window.innerWidth - 56) + 'px';
+            pill.style.top = Math.min(float.y, window.innerHeight - 56) + 'px';
+            pill.style.bottom = 'auto';
+            pill.style.transform = 'none';
+            return;
+        }
+        pill.style.left = '';
+        pill.style.top = '';
+        pill.style.bottom = '';
+        pill.style.transform = '';
     }
 
     /**
@@ -956,20 +982,55 @@ class App {
             let held = false;
             let downX = 0;
             let downY = 0;
+            let dragFrom = null;
+            let pinFrom = null;
+            let dragging = false;
             const cancelHold = () => { clearTimeout(holdTimer); holdTimer = null; };
             showInput.addEventListener('pointerdown', (e) => {
                 downX = e.clientX;
                 downY = e.clientY;
                 held = false;
+                dragging = false;
+                dragFrom = { x: e.clientX, y: e.clientY };
+                const box = showInput.getBoundingClientRect();
+                pinFrom = { x: box.left, y: box.top };
+                if (e.pointerId !== undefined && showInput.setPointerCapture) {
+                    try { showInput.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ }
+                }
                 cancelHold();
                 holdTimer = setTimeout(() => {
+                    if (dragging) return;
                     held = true;
                     if (navigator.vibrate) navigator.vibrate(10);
                     this.openBarMenu(showInput);
                 }, 450);
             });
+            showInput.addEventListener('pointermove', (e) => {
+                if (!dragFrom || !pinFrom) return;
+                const dx = e.clientX - dragFrom.x;
+                const dy = e.clientY - dragFrom.y;
+                // A few pixels is a finger settling, not a decision to move.
+                if (!dragging && Math.hypot(dx, dy) < 8) return;
+                dragging = true;
+                cancelHold();
+                const x = Math.min(Math.max(8, pinFrom.x + dx), window.innerWidth - 56);
+                const y = Math.min(Math.max(8, pinFrom.y + dy), window.innerHeight - 56);
+                showInput.style.left = Math.round(x) + 'px';
+                showInput.style.top = Math.round(y) + 'px';
+                showInput.style.bottom = 'auto';
+                showInput.style.transform = 'none';
+            });
             showInput.addEventListener('pointerup', (e) => {
                 cancelHold();
+                if (dragging) {
+                    dragging = false;
+                    dragFrom = null;
+                    const box = showInput.getBoundingClientRect();
+                    this.settings.pinPos = { x: Math.round(box.left), y: Math.round(box.top) };
+                    this.saveState();
+                    return;
+                }
+                dragFrom = null;
                 if (held) return;
                 if (Math.abs(e.clientX - downX) > 10 || Math.abs(e.clientY - downY) > 10) return;
                 this.toggleInputBar(false);
