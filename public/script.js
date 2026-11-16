@@ -1661,24 +1661,24 @@ class App {
     async purgeRow() {
         const id = (window.prompt('Stored row id to remove (for example i-am-justice)') || '').trim();
         if (!id) return;
+        const kept = [];
         try {
-            const res = await fetch(new URL('/api/truth/purge', this.getProxyUrl()).toString(), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'same-origin',
-                body: JSON.stringify({ id, layer: 'provisional' })
-            });
-            const body = await res.json().catch(() => null);
-            if (res.status === 401) {
-                this.showToast(body?.error?.message || 'Sign in to remove a stored row');
-                this.openModal('settingsModal');
-                return;
+            for (const layer of ['provisional', 'master']) {
+                const res = await fetch(new URL('/api/truth/purge', this.getProxyUrl()).toString(), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ id, layer })
+                });
+                const body = await res.json().catch(() => null);
+                if (res.status === 401) {
+                    this.showToast(body?.error?.message || 'Sign in to remove a stored row');
+                    this.openModal('settingsModal');
+                    return;
+                }
+                if (!res.ok || !body?.ok) kept.push(`${layer} (${res.status})`);
             }
-            if (!res.ok || !body?.ok) {
-                this.showToast(body?.error?.message || `Not removed (${res.status})`);
-                return;
-            }
-            this.showToast(`Removed ${id}`);
+            this.showToast(kept.length ? `Not removed: ${kept.join(', ')}` : `Removed ${id}`);
         } catch (err) {
             this.showToast(`Not removed: ${err.message}`);
         }
