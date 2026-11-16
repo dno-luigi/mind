@@ -3061,6 +3061,8 @@ class App {
 !theme:Name,BgHex,CardBgHex,TextHex,BorderHex,PrimaryHex!
 confidence:<0-100, how sure you are of that palette>
 Based on this vibe: ${desc}
+The palette is for reading on: Text on CardBg must reach at least 7:1 contrast, Primary on CardBg
+at least 4.5:1, and Border must be visible against Bg. A style nobody can read is a failed style.
 ${retry ? 'Your previous answer was unusable. Reply with those two lines and nothing else, with all five colours as 6-digit hex.\n' : ''}Do not output any other text.`;
 
         this.lastThemePrompt = desc;
@@ -3096,7 +3098,7 @@ ${retry ? 'Your previous answer was unusable. Reply with those two lines and not
                 if (el) this.applyCardStyleToEl(el, card.styles);
                 this.showToast(`Card style: ${result.theme.name}`);
             } else {
-                this.theme = { ...this.theme, ...result.theme };
+                this.theme = this.withVariants({ ...this.theme, ...result.theme, mode: this.theme.mode || 'dark' });
                 this.rememberTheme(this.theme);
                 this.applyTheme();
                 this.saveState();
@@ -3448,17 +3450,19 @@ ${retry ? 'Your previous answer was unusable. Reply with those two lines and not
         this.setCardView(this.settings.view);
     }
 
+    /**
+     * Two views of one style. Flipping light or dark changes the lightness of the palette,
+     * not the palette: the hue and the relationships that made the style survive, and the
+     * text, border and primary colour are pushed until they are readable on the surface
+     * they actually sit on.
+     */
     toggleThemeMode() {
-        const current = document.body.getAttribute('data-theme');
-        const next = current === 'light' ? 'dark' : 'light';
-        document.body.setAttribute('data-theme', next);
-        if (next === 'light') {
-            this.theme.bg = '#f8f9fa'; this.theme.cardBg = '#ffffff'; this.theme.text = '#222'; this.theme.border = '#ddd';
-        } else {
-            this.theme.bg = '#121212'; this.theme.cardBg = '#1e1e1e'; this.theme.text = '#f5f5f5'; this.theme.border = '#333';
-        }
+        const next = this.theme.mode === 'light' ? 'dark' : 'light';
+        if (!this.theme.variants) this.theme = this.withVariants({ ...this.theme });
+        this.theme = { ...this.theme, mode: next };
         this.applyTheme();
         this.saveState();
+        this.showToast(`${this.theme.name} \u00b7 ${next}`);
     }
 
     toggleThemeLock() {
@@ -3546,7 +3550,8 @@ ${retry ? 'Your previous answer was unusable. Reply with those two lines and not
             const rest = this.loadThemeHistory().filter(t => t.name.toLowerCase() !== theme.name.toLowerCase());
             rest.unshift({
                 name: theme.name, primary: theme.primary, bg: theme.bg, cardBg: theme.cardBg,
-                text: theme.text, border: theme.border, at: Date.now()
+                text: theme.text, border: theme.border, mode: theme.mode,
+                variants: theme.variants, at: Date.now()
             });
             localStorage.setItem(THEME_HISTORY_KEY, JSON.stringify(rest.slice(0, 40)));
         } catch (e) {
@@ -3586,11 +3591,14 @@ ${retry ? 'Your previous answer was unusable. Reply with those two lines and not
 
     applySavedTheme(theme) {
         if (!theme) return;
-        this.theme = {
+        const base = {
             ...this.theme,
             name: theme.name, primary: theme.primary, bg: theme.bg,
-            cardBg: theme.cardBg, text: theme.text, border: theme.border
+            cardBg: theme.cardBg, text: theme.text, border: theme.border,
+            mode: theme.mode || 'dark'
         };
+        // A theme saved with its variants comes back exactly as it was.
+        this.theme = theme.variants ? { ...base, variants: theme.variants } : this.withVariants(base);
         this.applyTheme();
         this.saveState();
         this.closeModal('themeHistoryModal');
@@ -3607,7 +3615,120 @@ ${retry ? 'Your previous answer was unusable. Reply with those two lines and not
         return true;
     }
 
+    colourRgb(hex) {
+        const match = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(hex || '').trim());
+        if (!match) return { r: 128, g: 128, b: 128 };
+        let h = match[1];
+        if (h.length === 3) h = h.split('').map(ch => ch + ch).join('');
+        return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
+    }
+
+    colourHsl(hex) {
+        const { r, g, b } = this.colourRgb(hex);
+        const rn = r / 255, gn = g / 255, bn = b / 255;
+        const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
+        const l = (max + min) / 2;
+        let h = 0, sat = 0;
+        if (max !== min) {
+            const d = max - min;
+            sat = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+            if (max === rn) h = (gn - bn) / d + (gn < bn ? 6 : 0);
+            else if (max === gn) h = (bn - rn) / d + 2;
+            else h = (rn - gn) / d + 4;
+            h *= 60;
+        }
+        return { h, s: sat * 100, l: l * 100 };
+    }
+
+    hslHex({ h, s, l }) {
+        const hue = ((h % 360) + 360) % 360;
+        const sat = Math.max(0, Math.min(100, s)) / 100;
+        const lum = Math.max(0, Math.min(100, l)) / 100;
+        const chroma = (1 - Math.abs(2 * lum - 1)) * sat;
+        const x = chroma * (1 - Math.abs(((hue / 60) % 2) - 1));
+        const m = lum - chroma / 2;
+        let rgb;
+        if (hue < 60) rgb = [chroma, x, 0];
+        else if (hue < 120) rgb = [x, chroma, 0];
+        else if (hue < 180) rgb = [0, chroma, x];
+        else if (hue < 240) rgb = [0, x, chroma];
+        else if (hue < 300) rgb = [x, 0, chroma];
+        else rgb = [chroma, 0, x];
+        return '#' + rgb.map(v => Math.round((v + m) * 255).toString(16).padStart(2, '0')).join('');
+    }
+
+    colourLum(hex) {
+        const { r, g, b } = this.colourRgb(hex);
+        const channel = (v) => {
+            const n = v / 255;
+            return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+        };
+        return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+    }
+
+    /** WCAG contrast: 4.5 is readable body text, 7 is comfortable. */
+    colourContrast(a, b) {
+        const la = this.colourLum(a), lb = this.colourLum(b);
+        return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    }
+
+    /** Move a colour's lightness until it can be read on `against`, keeping its hue. */
+    readable(hex, against, target = 4.6) {
+        if (this.colourContrast(hex, against) >= target) return hex;
+        const base = this.colourHsl(hex);
+        const dir = this.colourLum(against) > 0.4 ? -1 : 1;
+        for (let step = 2; step <= 100; step += 2) {
+            const l = base.l + dir * step;
+            if (l <= 0 || l >= 100) break;
+            const candidate = this.hslHex({ ...base, l });
+            if (this.colourContrast(candidate, against) >= target) return candidate;
+        }
+        return dir < 0 ? '#101010' : '#f5f5f5';
+    }
+
+    /**
+     * One palette, two views. The hue and saturation carry across, so a style is still
+     * itself in either mode; only lightness moves, and only as far as legibility needs.
+     */
+    themeVariant(theme, mode) {
+        const light = mode === 'light';
+        const bg = this.colourHsl(theme.bg);
+        const card = this.colourHsl(theme.cardBg);
+        const text = this.colourHsl(theme.text);
+        const border = this.colourHsl(theme.border);
+        const primary = this.colourHsl(theme.primary);
+
+        const bgHex = this.hslHex({ h: bg.h, s: Math.min(bg.s, light ? 26 : 46), l: light ? 96 : 9 });
+        const cardHex = this.hslHex({ h: card.s > 2 ? card.h : bg.h, s: Math.min(card.s, light ? 16 : 34), l: light ? 99 : 14 });
+        // Text keeps its own hue, then earns its contrast.
+        const textHex = this.readable(
+            this.hslHex({ h: text.h, s: Math.min(text.s, light ? 45 : 30), l: light ? 16 : 93 }), cardHex, 7);
+        const borderHex = this.hslHex({ h: border.s > 2 ? border.h : bg.h, s: Math.min(border.s, 40), l: light ? 82 : 28 });
+        // Primary is the identity of the style: it keeps hue and saturation and gives up
+        // only the lightness legibility demands.
+        const primaryHex = this.readable(
+            this.hslHex({ h: primary.h, s: Math.max(primary.s, 45), l: light ? Math.min(primary.l, 46) : Math.max(primary.l, 58) }),
+            cardHex, 4.6);
+
+        return { bg: bgHex, cardBg: cardHex, text: textHex, border: borderHex, primary: primaryHex };
+    }
+
+    /** Both views are made once, when the palette arrives, so flipping never invents one. */
+    withVariants(theme) {
+        const mode = theme.mode === 'light' ? 'light' : 'dark';
+        return {
+            ...theme,
+            mode,
+            variants: { dark: this.themeVariant(theme, 'dark'), light: this.themeVariant(theme, 'light') }
+        };
+    }
+
     applyTheme() {
+        if (!this.theme.variants) this.theme = this.withVariants({ ...this.theme });
+        const mode = this.theme.mode === 'light' ? 'light' : 'dark';
+        const active = this.theme.variants[mode] || this.theme.variants.dark;
+        this.theme = { ...this.theme, mode, ...active };
+        document.body.setAttribute('data-theme', mode);
         const r = document.documentElement.style;
         r.setProperty('--primary', this.theme.primary);
         r.setProperty('--bg', this.theme.bg);

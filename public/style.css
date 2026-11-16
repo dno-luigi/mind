@@ -11,13 +11,9 @@
     --safe-area-bottom: env(safe-area-inset-bottom);
 }
 
-[data-theme="light"] {
-    --bg: #f8f9fa;
-    --card-bg: #ffffff;
-    --text: #222;
-    --border: #ddd;
-    --shadow: 0 4px 16px rgba(196,30,58,0.15);
-}
+/* The light view is a view of the style, not a different one: its colours come from the
+   theme's own palette, so this only adjusts what is not a colour. */
+[data-theme="light"] { --shadow: 0 4px 16px rgba(0,0,0,0.12); }
 
 body.view-grid { --view-cols: 2; }
 body.view-full { --view-cols: 1; }
