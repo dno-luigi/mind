@@ -51,9 +51,10 @@ export async function reportOutcome(env, id, what = {}) {
   const binder = env && env.ARA;
   if (!binder || typeof binder.fetch !== 'function' || id == null) return false;
   try {
+    const key = araKey(env);
     const response = await binder.fetch('https://ara/outcome', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(key ? { 'x-admin-key': key } : {}) },
       body: JSON.stringify({
         id,
         returned: what.returned ?? null,
@@ -69,14 +70,23 @@ export async function reportOutcome(env, id, what = {}) {
   }
 }
 
+/**
+ * The key ARA's journal now asks for. It lives here rather than in a browser
+ * prompt: these two calls are machine writes made with nobody watching, and a
+ * prompt cannot answer them. A missing key is reported once by ARA (503) and the
+ * call degrades to false, which is what the caller already handles.
+ */
+const araKey = (env) => String((env && (env.ARA_KEY || env.ADMIN_KEY)) || '').trim();
+
 /** His verdict on a decision, in his words, sent to the row that made it. */
 export async function sendVerdict(env, { id, correct, correctedTo = null } = {}) {
   const binder = env && env.ARA;
   if (!binder || typeof binder.fetch !== 'function' || id == null || correct == null) return false;
   try {
+    const key = araKey(env);
     const response = await binder.fetch('https://ara/feedback', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(key ? { 'x-admin-key': key } : {}) },
       body: JSON.stringify({ id, correct, correctedTo }),
       signal: AbortSignal.timeout(3000),
     });
