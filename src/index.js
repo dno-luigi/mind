@@ -158,7 +158,7 @@ export default {
           .catch(() => null);
       }
       if (!ok) return fail(502, 'purge_rejected', `Truth answered ${status}.`, { truth: payload });
-      return json({ ok: true, id, layer, status });
+      return json({ ok: true, id, layer, status, deleted: payload?.deleted || [] });
     }
 
     if (url.pathname === '/api/verdict' && request.method === 'POST') {
@@ -904,7 +904,32 @@ async function chat(request, env, ctx) {
   // classified deep, goes to the model, so a report is never replaced by a
   // one-liner. A preset picked from the menu also means "generate".
   const briefAsk = decision.depth !== 'deep' && !ASKS_FOR_LENGTH.test(lastUser);
-  const cachedTruth = decision.truth?.answer && (araRoute === 'truth' || decision.truth.layer === 'master' || briefAsk);
+  // Only the curated pair is an answer. Master, or a pair somebody verified, is
+  // what he wrote or what survived review; a provisional one is the service's own
+  // guess kept on the way past, and serving it means a prompt fixed this morning
+  // is unreachable for every question the store already recognises. The guess is
+  // not thrown away: what it replaced goes on the record beside the new answer.
+  const curatedPair = Boolean(
+    decision.truth?.answer &&
+      (decision.truth.layer === 'master' || decision.truth.origin?.verified === true),
+  );
+  if (decision.truth?.answer && !curatedPair) {
+    const replaced = {
+      layer: decision.truth.layer || null,
+      id: decision.truth.id || null,
+      chars: String(decision.truth.answer || '').length,
+      verified: decision.truth.origin?.verified === true,
+      source: decision.truth.origin?.source || null,
+    };
+    decision.replaced = replaced;
+    decision.truth = null;
+    decision.source = 'regenerated';
+    decision.trace = [...(decision.trace || []), `replaced:${replaced.layer || 'unknown'}`];
+    reported.replaced = replaced;
+    reported.truth = null;
+    reported.source = 'regenerated';
+  }
+  const cachedTruth = curatedPair && (araRoute === 'truth' || decision.truth.layer === 'master' || briefAsk);
   // Picking Truth from the menu means "answer with the truth preset", and a
   // stored truth is that preset's answer - so the cache still serves. Picking
   // any other preset means generate with it, cache or no cache.
