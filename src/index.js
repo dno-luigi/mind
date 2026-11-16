@@ -1061,6 +1061,21 @@ async function chat(request, env, ctx) {
           route,
           model,
         });
+        // She decided this ask was a style ask, so she is told what the style turned
+        // out to be. The palette was recorded above; this is the same fact in her own
+        // row, so the next style decision is made knowing what the last one produced.
+        // Awaited for the same reason as the first report: a subrequest let go of
+        // here is dropped when the stream closes.
+        if (ara.bound && ara.id) {
+          const palette = /!theme:([^!\n]+)!/i.exec(answer);
+          const name = palette ? (palette[1].split(',')[0] || '').trim().slice(0, 60) : '';
+          await reportOutcome(env, ara.id, {
+            returned: 'generated',
+            stored: name || null,
+            route: 'style',
+            origin: null,
+          });
+        }
       } else {
         await recordCandidate(env, { input: question, answer, preset: preset?.id, route, model }, ctx);
       }
