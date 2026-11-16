@@ -600,3 +600,19 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
 .theme-row:hover { background: rgba(255,255,255,0.06); }
 .theme-swatches { display: flex; gap: 3px; margin-left: auto; }
 .theme-swatch { width: 14px; height: 14px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.35); }
+
+/* A document on screen: it is paper, so it is white and dark-inked whatever the theme is. */
+.modal-wide { max-width: 760px; width: 96vw; }
+.template-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.template-bar select { flex: 1; min-width: 0; }
+.template-scroll { max-height: 52vh; overflow-y: auto; background: #e9e9ec; padding: 14px; border-radius: 10px; }
+.template-paper { background: #ffffff; color: #111; padding: 34px 30px; border-radius: 2px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.25); min-height: 300px; font-size: 14px; }
+.template-paper .slot-empty { color: #b9b9b9; }
+@media print {
+    body > *:not(#templateModal) { display: none !important; }
+    #templateModal { position: static; display: block; background: none; }
+    #templateModal .modal-header, #templateModal .modal-footer, .template-bar, #templateHint { display: none !important; }
+    .template-scroll { max-height: none; overflow: visible; background: none; padding: 0; }
+    .template-paper { box-shadow: none; padding: 0; }
+}

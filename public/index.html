@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>ai-Ncards</title>
-    <link rel="stylesheet" href="style.css?v=9">
+    <link rel="stylesheet" href="style.css?v=10">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
@@ -115,6 +115,7 @@
         <button class="menu-item" data-action="copy"><i class="fas fa-copy"></i> Copy</button>
         <button class="menu-item" data-action="share-card"><i class="fas fa-share"></i> Share Card</button>
         <button class="menu-item" data-action="export-pdf"><i class="fas fa-file-pdf"></i> Export PDF</button>
+        <button class="menu-item" data-action="template"><i class="fas fa-file-lines"></i> Template</button>
         <button class="menu-item" data-action="shot-page"><i class="fas fa-camera"></i> Screenshot Page</button>
         <button class="menu-item" data-action="fullscreen"><i class="fas fa-expand"></i> Fullscreen</button>
         <button class="menu-item" data-action="undo"><i class="fas fa-undo"></i> Undo</button>
@@ -294,6 +295,27 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="templateModal">
+        <div class="modal modal-wide">
+            <div class="modal-header">
+                <h3>Template</h3>
+                <button class="btn btn-ghost" onclick="app.closeModal('templateModal')"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="template-bar">
+                    <select id="templatePick" onchange="app.pickTemplate(this.value)"></select>
+                    <button class="btn btn-ghost" id="templateFillBtn" onclick="app.fillTemplateFromCard()"><i class="fas fa-wand-magic-sparkles"></i> Fill from card</button>
+                </div>
+                <p class="modal-hint" id="templateHint" hidden></p>
+                <div class="template-scroll"><div id="templatePaper" class="template-paper"></div></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="app.closeModal('templateModal')">Close</button>
+                <button class="btn btn-primary" onclick="app.printTemplate()"><i class="fas fa-file-pdf"></i> Print / Save as PDF</button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal-overlay" id="themeHistoryModal">
         <div class="modal">
             <div class="modal-header">
@@ -352,6 +374,6 @@
 
     <div id="toast">Action Saved</div>
 
-    <script src="script.js?v=9"></script>
+    <script src="script.js?v=10"></script>
 </body>
 </html>

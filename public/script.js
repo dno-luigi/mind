@@ -2472,6 +2472,7 @@ class App {
                 this.selectedIds.add(id);
                 this.openPresetSelectModal();
                 break;
+            case 'template': this.openTemplate(id); break;
             case 'ai-theme': 
                 this.editingId = id; 
                 this.openModal('aiThemeModal'); 
@@ -3470,6 +3471,207 @@ ${retry ? 'Your previous answer was unusable. Reply with those two lines and not
         document.getElementById('lockLabel').textContent = this.theme.locked ? "Theme Locked" : "Lock Theme";
         this.showToast(this.theme.locked ? "Global Theme Locked" : "Global Theme Unlocked");
         this.saveState();
+    }
+
+    /* ------------------------------------------------------------------ templates */
+
+    /**
+     * Printable surfaces. A template is HTML with {{slots}} in it, so a card that already
+     * contains slots is a template in its own right and needs no conversion.
+     */
+    get templates() {
+        return [
+            {
+                id: 'letter',
+                name: 'Formal letter',
+                html: `<div style="font-family: Georgia, 'Times New Roman', serif; line-height: 1.5;">
+  <div style="text-align:center; letter-spacing:2px; font-size:10px; text-transform:uppercase;">Formal correspondence</div>
+  <div style="text-align:center; font-size:24px; font-weight:700; margin:8px 0 2px;">{{senderName}}</div>
+  <div style="text-align:center; font-size:10px; letter-spacing:2px; text-transform:uppercase;">{{senderCapacity}}</div>
+  <hr style="border:none; border-top:2px solid #111; margin:16px 0 22px;">
+  <div style="margin-bottom:20px;">
+    <div style="font-weight:700;">{{senderName}}</div>
+    <div>{{senderAddress}}</div>
+    <div>{{senderContact}}</div>
+    <div style="margin-top:8px;">{{date}}</div>
+  </div>
+  <div style="margin-bottom:18px;">TO: <strong>{{recipientName}}</strong><div>{{recipientAddress}}</div></div>
+  <div style="margin-bottom:14px;">RE: <strong>{{subject}}</strong></div>
+  <div style="margin-bottom:10px;">{{salutation}}</div>
+  <div style="white-space:pre-wrap; margin-bottom:18px;">{{body}}</div>
+  <div style="margin-bottom:26px;">{{signoff}}</div>
+  <div style="font-weight:700;">{{signature}}</div>
+</div>`,
+                sample: {
+                    senderName: 'Sender Name', senderCapacity: 'In propia persona',
+                    senderAddress: 'Street Address, City, State ZIP', senderContact: 'Phone \u2022 Email',
+                    date: 'DATE', recipientName: 'Recipient Name', recipientAddress: 'Recipient address',
+                    subject: 'Subject of the letter', salutation: 'Dear Sir or Madam,',
+                    body: 'The body of the letter goes here.', signoff: 'Yours faithfully,', signature: 'Signature'
+                }
+            },
+            {
+                id: 'case',
+                name: 'Case request',
+                html: `<div style="font-family: Georgia, 'Times New Roman', serif; line-height: 1.55;">
+  <div style="font-size:24px; font-weight:700;">{{senderName}}</div>
+  <div style="font-style:italic;">{{senderCapacity}}</div>
+  <div style="margin-top:10px;">{{senderAddress}}</div>
+  <div>Phone: {{phone}}</div>
+  <div>Email: {{email}}</div>
+  <div style="font-size:26px; font-weight:700; margin:26px 0 16px;">Case Request - {{caseNumber}}</div>
+  <div style="margin-bottom:12px;"><strong>Date:</strong> {{date}}</div>
+  <div style="margin-bottom:12px;"><strong>To:</strong> {{recipient}}</div>
+  <div style="margin-bottom:12px;"><strong>Subject:</strong> {{subject}}</div>
+  <div style="white-space:pre-wrap;">{{body}}</div>
+  <div style="margin-top:30px;">{{signoff}}</div>
+  <div style="font-weight:700; margin-top:4px;">{{signature}}</div>
+</div>`,
+                sample: {
+                    senderName: 'Sender Name', senderCapacity: 'In propia persona',
+                    senderAddress: 'Street Address, City, State ZIP', phone: '(555) 000-0000', email: 'name@example.com',
+                    caseNumber: 'CASE-NUMBER', date: 'DATE', recipient: 'Court, office and county',
+                    subject: 'Request for records and notice', body: 'The request goes here.',
+                    signoff: 'Respectfully submitted,', signature: 'Signature'
+                }
+            },
+            {
+                id: 'memo',
+                name: 'Memo',
+                html: `<div style="font-family: Georgia, 'Times New Roman', serif; line-height: 1.6;">
+  <div style="font-size:12px; letter-spacing:3px; text-transform:uppercase; border-bottom:2px solid #111; padding-bottom:8px; margin-bottom:16px;">Memorandum</div>
+  <table style="width:100%; border-collapse:collapse; margin-bottom:18px; font-size:14px;">
+    <tr><td style="width:78px; font-weight:700;">TO</td><td>{{to}}</td></tr>
+    <tr><td style="font-weight:700;">FROM</td><td>{{from}}</td></tr>
+    <tr><td style="font-weight:700;">DATE</td><td>{{date}}</td></tr>
+    <tr><td style="font-weight:700;">RE</td><td><strong>{{subject}}</strong></td></tr>
+  </table>
+  <div style="white-space:pre-wrap;">{{body}}</div>
+</div>`,
+                sample: { to: 'Recipient', from: 'Sender', date: 'DATE', subject: 'Subject', body: 'The memo goes here.' }
+            }
+        ];
+    }
+
+    /**
+     * One surface, two cases. A card that carries {{slots}} is the template and is shown as
+     * itself. Any other card is material to pour into a template, and the pouring is the
+     * model's job because only it can decide that "MSB26006196" is the case number.
+     */
+    openTemplate(cardId) {
+        const card = this.cards.find(c => c.id === cardId);
+        const text = card ? String(card.r || card.q || '') : '';
+        this.templateSourceId = cardId || null;
+        this.templateValues = {};
+        this.templateFromCard = /\{\{\s*\w+\s*\}\}/.test(text);
+        this.templateCardText = text;
+
+        const pick = document.getElementById('templatePick');
+        pick.innerHTML = '';
+        this.templates.forEach(t => {
+            const option = document.createElement('option');
+            option.value = t.id;
+            option.textContent = t.name;
+            pick.appendChild(option);
+        });
+        if (this.templateFromCard) {
+            const own = document.createElement('option');
+            own.value = 'card';
+            own.textContent = 'This card, as a template';
+            pick.appendChild(own);
+        }
+        pick.value = 'letter';
+        this.pickTemplate('letter');
+        this.openModal('templateModal');
+    }
+
+    pickTemplate(key) {
+        const pick = document.getElementById('templatePick');
+        if (pick) pick.value = key;
+        const fill = document.getElementById('templateFillBtn');
+        const hint = document.getElementById('templateHint');
+        if (key === 'card') {
+            this.template = {
+                id: 'card', name: 'This card', html: this.templateCardText,
+                slots: [...this.templateCardText.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map(m => ({ key: m[1], sample: '' })),
+                sample: {}
+            };
+            if (fill) fill.hidden = true;
+            if (hint) { hint.hidden = false; hint.textContent = 'This card is the template. Nothing is filled in; it prints as it stands.'; }
+        } else {
+            this.template = this.templates.find(t => t.id === key) || this.templates[0];
+            // The keys to fill are the ones the template actually has a placeholder for.
+            this.template.slots = [...this.template.html.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map(m => ({ key: m[1] }));
+            if (fill) fill.hidden = !this.templateSourceId || this.templateFromCard;
+            if (hint) {
+                hint.hidden = this.templateValues && Object.keys(this.templateValues).length > 0;
+                hint.textContent = 'Placeholders until a card is poured in.';
+            }
+        }
+        this.renderTemplatePreview();
+    }
+
+    renderTemplatePreview() {
+        const paper = document.getElementById('templatePaper');
+        if (!paper || !this.template) return;
+        const fill = this.templateValues || {};
+        const escape = (value) => String(value).replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]));
+        paper.innerHTML = this.template.html.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, key) => {
+            if (fill[key] !== undefined && String(fill[key]).trim() !== '') return escape(fill[key]);
+            const sample = (this.template.sample || {})[key];
+            if (sample !== undefined && sample !== '') return `<span class="slot-empty">${escape(sample)}</span>`;
+            return '<span class="slot-empty">&#8212;</span>';
+        });
+    }
+
+    /** Only facts in the card. A document that invents facts is worse than a blank slot. */
+    async fillTemplateFromCard() {
+        const card = this.cards.find(c => c.id === this.templateSourceId);
+        const hint = document.getElementById('templateHint');
+        if (!this.template) return;
+        if (!card) {
+            if (hint) { hint.hidden = false; hint.textContent = 'That card is no longer here, so there is nothing to pour in.'; }
+            return;
+        }
+        const source = String(card.r || card.q || '');
+        const keys = (this.template.slots || []).map(slot => slot.key);
+        if (hint) { hint.hidden = false; hint.textContent = 'Filling from the card\u2026'; }
+
+        const prompt = `Answer with JSON only. No prose, no code fence.
+Keys: ${keys.join(', ')}
+Rules: use only facts present in the source; if a fact is absent leave the value as an empty string; "body" may be rewritten as the same information in the template's register but must not add facts, names, numbers or dates.
+Source:
+${source.slice(0, 6000)}`;
+
+        try {
+            const answer = await this.streamChat({ messages: [{ role: 'user', content: prompt }], preset: NO_PRESET_KEY }, () => {});
+            const json = JSON.parse((answer.match(/\{[\s\S]*\}/) || ['{}'])[0]);
+            this.templateValues = json && typeof json === 'object' ? json : {};
+            this.renderTemplatePreview();
+            if (hint) { hint.hidden = false; hint.textContent = 'Filled from the card. Check every line before it prints.'; }
+        } catch (err) {
+            if (hint) { hint.hidden = false; hint.textContent = `Could not read the card as facts: ${err.message}`; }
+        }
+    }
+
+    printTemplate() {
+        const paper = document.getElementById('templatePaper');
+        if (!paper) return;
+        const name = String((this.template && this.template.name) || 'template').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+        if (typeof window.html2pdf !== 'function') {
+            window.print();
+            return;
+        }
+        window.html2pdf()
+            .set({
+                margin: 0,
+                filename: `${name}.pdf`,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2, backgroundColor: '#ffffff', useCORS: true },
+                jsPDF: { unit: 'pt', format: 'a4' }
+            })
+            .from(paper)
+            .save();
     }
 
     /**
