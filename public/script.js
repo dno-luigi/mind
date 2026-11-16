@@ -1609,10 +1609,20 @@ class App {
                     }],
                     preset: usePreset ? preset.key : NO_PRESET_KEY,
                     presetLocked: this.presetChosen,
-                    signal
+                    signal,
+                    prompt
                 },
                 (text, first) => this.updateStreamingContent(text, first)
             );
+
+            // Her card is already drawn: finalising an empty answer would wipe it.
+            if (this.clarifyQuestion) {
+                const asked = this.cards.find((c) => c.id === this.streamingId);
+                if (asked) asked.r = this.clarifyQuestion.q || '';
+                this.clarifyQuestion = null;
+                this.streamingId = null;
+                return;
+            }
 
             this.finalizeResponse(accumulated);
 
@@ -1635,7 +1645,7 @@ class App {
      * The client never learns which provider answered, which is why switching
      * between Workers AI and OpenRouter needs no frontend change.
      */
-    async streamChat({ messages, preset = null, presetLocked = false, style = false, signal = null }, onText) {
+    async streamChat({ messages, preset = null, presetLocked = false, style = false, signal = null, prompt = '' }, onText) {
         const url = this.getProxyUrl();
         // His tap on her card is part of this ask, and only this one.
         const araChoice = this.pendingAraChoice || null;
@@ -1711,6 +1721,7 @@ class App {
 
         // She asked instead of writing: the card is hers, and it is answerable.
         if (clarifyEvent && clarifyEvent.question) {
+            this.clarifyQuestion = clarifyEvent.question;
             this.renderClarify(this.streamingId, clarifyEvent.question, prompt);
             return '';
         }
