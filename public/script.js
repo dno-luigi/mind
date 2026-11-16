@@ -331,6 +331,48 @@ class App {
         this.saveState();
     }
 
+    /**
+     * The hold menu on the pin. Two ways back is one more than a tap can carry, and a hold
+     * is a decision he made deliberately - no mistaken intent, as he put it.
+     */
+    openBarMenu(anchor) {
+        let menu = document.getElementById('barMenu');
+        if (!menu) {
+            menu = document.createElement('div');
+            menu.id = 'barMenu';
+            document.body.appendChild(menu);
+        }
+        const floating = Boolean(this.settings.barFloat);
+        const items = [
+            { label: 'Show the bar', run: () => this.toggleInputBar(false) },
+            floating
+                ? { label: 'Dock it on the rail', run: () => { this.setBarFloat(false); this.toggleInputBar(false); } }
+                : { label: 'Float it free', run: () => { this.toggleInputBar(false); this.setBarFloat(true); } },
+        ];
+        menu.innerHTML = '';
+        items.forEach((item) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = item.label;
+            button.addEventListener('click', () => {
+                menu.classList.remove('active');
+                item.run();
+            });
+            menu.appendChild(button);
+        });
+        menu.classList.add('active');
+        const r = anchor.getBoundingClientRect();
+        const m = menu.getBoundingClientRect();
+        menu.style.left = Math.round(Math.min(Math.max(8, r.left + r.width / 2 - m.width / 2), window.innerWidth - m.width - 8)) + 'px';
+        menu.style.top = Math.round(Math.max(8, r.top - m.height - 10)) + 'px';
+        const close = (e) => {
+            if (e && menu.contains(e.target)) return;
+            menu.classList.remove('active');
+            document.removeEventListener('pointerdown', close);
+        };
+        setTimeout(() => document.addEventListener('pointerdown', close), 0);
+    }
+
     /** Pulling the corner sizes a loose bar: width and height, both remembered. */
     beginBarResize(event) {
         const panel = document.getElementById('inputPanel');
@@ -906,7 +948,35 @@ class App {
         const collapseInput = document.getElementById('collapseInput');
         if (collapseInput) collapseInput.addEventListener('click', () => this.toggleInputBar(true));
         const showInput = document.getElementById('showInput');
-        if (showInput) showInput.addEventListener('click', () => this.toggleInputBar(false));
+        if (showInput) {
+            // A tap restores and a hold offers the choice. pointerup is what makes the tap
+            // feel immediate, and it keeps the click from landing on the bar that just
+            // appeared under the finger.
+            let holdTimer = null;
+            let held = false;
+            let downX = 0;
+            let downY = 0;
+            const cancelHold = () => { clearTimeout(holdTimer); holdTimer = null; };
+            showInput.addEventListener('pointerdown', (e) => {
+                downX = e.clientX;
+                downY = e.clientY;
+                held = false;
+                cancelHold();
+                holdTimer = setTimeout(() => {
+                    held = true;
+                    if (navigator.vibrate) navigator.vibrate(10);
+                    this.openBarMenu(showInput);
+                }, 450);
+            });
+            showInput.addEventListener('pointerup', (e) => {
+                cancelHold();
+                if (held) return;
+                if (Math.abs(e.clientX - downX) > 10 || Math.abs(e.clientY - downY) > 10) return;
+                this.toggleInputBar(false);
+            });
+            showInput.addEventListener('pointercancel', cancelHold);
+            showInput.addEventListener('pointerleave', cancelHold);
+        }
 
         const inputGrab = document.getElementById('inputGrab');
         if (inputGrab) {

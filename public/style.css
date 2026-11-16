@@ -290,12 +290,20 @@ body.bar-floating #barResize:hover::after { border-color: var(--primary); }
 
 /* Minimised, a loose bar is only the pin - no strip across the bottom offering to bring
    back something that never lived there. */
-body.input-hidden.bar-floating #showInput {
-    bottom: auto; left: 0; top: 0; transform: none;
-    width: 46px; height: 46px; padding: 0; border-radius: 50%;
-    justify-content: center; gap: 0; font-size: 13px;
+body.input-hidden.bar-floating #showInput { bottom: auto; left: 0; top: 0; transform: none; }
+
+/* Hold the pin and the choice opens out, so a tap never has to mean two things. */
+#barMenu {
+    position: fixed; z-index: 140; display: none; flex-direction: column; gap: 2px; padding: 6px;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5); min-width: 190px;
 }
-body.input-hidden.bar-floating #showInput .show-input-label { display: none; }
+#barMenu.active { display: flex; }
+#barMenu button {
+    text-align: left; background: transparent; border: none; color: var(--text);
+    padding: 11px 12px; border-radius: 8px; font-size: 14px; cursor: pointer;
+}
+#barMenu button:hover { background: var(--bg); }
 #userInput {
     flex: 1; padding: 12px 14px; border-radius: 24px; border: 1px solid var(--border); 
     background: var(--bg); color: var(--text); font-size: 16px; outline: none; 
@@ -349,16 +357,18 @@ body.input-hidden { padding-bottom: 16px; }
 body.input-hidden .view-fab-container { bottom: 58px; }
 body.input-hidden.view-grid #grid { grid-auto-rows: calc((100dvh - 150px) / 2); }
 
+/* The way back is a pin, in every state. A strip that appears where the bar was is a
+   moving target under a thumb; a pin sits still and does not change shape when tapped. */
 #showInput {
     position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
-    z-index: 102; height: 44px; padding: 0 18px; border-radius: 22px;
+    z-index: 130; width: 48px; height: 48px; padding: 0; border-radius: 50%;
     border: 1px solid var(--border); background: var(--card-bg); color: var(--text);
-    display: flex; align-items: center; gap: 8px; font-size: 12px;
-    box-shadow: var(--shadow); cursor: pointer;
-    /* Held back until the bar has slid away, so the pill never sits on a bar still leaving. */
-    opacity: 0; pointer-events: none; transition: opacity 0.12s ease-out 0.1s;
+    display: flex; align-items: center; justify-content: center; font-size: 15px;
+    box-shadow: var(--shadow); cursor: pointer; touch-action: manipulation;
+    opacity: 0; pointer-events: none; transition: opacity 0.10s ease-out;
 }
 body.input-hidden #showInput { opacity: 1; pointer-events: auto; }
+.show-input-label { display: none; }
 
 #cardMenu {
     position: fixed; background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
@@ -408,6 +418,10 @@ button.btn { padding: 10px 16px; border-radius: 8px; border: none; cursor: point
 
 #toast { position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%) translateY(100px); background: var(--card-bg); border: 1px solid var(--border); color: var(--text); padding: 10px 16px; border-radius: 20px; font-size: 13px; z-index: 2500; transition: transform 0.3s; opacity: 0; box-shadow: var(--shadow); }
 #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+/* The toast is a message, not a surface: it sits over the bottom of the screen at z-2500
+   even when invisible, and it was swallowing taps meant for whatever was underneath -
+   the bar's restore pin most of all. */
+#toast, #toast.show { pointer-events: none; }
 
 #emptyState { text-align: center; color: rgba(255,255,255,0.3); margin-top: 50px; font-size: 18px; pointer-events: none; display: flex; flex-direction: column; gap: 10px; align-items: center; }
 
