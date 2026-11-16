@@ -1656,6 +1656,35 @@ class App {
     }
 
     /**
+     * Remove one stored row by id. Narrow: a poisoned answer leaves, nothing else.
+     */
+    async purgeRow() {
+        const id = (window.prompt('Stored row id to remove (for example i-am-justice)') || '').trim();
+        if (!id) return;
+        try {
+            const res = await fetch(new URL('/api/truth/purge', this.getProxyUrl()).toString(), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ id, layer: 'provisional' })
+            });
+            const body = await res.json().catch(() => null);
+            if (res.status === 401) {
+                this.showToast(body?.error?.message || 'Sign in to remove a stored row');
+                this.openModal('settingsModal');
+                return;
+            }
+            if (!res.ok || !body?.ok) {
+                this.showToast(body?.error?.message || `Not removed (${res.status})`);
+                return;
+            }
+            this.showToast(`Removed ${id}`);
+        } catch (err) {
+            this.showToast(`Not removed: ${err.message}`);
+        }
+    }
+
+    /**
      * The owner asking for a fresh run. What is stored is not the answer to this
      * question, so the store is bypassed and the run is recorded against a name.
      */
@@ -2685,6 +2714,7 @@ class App {
             case 'ai-edit': this.promptAction('ai-edit', id); break;
             case 'signals': this.toggleSignals(); break;
             case 'fresh': this.forceFresh(id); break;
+            case 'purge': this.purgeRow(); break;
             case 'create-preset-card':
                 // Open modal to select which preset to create a card for
                 this.selectedIds.clear();

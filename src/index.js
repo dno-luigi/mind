@@ -96,6 +96,71 @@ export default {
 
     if (request.method === 'OPTIONS') return options();
 
+    /**
+     * Remove one stored row. Narrow on purpose: one id, one layer, no listing,
+     * no wildcards - a poisoned answer is deleted, the store is not cleared.
+     * Truth holds the write key; this route only decides who may ask.
+     */
+    if (url.pathname === '/api/truth/purge' && request.method === 'POST') {
+      let ask = {};
+      try {
+        ask = await request.json();
+      } catch {
+        return fail(400, 'invalid_json', 'Send { id, layer }.');
+      }
+      const id = String(ask.id || '').trim();
+      const layer = String(ask.layer || 'provisional').trim().toLowerCase();
+      if (!id || id.length > 200) return fail(400, 'id_required', 'Send the id of the row to remove.');
+      if (layer !== 'master' && layer !== 'provisional') {
+        return fail(400, 'layer_invalid', 'layer must be master or provisional.');
+      }
+      const owner = await sessionUser(request, env);
+      const adminKey = String(env.ADMIN_KEY || '');
+      const bearer = String(request.headers.get('x-admin-key') || '');
+      const named = loginEnabled(env) ? Boolean(owner) : false;
+      const keyed = adminKey && bearer.length === adminKey.length && bearer === adminKey;
+      if (!named && !keyed) {
+        return fail(401, 'sign_in_required', loginEnabled(env)
+          ? 'Sign in to remove a stored row.'
+          : 'Send ADMIN_KEY in x-admin-key, or configure login.');
+      }
+      if (!adminKey) return fail(503, 'admin_not_configured', 'The store key is not set on this deployment.');
+      const truth = env.TRUTH;
+      if (!truth || typeof truth.fetch !== 'function') {
+        return fail(503, 'truth_unbound', 'No truth binding on this deployment.');
+      }
+      let status = 0;
+      let payload = null;
+      try {
+        const res = await truth.fetch(`https://truth/api/truth/${layer}/delete`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-admin-key': adminKey },
+          body: JSON.stringify({ id }),
+          signal: AbortSignal.timeout(8000),
+        });
+        status = res.status;
+        payload = await res.json().catch(() => null);
+      } catch (err) {
+        return fail(502, 'purge_failed', `Truth did not answer (${err.message}).`);
+      }
+      const ok = status >= 200 && status < 300 && payload && payload.success !== false;
+      const store = stateKv(env);
+      if (store) {
+        await store
+          .put(`purge:${Date.now()}`, JSON.stringify({
+            id,
+            layer,
+            actor: owner || (keyed ? 'admin-key' : 'anonymous'),
+            ok,
+            status,
+            at: new Date().toISOString(),
+          }))
+          .catch(() => null);
+      }
+      if (!ok) return fail(502, 'purge_rejected', `Truth answered ${status}.`, { truth: payload });
+      return json({ ok: true, id, layer, status });
+    }
+
     if (url.pathname === '/api/verdict' && request.method === 'POST') {
       let verdict = {};
       try {
