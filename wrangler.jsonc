@@ -189,5 +189,12 @@
   // also the code default — 8000 neurons/IP/day in budget.js, gemini-2.5-flash
   // and whisper-large-v3 in providers/openrouter.js — so nothing changes, and
   // the dashboard stops reporting drift on each deploy.
-  "vars": {}
+  "vars": {},
+  "services": [
+    { "binding": "CFOS", "service": "cfos" },
+    { "binding": "CFBE", "service": "cfos-backend" },
+    { "binding": "CFCAL", "service": "cfos-gk-scheduler" },
+    { "binding": "CFCXT", "service": "cfos-gk-context" },
+    { "binding": "CFWB", "service": "cfos-gk-websearch" }
+  ]
 }
