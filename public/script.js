@@ -1630,7 +1630,7 @@ class App {
                         </div>
                     </div>
                     <div class="content">${this.md(card.q)}</div>
-                    ${this.signalsHtml(card.id)}
+                    <div class="decision-slot">${this.signalsHtml(card.id)}</div>
                     ${this.shotHtml(card)}
                     ${this.attachmentsHtml(card)}
                 </div>
@@ -1717,7 +1717,9 @@ class App {
     /** The decision, as chips on the question. Small, and quiet by default. */
     signalsHtml(id) {
         if (!this.signalsOn()) return '';
-        const d = (this.decisions || {})[id];
+        // The card's own copy first: it is the one that survived the reload.
+        const card = this.cards.find(c => c.id === id);
+        const d = (card && card.decision) || (this.decisions || {})[id];
         if (!d) return '';
         const bit = (label, value) => (value === null || value === undefined || value === '')
             ? ''
@@ -2172,7 +2174,24 @@ class App {
                     // What she read the request as, kept beside the request it belongs
                     // to - not on the answer, where it explains nothing.
                     this.decisions = this.decisions || {};
-                    if (this.streamingId != null && event.decision) this.decisions[this.streamingId] = event.decision;
+                    if (this.streamingId != null && event.decision) {
+                        this.decisions[this.streamingId] = event.decision;
+                        // The chips belong to the card, not to this tab. Kept only in
+                        // memory they vanish on reload, on a card opened from another
+                        // session, and on anything the store answered elsewhere - which
+                        // is why the reading was invisible. Cods writes them on the card;
+                        // so does this.
+                        const card = this.cards.find(c => c.id === this.streamingId);
+                        if (card) {
+                            card.decision = event.decision;
+                            this.saveState();
+                            // The card was drawn before this arrived, so the reading
+                            // has to be written into the face already on screen -
+                            // otherwise the chips only turn up after a reload.
+                            const slot = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .decision-slot`);
+                            if (slot) slot.innerHTML = this.signalsHtml(this.streamingId);
+                        }
+                    }
                 }
             }
         }
