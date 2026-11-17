@@ -38,6 +38,33 @@ export function _resetDecisionCache() {
   L1.clear();
 }
 
+const DECISION_KEY_VERSION = 2;
+
+/** What was asked, with the differences that carry no meaning removed. */
+function normaliseQuestion(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(-2000);
+}
+
+/**
+ * One row per decision, hit or miss. This is what makes "does the decider save
+ * money" answerable: hits cost nothing and say so, misses carry what they cost.
+ */
+async function noteDecision(kv, entry) {
+  if (!kv) return;
+  try {
+    await kv.put(`decide:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`, JSON.stringify(entry), {
+      expirationTtl: 86400,
+    });
+  } catch {
+    /* the record is useful, never required */
+  }
+}
+
 function cacheHit(cached, via, cacheKey) {
   return {
     ...cached,
@@ -206,7 +233,12 @@ export async function decide(
   // guard useless.
   const promptText = String(findPreset(presetId || DEFAULT_PRESET)?.system || '');
   const promptPrint = (await sha256Hex(promptText)).slice(0, 16);
-  const cacheKey = `decision:${await sha256Hex(`${lastUser.slice(-4000)}|${images.length}|${presetId || ''}|${promptPrint}`)}`;
+  // The same question typed twice is the same decision: case, punctuation and
+  // spacing are not information, and hashing them turned every near-repeat into a
+  // miss. The key carries a version so a change of ladder or schema invalidates
+  // every decision at once instead of leaving half of them on the old rules.
+  const asked = normaliseQuestion(lastUser);
+  const cacheKey = `decision:${await sha256Hex(`${asked}|${images.length}|${presetId || ''}|${promptPrint}|v${DECISION_KEY_VERSION}`)}`;
 
   // A question that names a page must not be answered from a decision recorded
   // when the browser did not run: replaying it would skip the browser for good,
@@ -257,6 +289,7 @@ export async function decide(
         const cached = JSON.parse(hit);
         if (!staleBrowse(cached)) {
           memo?.set(cacheKey, cached);
+          await noteDecision(kv, { cached: true, via: 'kv', key: cacheKey.slice(0, 32), cost: 0, domain: cached.domain, task: cached.task });
           return cacheHit(cached, 'kv', cacheKey);
         }
         trace.push('cache:stale_browse');
@@ -331,6 +364,17 @@ export async function decide(
       /* the cache is an optimisation, never a requirement */
     }
   }
+
+  await noteDecision(kv, {
+    cached: false,
+    key: cacheKey.slice(0, 32),
+    domain: decision.domain || null,
+    task: decision.task || null,
+    depth: decision.depth || null,
+    preset: decision.preset || null,
+    model: decision.model || null,
+    cost: decision.cost ?? null,
+  });
 
   return decision;
 }

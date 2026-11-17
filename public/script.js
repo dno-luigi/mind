@@ -4693,3 +4693,144 @@ document.addEventListener('DOMContentLoaded', () => {
     window.app.init();
     window.app.verifyProxyUrl();
 });
+
+/* ── Ambient: a second voice that can see the canvas ──────────────────────
+   Not a card and not the audit engine. It is a conversation about the loaded
+   work: what a card says, where two disagree, what to ask next. The context is
+   built here, so it is always what is actually on screen. */
+const Ambient = {
+    thread: [],
+    busy: false,
+    panel: null,
+    key: 'mind_assist',
+
+    load() {
+        try { this.thread = JSON.parse(localStorage.getItem(this.key) || '[]'); } catch (e) { this.thread = []; }
+        if (!Array.isArray(this.thread)) this.thread = [];
+    },
+    save() {
+        try { localStorage.setItem(this.key, JSON.stringify(this.thread.slice(-40))); } catch (e) {}
+    },
+    context() {
+        const cards = (window.app && window.app.cards) || [];
+        const lines = cards.slice(0, 40).map((card, i) => {
+            const d = card.decision || {};
+            const q = String(card.q || '').replace(/\s+/g, ' ').slice(0, 200);
+            const full = String(card.r || '');
+            const a = full.replace(/\s+/g, ' ').slice(0, 420);
+            return '#' + (i + 1) + ' [' + (d.domain || 'general') + ' / ' + (d.task || 'ask') + (d.source ? ' / ' + d.source : '') + ']' +
+                '\nQ: ' + q + '\nA: ' + a + (full.length > 420 ? ' …' : '');
+        });
+        const head = cards.length + ' card' + (cards.length === 1 ? '' : 's') + ' on the canvas.';
+        return [head].concat(lines).join('\n');
+    },
+    build() {
+        if (this.panel) return this.panel;
+        const btn = document.createElement('button');
+        btn.id = 'assistBtn';
+        btn.textContent = 'Ambient';
+        btn.style.cssText = 'position:fixed;left:14px;bottom:74px;z-index:240;height:30px;padding:0 12px;' +
+            'border-radius:999px;border:1px solid #3a414d;background:#1e222a;' +
+            'color:#e6e9ef;font:600 12px/1 system-ui,sans-serif;cursor:pointer';
+        btn.onclick = () => this.toggle();
+
+        const panel = document.createElement('div');
+        panel.id = 'assistPanel';
+        panel.style.cssText = 'position:fixed;left:0;top:0;bottom:0;width:min(420px,92vw);z-index:245;display:none;' +
+            'flex-direction:column;background:#171a20;border-right:1px solid #2a2f38;' +
+            'font:13px/1.55 system-ui,sans-serif;color:#e6e9ef';
+        panel.innerHTML =
+            '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #2a2f38">' +
+              '<strong style="flex:1">Ambient</strong>' +
+              '<span id="assistContext" style="font:11px/1 system-ui;color:#9aa4b2"></span>' +
+              '<button id="assistClear" style="background:none;border:1px solid #2a2f38;border-radius:4px;color:#9aa4b2;font-size:11px;padding:3px 6px;cursor:pointer">clear</button>' +
+              '<button id="assistClose" style="background:none;border:1px solid #2a2f38;border-radius:4px;color:#9aa4b2;font-size:11px;padding:3px 6px;cursor:pointer">close</button>' +
+            '</div>' +
+            '<div id="assistThread" style="flex:1;overflow:auto;padding:10px 12px"></div>' +
+            '<div style="display:flex;gap:6px;padding:10px 12px;border-top:1px solid #2a2f38">' +
+              '<textarea id="assistInput" rows="2" placeholder="Ask about what is loaded..." style="flex:1;resize:none;background:#0d0d1a;color:inherit;border:1px solid #2a2f38;border-radius:6px;padding:6px 8px;font:inherit"></textarea>' +
+              '<button id="assistSend" style="align-self:stretch;padding:0 12px;border-radius:6px;border:1px solid #4a9eff;background:#4a9eff22;color:#cfe4ff;font-weight:600;cursor:pointer">send</button>' +
+            '</div>';
+
+        document.body.appendChild(btn);
+        document.body.appendChild(panel);
+        panel.querySelector('#assistClose').onclick = () => this.toggle(false);
+        panel.querySelector('#assistClear').onclick = () => { this.thread = []; this.save(); this.render(); };
+        panel.querySelector('#assistSend').onclick = () => this.send();
+        panel.querySelector('#assistInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.send(); }
+        });
+        this.panel = panel;
+        return panel;
+    },
+    toggle(force) {
+        const panel = this.build();
+        const open = force === undefined ? panel.style.display !== 'flex' : force;
+        panel.style.display = open ? 'flex' : 'none';
+        if (open) {
+            this.render();
+            const input = panel.querySelector('#assistInput');
+            if (input) input.focus();
+        }
+    },
+    render() {
+        const panel = this.build();
+        const box = panel.querySelector('#assistThread');
+        const cards = (window.app && window.app.cards) || [];
+        panel.querySelector('#assistContext').textContent = cards.length
+            ? cards.length + ' card' + (cards.length === 1 ? '' : 's') + ' in view'
+            : 'nothing loaded';
+        box.innerHTML = '';
+        if (!this.thread.length) {
+            const hint = document.createElement('div');
+            hint.style.cssText = 'color:#6f7885;font-size:12px';
+            hint.textContent = cards.length
+                ? 'I can see the cards on the canvas. Ask me about them.'
+                : 'Load or ask something first, then we can talk it through.';
+            box.appendChild(hint);
+            return;
+        }
+        this.thread.forEach((turn) => {
+            const bubble = document.createElement('div');
+            const mine = turn.role === 'user';
+            bubble.style.cssText = 'margin:0 0 10px;padding:8px 10px;border-radius:8px;white-space:pre-wrap;' +
+                (mine ? 'background:#1e2a3a;border:1px solid #2a3f5a' : 'background:#141821;border:1px solid #232833');
+            bubble.textContent = turn.content;
+            box.appendChild(bubble);
+        });
+        box.scrollTop = box.scrollHeight;
+    },
+    async send() {
+        if (this.busy) return;
+        const panel = this.build();
+        const input = panel.querySelector('#assistInput');
+        const said = (input.value || '').trim();
+        if (!said) return;
+        input.value = '';
+        this.thread.push({ role: 'user', content: said });
+        this.thread.push({ role: 'assistant', content: '…' });
+        this.busy = true;
+        this.render();
+        try {
+            const base = (window.app && typeof window.app.getProxyUrl === 'function') ? window.app.getProxyUrl() : location.origin;
+            const res = await fetch(new URL('/api/assist', base).toString(), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ thread: this.thread.slice(0, -1), context: this.context() })
+            });
+            const body = await res.json().catch(() => null);
+            const text = body && body.text
+                ? body.text
+                : ((body && body.error && body.error.message) || ('No answer (' + res.status + ').'));
+            this.thread[this.thread.length - 1] = { role: 'assistant', content: text };
+        } catch (err) {
+            this.thread[this.thread.length - 1] = { role: 'assistant', content: 'Ambient unavailable: ' + err.message };
+        }
+        this.busy = false;
+        this.save();
+        this.render();
+    }
+};
+
+Ambient.load();
+window.addEventListener('load', function () { Ambient.build(); });

@@ -237,6 +237,10 @@ async function route(request, env, ctx, url) {
   if (path === '/api/health' && method === 'GET') return health(env);
   if (path === '/api/presets' && method === 'GET') return json({ presets: publicPresets() });
   if (path === '/api/chat' && method === 'POST') return chat(request, env, ctx);
+  // A co-pilot beside the canvas: it answers about the loaded work, and never
+  // touches the store, the decision system or the card pipeline.
+  if (path === '/api/assist' && method === 'POST') return assist(request, env, ctx);
+  if (path === '/api/copilot' && method === 'POST') return assist(request, env, ctx);
   // The shape the proxies' last rung posts; an alias of the same pipeline.
   if (path === '/api/generate' && method === 'POST') return generate(request, env, ctx);
   if (path === '/api/stt' && method === 'POST') return stt(request, env);
@@ -669,6 +673,63 @@ const isTerminal = (data) => data === '[DONE]' || Boolean(finishReason(data));
  */
 function endsMidWord(text) {
   return /[\p{L}\p{N}]$/u.test(String(text || '').trimEnd());
+}
+
+/**
+ * The ambient assistant: a second voice that can see the canvas, and stays out of the way.
+ *
+ * It is deliberately not the audit engine. A card is answered by the engine with
+ * provenance and gaps; a co-pilot conversation is about the work in front of him -
+ * what a card says, how two cards disagree, what to ask next. So this route does
+ * not read the store, does not run the decision model and does not write a card.
+ */
+async function assist(request, env, ctx) {
+  const body = await request.json().catch(() => null);
+  const thread = Array.isArray(body?.thread)
+    ? body.thread
+        .filter((m) => m && typeof m.content === 'string' && (m.role === 'user' || m.role === 'assistant'))
+        .map((m) => ({ role: m.role, content: m.content.slice(0, 4000) }))
+        .slice(-12)
+    : [];
+  const context = String(body?.context || '').slice(0, 12000);
+  const ask = [...thread].reverse().find((m) => m.role === 'user')?.content.trim() || '';
+  if (!ask) return fail(400, 'ask_required', 'Send { thread: [...], context } with a user message.');
+
+  const brief = [
+    "You are the ambient assistant inside mind, the owner's card workspace. He is talking to you with his",
+    'loaded work in front of him, so speak as someone who can see it.',
+    '',
+    'What is on the canvas right now:',
+    context || '(nothing loaded yet)',
+    '',
+    'How to work:',
+    '- Refer to a card by its number and question. Quote it when the wording matters.',
+    '- Never invent what a card says. If the excerpt is cut off, say what you would need to see.',
+    '- He is the author of this material. Do not rewrite his words unless he asks; point at them.',
+    '- No preamble, no flattery, no restating the question. Answer, or ask the one thing that unblocks you.',
+    '- You assist; you do not take over. Help him do the work himself - point, suggest, narrow - and only do it when he asks you to.',
+    '- Short by default. He is working, not reading.',
+    '- You are not the audit engine: when a claim needs checking, name the check that would settle it.',
+  ].join('\n');
+
+  const messages = [{ role: 'system', content: brief }, ...thread];
+  let text = '';
+  let note = '';
+  try {
+    const upstream = await openUpstream(env, { messages, images: [], ask });
+    for await (const data of sseData(upstream.stream, { timeoutMs: STREAM_IDLE_MS })) {
+      const problem = upstreamError(data);
+      if (problem) {
+        note = String(problem.message || problem.error?.message || 'upstream refused');
+        break;
+      }
+      text += upstream.extract(data);
+    }
+  } catch (err) {
+    return fail(502, 'assist_failed', err?.message || 'The co-pilot could not answer.');
+  }
+  if (!text.trim()) return fail(502, 'assist_empty', note || 'No answer came back.');
+  return json({ text: text.trim(), contextChars: context.length, turns: thread.length });
 }
 
 async function chat(request, env, ctx) {
