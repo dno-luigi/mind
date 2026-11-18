@@ -51,7 +51,9 @@ body {
     z-index: 50; background: linear-gradient(to bottom, var(--bg), transparent); pointer-events: none;
 }
 #brandPlaceholder { background: none; border: none; font-family: inherit; cursor: pointer;
-    padding: 6px 8px; margin-left: 2px; border-radius: 8px; font-weight: 900; color: var(--primary); text-transform: uppercase; letter-spacing: 1px; font-size: 12px; }
+    padding: 6px 8px; margin-left: 2px; border-radius: 8px; font-weight: 900; color: var(--primary); text-transform: uppercase; letter-spacing: 1px; font-size: 12px;
+    /* A long theme name must not push the menu off the bar and out of reach. */
+    max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #brandPlaceholder:hover { background: rgba(255,255,255,0.07); }
 .top-fabs { pointer-events: auto; display: flex; gap: 6px; }
 .fab {
