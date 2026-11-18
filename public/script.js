@@ -4697,19 +4697,38 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ── Ambient: a second voice that can see the canvas ──────────────────────
    Not a card and not the audit engine. It is a conversation about the loaded
    work: what a card says, where two disagree, what to ask next. The context is
-   built here, so it is always what is actually on screen. */
+   built here, so it is always what is actually on screen.
+
+   It is a window, not a drawer. It floats where it is put, it is moved by its
+   own bar, and it closes down to a pin that is itself movable - so it never
+   covers the work for longer than it is wanted. The composer is part of the
+   window: when the window is a pin, the composer is a pin too. */
 const Ambient = {
     thread: [],
     busy: false,
     panel: null,
+    pin: null,
     key: 'mind_assist',
+    layoutKey: 'mind_assist_layout',
+    layout: { x: null, y: null, pinX: null, pinY: null },
 
     load() {
         try { this.thread = JSON.parse(localStorage.getItem(this.key) || '[]'); } catch (e) { this.thread = []; }
         if (!Array.isArray(this.thread)) this.thread = [];
+        try {
+            const saved = JSON.parse(localStorage.getItem(this.layoutKey) || '{}');
+            if (saved && typeof saved === 'object') {
+                ['x', 'y', 'pinX', 'pinY'].forEach((k) => {
+                    if (Number.isFinite(saved[k])) this.layout[k] = saved[k];
+                });
+            }
+        } catch (e) { /* a lost layout is the corner it starts in */ }
     },
     save() {
         try { localStorage.setItem(this.key, JSON.stringify(this.thread.slice(-40))); } catch (e) {}
+    },
+    saveLayout() {
+        try { localStorage.setItem(this.layoutKey, JSON.stringify(this.layout)); } catch (e) {}
     },
     context() {
         const cards = (window.app && window.app.cards) || [];
@@ -4724,55 +4743,155 @@ const Ambient = {
         const head = cards.length + ' card' + (cards.length === 1 ? '' : 's') + ' on the canvas.';
         return [head].concat(lines).join('\n');
     },
+
+    /** A window dragged off the edge is a window lost, so both keep to the screen. */
+    clamp(x, y, w, h) {
+        return {
+            x: Math.round(Math.min(Math.max(8, x), Math.max(8, window.innerWidth - w - 8))),
+            y: Math.round(Math.min(Math.max(8, y), Math.max(8, window.innerHeight - h - 8)))
+        };
+    },
+    panelSize() {
+        return {
+            w: (this.panel && this.panel.offsetWidth) || Math.min(380, window.innerWidth - 24),
+            h: (this.panel && this.panel.offsetHeight) || Math.min(470, Math.round(window.innerHeight * 0.68))
+        };
+    },
+    applyLayout() {
+        if (!this.panel || !this.pin) return;
+        const size = this.panelSize();
+        const at = this.clamp(
+            this.layout.x === null ? 12 : this.layout.x,
+            this.layout.y === null ? window.innerHeight - size.h - 104 : this.layout.y,
+            size.w, size.h
+        );
+        this.panel.style.left = at.x + 'px';
+        this.panel.style.top = at.y + 'px';
+        const pinBox = this.pin.offsetWidth || 44;
+        const pinAt = this.clamp(
+            this.layout.pinX === null ? 14 : this.layout.pinX,
+            this.layout.pinY === null ? window.innerHeight - 118 : this.layout.pinY,
+            pinBox, pinBox
+        );
+        this.pin.style.left = pinAt.x + 'px';
+        this.pin.style.top = pinAt.y + 'px';
+    },
+
     build() {
         if (this.panel) return this.panel;
-        const btn = document.createElement('button');
-        btn.id = 'assistBtn';
-        btn.textContent = 'Ambient';
-        btn.style.cssText = 'position:fixed;left:14px;bottom:74px;z-index:240;height:30px;padding:0 12px;' +
-            'border-radius:999px;border:1px solid #3a414d;background:#1e222a;' +
-            'color:#e6e9ef;font:600 12px/1 system-ui,sans-serif;cursor:pointer';
-        btn.onclick = () => this.toggle();
+
+        const pin = document.createElement('button');
+        pin.id = 'assistPin';
+        pin.type = 'button';
+        pin.className = 'show';
+        pin.title = 'Ambient - tap to open, drag to move';
+        pin.innerHTML = '<i class="fas fa-comment-dots"></i>';
 
         const panel = document.createElement('div');
         panel.id = 'assistPanel';
-        panel.style.cssText = 'position:fixed;left:0;top:0;bottom:0;width:min(420px,92vw);z-index:245;display:none;' +
-            'flex-direction:column;background:#171a20;border-right:1px solid #2a2f38;' +
-            'font:13px/1.55 system-ui,sans-serif;color:#e6e9ef';
         panel.innerHTML =
-            '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #2a2f38">' +
-              '<strong style="flex:1">Ambient</strong>' +
-              '<span id="assistContext" style="font:11px/1 system-ui;color:#9aa4b2"></span>' +
-              '<button id="assistClear" style="background:none;border:1px solid #2a2f38;border-radius:4px;color:#9aa4b2;font-size:11px;padding:3px 6px;cursor:pointer">clear</button>' +
-              '<button id="assistClose" style="background:none;border:1px solid #2a2f38;border-radius:4px;color:#9aa4b2;font-size:11px;padding:3px 6px;cursor:pointer">close</button>' +
+            '<div id="assistHead">' +
+              '<strong>Ambient</strong>' +
+              '<span id="assistContext"></span>' +
+              '<button class="assist-hbtn" id="assistClear" title="Clear this conversation">clear</button>' +
+              '<button class="assist-hbtn" id="assistMin" title="Minimize to the pin">&minus;</button>' +
             '</div>' +
-            '<div id="assistThread" style="flex:1;overflow:auto;padding:10px 12px"></div>' +
-            '<div style="display:flex;gap:6px;padding:10px 12px;border-top:1px solid #2a2f38">' +
-              '<textarea id="assistInput" rows="2" placeholder="Ask about what is loaded..." style="flex:1;resize:none;background:#0d0d1a;color:inherit;border:1px solid #2a2f38;border-radius:6px;padding:6px 8px;font:inherit"></textarea>' +
-              '<button id="assistSend" style="align-self:stretch;padding:0 12px;border-radius:6px;border:1px solid #4a9eff;background:#4a9eff22;color:#cfe4ff;font-weight:600;cursor:pointer">send</button>' +
+            '<div id="assistThread"></div>' +
+            '<div id="assistComposer">' +
+              '<textarea id="assistInput" rows="2" placeholder="Ask about what is loaded..."></textarea>' +
+              '<button id="assistSend">send</button>' +
             '</div>';
 
-        document.body.appendChild(btn);
+        document.body.appendChild(pin);
         document.body.appendChild(panel);
-        panel.querySelector('#assistClose').onclick = () => this.toggle(false);
+        this.panel = panel;
+        this.pin = pin;
+
+        panel.querySelector('#assistMin').onclick = () => this.toggle(false);
         panel.querySelector('#assistClear').onclick = () => { this.thread = []; this.save(); this.render(); };
         panel.querySelector('#assistSend').onclick = () => this.send();
         panel.querySelector('#assistInput').addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.send(); }
         });
-        this.panel = panel;
+
+        // The bar moves the window; a press on a control in the bar is that control.
+        this.drag(panel, panel.querySelector('#assistHead'), null);
+        // The pin moves the same way, and a press that never travels opens it.
+        this.drag(pin, pin, () => this.toggle(true));
+
+        this.applyLayout();
+        window.addEventListener('resize', () => this.applyLayout());
         return panel;
     },
+
+    /**
+     * One gesture for both moves. Below a few pixels it is a tap, because a
+     * pin that opens on a shaky press is a pin that cannot be moved at all.
+     */
+    drag(el, handle, onTap) {
+        let from = null;
+        let start = null;
+        let moved = false;
+        const isPanel = el === this.panel;
+
+        handle.addEventListener('pointerdown', (e) => {
+            if (isPanel && e.target.closest('button')) return;
+            from = { x: e.clientX, y: e.clientY };
+            start = { x: parseFloat(el.style.left) || 0, y: parseFloat(el.style.top) || 0 };
+            moved = false;
+            if (e.pointerId !== undefined && handle.setPointerCapture) {
+                try { handle.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ }
+            }
+            if (isPanel) e.preventDefault();
+        });
+
+        handle.addEventListener('pointermove', (e) => {
+            if (!from) return;
+            const dx = e.clientX - from.x;
+            const dy = e.clientY - from.y;
+            if (!moved && Math.hypot(dx, dy) < 6) return;
+            moved = true;
+            el.classList.add('dragging');
+            const at = this.clamp(start.x + dx, start.y + dy, el.offsetWidth || 44, el.offsetHeight || 44);
+            el.style.left = at.x + 'px';
+            el.style.top = at.y + 'px';
+            el.style.right = 'auto';
+            el.style.bottom = 'auto';
+        });
+
+        const end = () => {
+            if (!from) return;
+            from = null;
+            el.classList.remove('dragging');
+            if (moved) {
+                const at = { x: Math.round(parseFloat(el.style.left) || 0), y: Math.round(parseFloat(el.style.top) || 0) };
+                if (isPanel) { this.layout.x = at.x; this.layout.y = at.y; }
+                else { this.layout.pinX = at.x; this.layout.pinY = at.y; }
+                this.saveLayout();
+            } else if (onTap) {
+                onTap();
+            }
+        };
+        handle.addEventListener('pointerup', end);
+        handle.addEventListener('pointercancel', end);
+    },
+
     toggle(force) {
         const panel = this.build();
-        const open = force === undefined ? panel.style.display !== 'flex' : force;
-        panel.style.display = open ? 'flex' : 'none';
+        const open = force === undefined ? !panel.classList.contains('open') : force;
+        panel.classList.toggle('open', open);
+        this.pin.classList.toggle('show', !open);
         if (open) {
             this.render();
-            const input = panel.querySelector('#assistInput');
-            if (input) input.focus();
+            this.applyLayout();
+            // On a phone the keyboard would cover the window it was opened for.
+            if (window.innerWidth > 768) {
+                const input = panel.querySelector('#assistInput');
+                if (input) input.focus();
+            }
         }
     },
+
     render() {
         const panel = this.build();
         const box = panel.querySelector('#assistThread');
@@ -4800,6 +4919,7 @@ const Ambient = {
         });
         box.scrollTop = box.scrollHeight;
     },
+
     async send() {
         if (this.busy) return;
         const panel = this.build();
