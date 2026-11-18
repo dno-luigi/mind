@@ -5047,21 +5047,44 @@ const Ambient = {
             // than a description of the code.
             const want = reply.match(/\[read:\s*([^\]]+)\]/i);
             if (want && snapshot) {
-                const file = this.sourceOf(snapshot, want[1]);
+                const asked = String(want[1]).trim();
+                // [read: path] sends the start; [read: path around aName] sends the
+                // part that matters, because a 5000-line script cannot fit in one
+                // brief and the answer is usually one function away.
+                const around = asked.match(/^(.+?)\s+around\s+(.+)$/i);
+                const file = this.sourceOf(snapshot, around ? around[1] : asked);
                 reply = reply.replace(want[0], '').trim();
                 if (file) {
-                    // 40000 characters fits a whole stylesheet or a small worker
-                    // file; a 5000-line script still says where it was cut.
                     const READ = 40000;
-                    const deliver = 'Here is ' + file.path + ' (' + file.lines + ' lines), as it stands:\n' +
-                        file.text.slice(0, READ) +
-                        (file.text.length > READ ? '\n[cut at ' + READ + ' of ' + file.text.length + ' characters]' : '');
+                    let body = '';
+                    let where = '';
+                    if (around) {
+                        const needle = around[2].trim();
+                        const at = file.text.indexOf(needle);
+                        const lines = file.text.split('\n');
+                        if (at < 0) {
+                            body = file.text.slice(0, READ);
+                            where = ' (nothing matching "' + needle + '", so here is the start)';
+                        } else {
+                            const lineNo = file.text.slice(0, at).split('\n').length;
+                            // A symbol can sit inside a 400-line object, so the
+                            // window is wide enough to hold the thing it names.
+                            const from = Math.max(1, lineNo - 250);
+                            const to = Math.min(lines.length, lineNo + 250);
+                            body = lines.slice(from - 1, to).join('\n').slice(0, READ);
+                            where = ' (lines ' + from + '-' + to + ' of ' + lines.length + ', around "' + needle + '")';
+                        }
+                    } else {
+                        body = file.text.slice(0, READ);
+                        where = file.text.length > READ ? ' (the first ' + READ + ' of ' + file.text.length + ' characters)' : '';
+                    }
+                    const deliver = 'Here is ' + file.path + where + ', as it stands:\n' + body;
                     reply = await this.ask(context, history.concat([
                         { role: 'assistant', content: want[0] },
                         { role: 'user', content: deliver }
                     ]));
                 } else {
-                    reply = (reply ? reply + '\n\n' : '') + 'No file at ' + String(want[1]).trim() + ' in the snapshot.';
+                    reply = (reply ? reply + '\n\n' : '') + 'No file at ' + asked + ' in the snapshot.';
                 }
             }
             this.thread[this.thread.length - 1] = { role: 'assistant', content: reply };

@@ -718,7 +718,9 @@ async function assist(request, env, ctx) {
     '',
     "Mind's own code is below as a map, not as text. When a question is about how the app or the worker actually behaves, ask for the one file you need by writing a single line and nothing else:",
     '[read: path/to/file.js]',
-    'The file arrives next turn, in full, as source. Do not guess at code you have not been shown; if the map has no file that answers the question, say that plainly.',
+    'The file arrives next turn, as source. A long file is sent from its start, so when the question is about one thing in it, ask for that instead:',
+    '[read: path/to/file.js around aNameItContains]',
+    'Do not guess at code you have not been shown; if the map has no file that answers the question, say that plainly.',
   ].join('\n');
 
   const messages = [{ role: 'system', content: brief }, ...thread];
