@@ -790,8 +790,9 @@ class App {
         if (!el) el = this.buildMiniBrowser();
         el.classList.add('show');
         this.mbPlace();
+        this.mbRender();
         if (startUrl) this.mbGo(startUrl);
-        else setTimeout(() => { const i = document.getElementById('mbUrl'); if (i) i.focus(); }, 60);
+        else setTimeout(() => this.mbEdit(true), 60);
     }
 
     closeBrowser() {
@@ -814,17 +815,16 @@ class App {
         el.innerHTML =
             '<div class="mb-shell">' +
             '<div class="mb-bar">' +
-            '<button type="button" id="mbBack" title="Back"><i class="fas fa-arrow-left"></i></button>' +
-            '<button type="button" id="mbFwd" title="Forward"><i class="fas fa-arrow-right"></i></button>' +
-            '<button type="button" id="mbReload" title="Reload"><i class="fas fa-rotate-right"></i></button>' +
-            '<input id="mbUrl" type="text" spellcheck="false" autocomplete="off" placeholder="Address or search">' +
-            '<button type="button" class="mb-go" id="mbGo" title="Go"><i class="fas fa-arrow-right"></i></button>' +
-            '<button type="button" id="mbMode" title="Live page or picture"><i class="fas fa-image"></i></button>' +
-            '<a id="mbTab" target="_blank" rel="noopener noreferrer" title="Open in a tab"><i class="fas fa-up-right-from-square"></i></a>' +
-            '<button type="button" id="mbClose" title="Close"><i class="fas fa-times"></i></button>' +
+            '<button type="button" class="mb-glyph" id="mbBack" title="Back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>' +
+            '<button type="button" class="mb-glyph" id="mbFwd" title="Forward"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>' +
+            '<button type="button" class="mb-addr" id="mbAddr" title="Type an address"><span id="mbHost">New page</span></button>' +
+            '<input id="mbUrl" type="text" spellcheck="false" autocomplete="off" placeholder="Search or enter address">' +
+            '<button type="button" class="mb-glyph" id="mbReload" title="Reload"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v4h-3.6"/></svg></button>' +
+            '<a id="mbTab" class="mb-glyph" target="_blank" rel="noopener noreferrer" title="Open in a tab"><svg viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4l-8 8"/><path d="M18 14v5a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg></a>' +
+            '<button type="button" class="mb-glyph" id="mbClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>' +
             '</div>' +
             '<div class="mb-view" id="mbView"></div>' +
-            '<div class="mb-note" id="mbNote"></div>' +
+            '<div class="mb-note"><span id="mbNote"></span><button type="button" id="mbMode" title="Switch between the live page, a picture and its words">Page</button></div>' +
             '<div id="mbGrip" title="Drag to resize"></div>' +
             '</div>';
         document.body.appendChild(el);
@@ -838,12 +838,13 @@ class App {
         if (input) {
             input.addEventListener('keydown', (e) => {
                 e.stopPropagation();
-                if (e.key === 'Enter') { e.preventDefault(); this.mbGo(input.value); }
-                if (e.key === 'Escape') { e.preventDefault(); this.closeBrowser(); }
+                if (e.key === 'Enter') { e.preventDefault(); this.mbGo(input.value); this.mbEdit(false); }
+                if (e.key === 'Escape') { e.preventDefault(); this.mbEdit(false); }
             });
+            input.addEventListener('blur', () => this.mbEdit(false));
         }
         const on = (id, fn) => { const b = document.getElementById(id); if (b) b.addEventListener('click', fn); };
-        on('mbGo', () => this.mbGo(input ? input.value : ''));
+        on('mbAddr', () => this.mbEdit(true));
         on('mbBack', () => this.mbNav(-1));
         on('mbFwd', () => this.mbNav(1));
         on('mbReload', () => this.mbRender());
@@ -856,6 +857,17 @@ class App {
         return el;
     }
 
+    /** The pill is the address; tapping it turns the same space into a field. */
+    mbEdit(on) {
+        const bar = document.querySelector('#miniBrowser .mb-bar');
+        const input = document.getElementById('mbUrl');
+        if (!bar || !input) return;
+        bar.classList.toggle('editing', !!on);
+        if (on) { input.focus(); input.select(); }
+    }
+    mbHostOf(url) {
+        try { return new URL(url).host.replace(/^www\./, ''); } catch (e) { return ''; }
+    }
     /** Where the browser card was left, so it comes back there. */
     mbSaved() {
         try { return JSON.parse(localStorage.getItem('mind_browser_layout') || '{}') || {}; } catch (e) { return {}; }
@@ -967,6 +979,12 @@ class App {
         const url = this.mb.history[this.mb.at] || '';
         if (input) input.value = url;
         if (tab) tab.href = url || '#';
+        const host = document.getElementById('mbHost');
+        if (host) host.textContent = this.mbHostOf(url) || 'New page';
+        const mode = document.getElementById('mbMode');
+        if (mode) mode.textContent = { live: 'Page', picture: 'Picture', text: 'Words' }[this.mb.mode] || 'Page';
+        const reload = document.getElementById('mbReload');
+        if (reload) reload.disabled = !url;
         const back = document.getElementById('mbBack');
         const fwd = document.getElementById('mbFwd');
         if (back) back.disabled = this.mb.at <= 0;

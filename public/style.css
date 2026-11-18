@@ -557,70 +557,133 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
     pointer-events: auto;
 }
 
-/* The bar is a card header - a hairline, not a frame - and it is what moves the card. */
+/* A quiet header: hairline strokes, one pill for the address, nothing boxed. It is
+   also what moves the card. */
 .mb-bar {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 8px 10px;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    gap: 2px;
+    padding: 6px 8px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
     cursor: grab;
     touch-action: none;
 }
 .mb-bar.dragging { cursor: grabbing; }
 
-.mb-bar button, .mb-bar a {
+.mb-glyph {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
-    border: 1px solid transparent;
-    border-radius: 8px;
+    width: 29px;
+    height: 29px;
+    padding: 0;
+    border: 0;
+    border-radius: 9px;
     background: transparent;
     color: var(--text);
-    opacity: .6;
+    opacity: .42;
     cursor: pointer;
     text-decoration: none;
+    transition: opacity .15s ease, background .15s ease, color .15s ease;
 }
-
-.mb-bar button:disabled { opacity: .25; cursor: default; }
-.mb-bar button:hover:not(:disabled), .mb-bar a:hover {
+.mb-glyph svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.mb-glyph:hover:not(:disabled) {
     opacity: 1;
     color: var(--primary);
-    border-color: color-mix(in srgb, var(--primary) 55%, transparent);
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
 }
-.mb-bar .mb-go { color: var(--primary); opacity: .85; }
+.mb-glyph:disabled { opacity: .12; pointer-events: none; }
+
+.mb-addr {
+    flex: 1;
+    min-width: 0;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+    color: var(--text);
+    opacity: .7;
+    font: inherit;
+    font-size: 12px;
+    letter-spacing: .01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: text;
+}
+.mb-addr span { overflow: hidden; text-overflow: ellipsis; }
+.mb-addr:hover { opacity: 1; background: color-mix(in srgb, var(--text) 9%, transparent); }
 
 .mb-bar input {
     flex: 1;
     min-width: 0;
-    height: 32px;
-    padding: 0 10px;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    background: transparent;
+    height: 28px;
+    padding: 0 14px;
+    border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 6%, transparent);
     color: var(--text);
     font: inherit;
-    font-size: 13px;
+    font-size: 12px;
     outline: none;
-    opacity: .8;
+    display: none;
 }
-
-.mb-bar input:focus {
-    border-color: color-mix(in srgb, var(--primary) 55%, transparent);
-    opacity: 1;
-}
+.mb-bar.editing input { display: block; }
+.mb-bar.editing .mb-addr { display: none; }
 
 .mb-view { flex: 1; min-height: 0; position: relative; background: #fff; }
 .mb-frame { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
 .mb-shot { width: 100%; height: 100%; object-fit: contain; object-position: top center; background: var(--bg); }
 
 .mb-note {
-    padding: 6px 12px;
-    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 10px 5px 13px;
+    border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
     font-size: 11px;
-    opacity: .65;
+    line-height: 1.4;
+    opacity: .55;
+}
+.mb-note span {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The mode is a word, not a mystery icon. */
+#mbMode {
+    flex: none;
+    padding: 2px 9px;
+    border: 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 9%, transparent);
+    color: inherit;
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease;
+}
+#mbMode:hover {
+    background: color-mix(in srgb, var(--primary) 20%, transparent);
+    color: var(--text);
+    opacity: 1;
 }
 
 /* Sized by its corner, like any other card. */
