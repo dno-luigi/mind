@@ -65,7 +65,7 @@ const FALLBACK_PRESET_KEY = 'truth';
 const NO_PRESET_KEY = 'none';
 
 // Two names were chosen for the mark, so the top left alternates rather than
-// settling on one and hiding the other.
+// settling on one and hiding the other. The theme on screen is the third beat.
 const BRAND_NAMES = ['Nspired', 'Ncard'];
 const BRAND_SWAP_MS = 4000;
 
@@ -4350,14 +4350,23 @@ ${source.slice(0, 6000)}`;
     }
 
     /**
-     * The top left carries the product's name, not the theme's: the theme is still on the
-     * button's title and one press away in the history, and it changes too often to be the
-     * masthead. The two names alternate so neither is the runner-up.
+     * The bar carries three names in turn: the two the mark was chosen from, then
+     * the theme that is actually applied - so the palette on screen is named on the
+     * bar rather than only in a tooltip. A theme with no name of its own, or one
+     * that repeats a mark, adds nothing and is left out.
      */
+    brandNames() {
+        const names = BRAND_NAMES.slice();
+        const theme = String(this.theme.name || '').trim();
+        if (theme && !names.includes(theme)) names.push(theme);
+        return names;
+    }
+
     renderBrand() {
         const brand = document.getElementById('brandPlaceholder');
         if (!brand) return;
-        brand.textContent = BRAND_NAMES[this.brandIndex] || BRAND_NAMES[0];
+        const names = this.brandNames();
+        brand.textContent = names[this.brandIndex % names.length] || names[0];
         brand.title = this.theme.name ? `Saved themes \u00b7 ${this.theme.name}` : 'Saved themes';
     }
 
@@ -4372,7 +4381,8 @@ ${source.slice(0, 6000)}`;
         }
         if (this.brandTimer) return;
         this.brandTimer = setInterval(() => {
-            this.brandIndex = (this.brandIndex + 1) % BRAND_NAMES.length;
+            // The list is read every beat: applying a theme renames the third one.
+            this.brandIndex = (this.brandIndex + 1) % this.brandNames().length;
             this.renderBrand();
         }, BRAND_SWAP_MS);
     }
