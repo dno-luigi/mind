@@ -528,20 +528,25 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
 }
 
 /* ─── mini web browser ─── */
+/* The browser is a card, not a takeover: nothing dims, the canvas stays usable around
+   it, and only the card itself takes the press. */
 .mb-overlay {
     position: fixed;
     inset: 0;
     z-index: 900;
     display: none;
-    background: color-mix(in srgb, var(--bg) 82%, transparent);
-    backdrop-filter: blur(6px);
+    background: transparent;
+    pointer-events: none;
 }
 
 .mb-overlay.show { display: block; }
 
 .mb-shell {
     position: absolute;
-    inset: 3vh 2vw;
+    left: 6vw;
+    top: 10vh;
+    width: min(760px, calc(100vw - 16px));
+    height: min(560px, 72vh);
     display: flex;
     flex-direction: column;
     border: 1px solid var(--border);
@@ -549,49 +554,63 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
     background: var(--card-bg);
     overflow: hidden;
     box-shadow: 0 18px 48px rgba(0, 0, 0, .45);
+    pointer-events: auto;
 }
 
+/* The bar is a card header - a hairline, not a frame - and it is what moves the card. */
 .mb-bar {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     padding: 8px 10px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    cursor: grab;
+    touch-action: none;
 }
+.mb-bar.dragging { cursor: grabbing; }
 
 .mb-bar button, .mb-bar a {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
-    border: 1px solid var(--border);
+    width: 32px;
+    height: 32px;
+    border: 1px solid transparent;
     border-radius: 8px;
     background: transparent;
     color: var(--text);
+    opacity: .6;
     cursor: pointer;
     text-decoration: none;
 }
 
-.mb-bar button:disabled { opacity: .35; cursor: default; }
-.mb-bar button:hover:not(:disabled), .mb-bar a:hover { border-color: var(--primary); }
-.mb-bar .mb-go { border-color: color-mix(in srgb, var(--primary) 60%, var(--border)); }
+.mb-bar button:disabled { opacity: .25; cursor: default; }
+.mb-bar button:hover:not(:disabled), .mb-bar a:hover {
+    opacity: 1;
+    color: var(--primary);
+    border-color: color-mix(in srgb, var(--primary) 55%, transparent);
+}
+.mb-bar .mb-go { color: var(--primary); opacity: .85; }
 
 .mb-bar input {
     flex: 1;
     min-width: 0;
-    height: 34px;
+    height: 32px;
     padding: 0 10px;
-    border: 1px solid var(--border);
+    border: 1px solid transparent;
     border-radius: 8px;
-    background: var(--bg);
+    background: transparent;
     color: var(--text);
     font: inherit;
     font-size: 13px;
     outline: none;
+    opacity: .8;
 }
 
-.mb-bar input:focus { border-color: var(--primary); }
+.mb-bar input:focus {
+    border-color: color-mix(in srgb, var(--primary) 55%, transparent);
+    opacity: 1;
+}
 
 .mb-view { flex: 1; min-height: 0; position: relative; background: #fff; }
 .mb-frame { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
@@ -604,8 +623,16 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
     opacity: .65;
 }
 
-@media (max-width: 700px) {
-    .mb-shell { inset: 0; border-radius: 0; border: none; }
+/* Sized by its corner, like any other card. */
+#mbGrip {
+    position: absolute; right: 0; bottom: 0; width: 26px; height: 26px; z-index: 3;
+    cursor: nwse-resize; touch-action: none;
+}
+#mbGrip::after {
+    content: ''; position: absolute; right: 4px; bottom: 4px; width: 10px; height: 10px;
+    border-right: 2px solid color-mix(in srgb, var(--primary) 70%, transparent);
+    border-bottom: 2px solid color-mix(in srgb, var(--primary) 70%, transparent);
+    border-radius: 0 0 2px 0;
 }
 
 .mb-text {

@@ -789,6 +789,7 @@ class App {
         let el = document.getElementById('miniBrowser');
         if (!el) el = this.buildMiniBrowser();
         el.classList.add('show');
+        this.mbPlace();
         if (startUrl) this.mbGo(startUrl);
         else setTimeout(() => { const i = document.getElementById('mbUrl'); if (i) i.focus(); }, 60);
     }
@@ -824,8 +825,14 @@ class App {
             '</div>' +
             '<div class="mb-view" id="mbView"></div>' +
             '<div class="mb-note" id="mbNote"></div>' +
+            '<div id="mbGrip" title="Drag to resize"></div>' +
             '</div>';
         document.body.appendChild(el);
+        this.mbDrag();
+        this.mbResize();
+        window.addEventListener('resize', () => {
+            if (el.classList.contains('show')) this.mbPlace();
+        });
 
         const input = document.getElementById('mbUrl');
         if (input) {
@@ -847,6 +854,93 @@ class App {
         });
         on('mbClose', () => this.closeBrowser());
         return el;
+    }
+
+    /** Where the browser card was left, so it comes back there. */
+    mbSaved() {
+        try { return JSON.parse(localStorage.getItem('mind_browser_layout') || '{}') || {}; } catch (e) { return {}; }
+    }
+    mbRemember() {
+        const shell = document.querySelector('#miniBrowser .mb-shell');
+        if (!shell) return;
+        try {
+            localStorage.setItem('mind_browser_layout', JSON.stringify({
+                x: Math.round(parseFloat(shell.style.left) || 0),
+                y: Math.round(parseFloat(shell.style.top) || 0),
+                w: Math.round(shell.offsetWidth),
+                h: Math.round(shell.offsetHeight)
+            }));
+        } catch (e) {}
+    }
+    /** The browser is a card like the others: it keeps to the screen and to its size. */
+    mbPlace() {
+        const shell = document.querySelector('#miniBrowser .mb-shell');
+        if (!shell) return;
+        const saved = this.mbSaved();
+        const w = Math.min(saved.w || Math.round(window.innerWidth * 0.78), window.innerWidth - 16);
+        const h = Math.min(saved.h || Math.round(window.innerHeight * 0.72), window.innerHeight - 16);
+        const x = saved.x === undefined ? Math.round((window.innerWidth - w) / 2) : saved.x;
+        const y = saved.y === undefined ? Math.round(Math.max(16, (window.innerHeight - h) / 3)) : saved.y;
+        shell.style.width = Math.round(w) + 'px';
+        shell.style.height = Math.round(h) + 'px';
+        shell.style.left = Math.round(Math.min(Math.max(8, x), Math.max(8, window.innerWidth - w - 8))) + 'px';
+        shell.style.top = Math.round(Math.min(Math.max(8, y), Math.max(8, window.innerHeight - h - 8))) + 'px';
+    }
+    /** The bar moves the card; the corner changes its size. */
+    mbDrag() {
+        const shell = document.querySelector('#miniBrowser .mb-shell');
+        const bar = shell.querySelector('.mb-bar');
+        let from = null;
+        let start = null;
+        bar.addEventListener('pointerdown', (e) => {
+            if (e.target.closest('button') || e.target.closest('input') || e.target.closest('a')) return;
+            from = { x: e.clientX, y: e.clientY };
+            start = { x: parseFloat(shell.style.left) || 0, y: parseFloat(shell.style.top) || 0 };
+            bar.classList.add('dragging');
+            try { bar.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ }
+        });
+        bar.addEventListener('pointermove', (e) => {
+            if (!from) return;
+            const x = Math.min(Math.max(8, start.x + e.clientX - from.x), Math.max(8, window.innerWidth - shell.offsetWidth - 8));
+            const y = Math.min(Math.max(8, start.y + e.clientY - from.y), Math.max(8, window.innerHeight - shell.offsetHeight - 8));
+            shell.style.left = Math.round(x) + 'px';
+            shell.style.top = Math.round(y) + 'px';
+        });
+        const end = () => {
+            if (!from) return;
+            from = null;
+            bar.classList.remove('dragging');
+            this.mbRemember();
+        };
+        bar.addEventListener('pointerup', end);
+        bar.addEventListener('pointercancel', end);
+    }
+    mbResize() {
+        const shell = document.querySelector('#miniBrowser .mb-shell');
+        const grip = shell.querySelector('#mbGrip');
+        let from = null;
+        let start = null;
+        grip.addEventListener('pointerdown', (e) => {
+            from = { x: e.clientX, y: e.clientY };
+            start = { w: shell.offsetWidth, h: shell.offsetHeight };
+            try { grip.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ }
+            e.preventDefault();
+            e.stopPropagation();
+        });
+        grip.addEventListener('pointermove', (e) => {
+            if (!from) return;
+            const w = Math.min(Math.max(280, start.w + e.clientX - from.x), window.innerWidth - 16);
+            const h = Math.min(Math.max(220, start.h + e.clientY - from.y), window.innerHeight - 16);
+            shell.style.width = Math.round(w) + 'px';
+            shell.style.height = Math.round(h) + 'px';
+        });
+        const end = () => {
+            if (!from) return;
+            from = null;
+            this.mbRemember();
+        };
+        grip.addEventListener('pointerup', end);
+        grip.addEventListener('pointercancel', end);
     }
 
     mbGo(raw) {
@@ -4820,10 +4914,17 @@ const Ambient = {
             y: Math.round(Math.min(Math.max(8, y), Math.max(8, window.innerHeight - h - 8)))
         };
     },
+    /** The bar Ambient switches places with: the composer at the bottom. */
+    dockBox() {
+        const bar = document.getElementById('inputPanel');
+        return bar ? bar.getBoundingClientRect() : null;
+    },
     /** The card is the box and its padding - or whatever size he dragged it to. */
     cardWidth() {
-        return this.layout.cw
-            ? Math.min(this.layout.cw, window.innerWidth - 16)
+        if (this.layout.cw) return Math.min(this.layout.cw, window.innerWidth - 16);
+        const dock = this.dockBox();
+        return dock && dock.width > 0
+            ? Math.max(240, Math.min(dock.width, window.innerWidth - 16))
             : Math.min(360, window.innerWidth - 28);
     },
     cardHeight() {
@@ -4848,9 +4949,12 @@ const Ambient = {
         if (!this.card) return;
         const w = targetW || this.card.offsetWidth || this.cardWidth();
         const h = targetH || this.card.offsetHeight || this.cardHeight();
+        // With no place of its own Ambient takes the composer's, so a long press reads
+        // as the bar and the dock swapping over rather than a card appearing somewhere.
+        const dock = this.layout.x === null ? this.dockBox() : null;
         const at = this.clamp(
-            this.layout.x === null ? 14 : this.layout.x,
-            this.layout.y === null ? window.innerHeight - h - 104 : this.layout.y,
+            this.layout.x === null ? (dock ? dock.left : 14) : this.layout.x,
+            this.layout.y === null ? (dock ? dock.top : window.innerHeight - h - 104) : this.layout.y,
             w, h
         );
         this.card.style.left = at.x + 'px';
