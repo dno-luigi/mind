@@ -51,8 +51,10 @@ body {
     z-index: 50; background: linear-gradient(to bottom, var(--bg), transparent); pointer-events: none;
 }
 #brandPlaceholder { background: none; border: none; font-family: inherit; cursor: pointer;
-    padding: 6px 8px; margin-left: 2px; border-radius: 8px; font-weight: 900; color: var(--primary); text-transform: uppercase; letter-spacing: 1px; font-size: 12px;
-    /* A long theme name must not push the menu off the bar and out of reach. */
+    padding: 6px 8px; margin-left: 2px; border-radius: 8px; font-weight: 900; color: var(--primary); letter-spacing: 0.5px; font-size: 13px;
+    /* Both names carry a capital in the middle (Nspired, Ncard), so the mark is shown
+       as written: uppercasing flattened them into one word-shaped block. */
+    /* A long name must not push the menu off the bar and out of reach. */
     max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #brandPlaceholder:hover { background: rgba(255,255,255,0.07); }
 .top-fabs { pointer-events: auto; display: flex; gap: 6px; }
@@ -115,13 +117,17 @@ body.view-full #grid .flip-card { height: calc(100dvh - 130px); border-radius: 0
 body.view-full.input-hidden #grid .flip-card { height: calc(100dvh - 66px); }
 #grid:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
 
+/* A card is a panel, not an object hovering over the page: no resting shadow and no
+   lift, so a screen of cards reads as one surface and the answer is the only thing
+   that stands out. The hairline border is the whole chrome, and it only takes the
+   accent while the card is actually in play. */
 .flip-card {
     min-height: var(--card-min-height); perspective: 1000px; border-radius: var(--radius);
-    overflow: hidden; box-shadow: var(--shadow); position: relative;
+    overflow: hidden; position: relative;
     background: var(--card-bg); border: 1px solid var(--border);
-    transition: transform 0.2s, box-shadow 0.2s; touch-action: manipulation;
+    transition: border-color 0.2s, background 0.2s; touch-action: manipulation;
 }
-.flip-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
+.flip-card:hover { border-color: var(--primary); border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); }
 .flip-card:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 .flip-card.new { animation: appear 0.4s ease forwards; opacity: 0; transform: scale(0.95); }
 @keyframes appear { to { opacity: 1; transform: scale(1); } }
@@ -145,19 +151,26 @@ body.view-full.input-hidden #grid .flip-card { height: calc(100dvh - 66px); }
 .flip-card.flipped .card-back { pointer-events: auto; }
 .card-back { transform: rotateY(180deg); }
 
+/* The rule under the header is a hairline, not a divider: at full strength it drew a
+   second border inside the card's own. */
 .card-header {
     position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center;
-    padding-bottom: 8px; background: inherit; z-index: 5; border-bottom: 1px solid var(--border);
+    padding-bottom: 6px; background: inherit; z-index: 5;
+    border-bottom: 1px solid var(--border);
+    border-bottom-color: color-mix(in srgb, var(--border) 70%, transparent);
     margin-bottom: 8px; gap: 8px;
 }
-.card-actions { display: flex; gap: 4px; }
+.card-actions { display: flex; gap: 2px; }
 .card-actions button { 
     background: none; border: none; color: var(--text); cursor: pointer; 
-    padding: 4px; opacity: 0.55; border-radius: 8px; transition: all 0.2s;
-    min-width: 38px; min-height: 38px; display: flex; align-items: center; justify-content: center;
+    padding: 2px; opacity: 0.5; border-radius: 7px; transition: color 0.2s, background 0.2s, opacity 0.2s;
+    min-width: 34px; min-height: 34px; display: flex; align-items: center; justify-content: center;
     touch-action: manipulation;
 }
-.card-actions button:hover { opacity: 1; background: rgba(255,255,255,0.1); }
+.card-actions button:hover, .card-actions button:focus-visible {
+    opacity: 1; color: var(--primary); background: rgba(255,255,255,0.08);
+    background: color-mix(in srgb, var(--primary) 14%, transparent);
+}
 
 /* Arranging a card: the header grip moves it, the corner grip resizes it. */
 .card-head-left { display: flex; align-items: center; gap: 6px; min-width: 0; }

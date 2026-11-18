@@ -44,8 +44,9 @@ anyone editing this file, it does not belong here.
      those are different letters, so they name a different word.
    - Preserve this spelling in generated documentation, interfaces, metadata,
      prompts, agent responses, and speech-oriented output.
-   - This rule does not rename the product: `ai-Ncards` is the product name today,
-     and its relationship to `nspired.cc` is a separate product-naming decision.
+   - The owner's mark for the app is `Nspired` and `Ncard`, alternating in the top left;
+     `ai-Ncards` remains the package and document title until that decision is carried
+     through the rest of the product. Do not uppercase the mark: the capitals are in it.
 3. **Do not create workers.** The account already has more than it needs; fix the
    ones that exist. `PROJECTS.md` has the current count and never drifts.
 4. **Ask before changing code or stored data.** One question, then continue. Do not

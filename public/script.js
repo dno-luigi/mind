@@ -64,6 +64,11 @@ const FALLBACK_PRESET_KEY = 'truth';
 // Selecting "No preset" sends this sentinel: no preset prompt, no @preset/ slug.
 const NO_PRESET_KEY = 'none';
 
+// Two names were chosen for the mark, so the top left alternates rather than
+// settling on one and hiding the other.
+const BRAND_NAMES = ['Nspired', 'Ncard'];
+const BRAND_SWAP_MS = 4000;
+
 class App {
     constructor() {
         this.cards = [];
@@ -82,6 +87,9 @@ class App {
             border: '#333',
             locked: false
         };
+        this.brandIndex = 0;
+        this.brandTimer = null;
+        this.brandWatching = false;
         this.settings = {
             view: 'list',
             autoTTS: false,
@@ -201,6 +209,7 @@ class App {
         this.loadEngine();
         this.loadSession();
         this.applyTheme();
+        this.startBrandRotation();
         this.applyView();
         this.applyInputBar();
         this.bindEvents();
@@ -4337,8 +4346,41 @@ ${source.slice(0, 6000)}`;
         // White on primary only while white is actually readable on it: a monochrome
         // theme put white labels on a white button and they vanished.
         r.setProperty('--on-primary', this.colourContrast('#ffffff', this.theme.primary) >= 4.5 ? '#ffffff' : '#101010');
+        this.renderBrand();
+    }
+
+    /**
+     * The top left carries the product's name, not the theme's: the theme is still on the
+     * button's title and one press away in the history, and it changes too often to be the
+     * masthead. The two names alternate so neither is the runner-up.
+     */
+    renderBrand() {
         const brand = document.getElementById('brandPlaceholder');
-        if (brand) brand.textContent = this.theme.name || 'ai-Ncards';
+        if (!brand) return;
+        brand.textContent = BRAND_NAMES[this.brandIndex] || BRAND_NAMES[0];
+        brand.title = this.theme.name ? `Saved themes \u00b7 ${this.theme.name}` : 'Saved themes';
+    }
+
+    /** A background tab does not need to keep swapping, and a stutter on return reads as a bug. */
+    startBrandRotation() {
+        if (!this.brandWatching) {
+            this.brandWatching = true;
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) this.stopBrandRotation();
+                else this.startBrandRotation();
+            });
+        }
+        if (this.brandTimer) return;
+        this.brandTimer = setInterval(() => {
+            this.brandIndex = (this.brandIndex + 1) % BRAND_NAMES.length;
+            this.renderBrand();
+        }, BRAND_SWAP_MS);
+    }
+
+    stopBrandRotation() {
+        if (!this.brandTimer) return;
+        clearInterval(this.brandTimer);
+        this.brandTimer = null;
     }
 
     initASR() {
