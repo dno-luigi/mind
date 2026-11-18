@@ -4751,19 +4751,19 @@ document.addEventListener('DOMContentLoaded', () => {
    work: what a card says, where two disagree, what to ask next. The context is
    built here, so it is always what is actually on screen.
 
-   It is a window, not a drawer. It floats where it is put, it is moved by its
-   own bar, and it closes down to a pin that is itself movable - so it never
-   covers the work for longer than it is wanted. The composer is part of the
-   window: when the window is a pin, the composer is a pin too. */
+   Ambient is one card and nothing else. Its front is the oval box and the blue
+   circle - the pair of shapes of the bar at the bottom - so at rest the card is
+   exactly the size of that box. Asking turns it over and it grows to hold the
+   answer on its back, the way a card does; turning it back to the box is how the
+   next question is asked. */
 const Ambient = {
     thread: [],
     busy: false,
-    panel: null,
-    pin: null,
+    card: null,
     key: 'mind_assist',
     layoutKey: 'mind_assist_layout',
     snapshot: null,
-    layout: { x: null, y: null, pinX: null, pinY: null, w: null, h: null },
+    layout: { x: null, y: null, cw: null, ch: null },
 
     load() {
         try { this.thread = JSON.parse(localStorage.getItem(this.key) || '[]'); } catch (e) { this.thread = []; }
@@ -4771,7 +4771,7 @@ const Ambient = {
         try {
             const saved = JSON.parse(localStorage.getItem(this.layoutKey) || '{}');
             if (saved && typeof saved === 'object') {
-                ['x', 'y', 'pinX', 'pinY', 'w', 'h'].forEach((k) => {
+                ['x', 'y', 'cw', 'ch'].forEach((k) => {
                     if (Number.isFinite(saved[k])) this.layout[k] = saved[k];
                 });
             }
@@ -4811,132 +4811,112 @@ const Ambient = {
         return [head].concat(lines).join('\n\n');
     },
 
-    /** A window dragged off the edge is a window lost, so both keep to the screen. */
+    /** A card dragged off the edge is a card lost, so it keeps to the screen. */
     clamp(x, y, w, h) {
         return {
             x: Math.round(Math.min(Math.max(8, x), Math.max(8, window.innerWidth - w - 8))),
             y: Math.round(Math.min(Math.max(8, y), Math.max(8, window.innerHeight - h - 8)))
         };
     },
-    panelSize() {
-        return {
-            w: (this.panel && this.panel.offsetWidth) || Math.min(380, window.innerWidth - 24),
-            h: (this.panel && this.panel.offsetHeight) || Math.min(470, Math.round(window.innerHeight * 0.68))
-        };
+    pillWidth() {
+        return Math.min(360, window.innerWidth - 28);
     },
-    applyLayout() {
-        if (!this.panel || !this.pin) return;
-        // A size he chose is kept inside the screen, the way a position is.
-        if (this.layout.w) this.panel.style.width = Math.min(this.layout.w, window.innerWidth - 16) + 'px';
-        if (this.layout.h) this.panel.style.height = Math.min(this.layout.h, window.innerHeight - 16) + 'px';
-        const size = this.panelSize();
+    pillHeight() {
+        const input = this.card && this.card.querySelector('#assistInput');
+        return Math.max(44, (input && input.offsetHeight) || 44);
+    },
+    /** At rest the card is the box: the same width as the box, the same height. */
+    sizeToPill() {
+        if (!this.card) return;
+        const w = this.pillWidth();
+        const h = this.pillHeight();
+        this.card.style.width = w + 'px';
+        this.card.style.height = h + 'px';
+        this.applyLayout(w, h);
+    },
+    /**
+     * The size it is going to be is passed in when it is known: the card animates
+     * between sizes, and measuring mid-turn put the answer off the bottom of the
+     * screen because the box it was growing from was still the old height.
+     */
+    applyLayout(targetW, targetH) {
+        if (!this.card) return;
+        const w = targetW || this.card.offsetWidth || this.pillWidth();
+        const h = targetH || this.card.offsetHeight || this.pillHeight();
         const at = this.clamp(
-            this.layout.x === null ? 12 : this.layout.x,
-            this.layout.y === null ? window.innerHeight - size.h - 104 : this.layout.y,
-            size.w, size.h
+            this.layout.x === null ? 14 : this.layout.x,
+            this.layout.y === null ? window.innerHeight - h - 104 : this.layout.y,
+            w, h
         );
-        this.panel.style.left = at.x + 'px';
-        this.panel.style.top = at.y + 'px';
-        const pinBox = this.pin.offsetWidth || 44;
-        const pinAt = this.clamp(
-            this.layout.pinX === null ? 14 : this.layout.pinX,
-            this.layout.pinY === null ? window.innerHeight - 118 : this.layout.pinY,
-            pinBox, pinBox
-        );
-        this.pin.style.left = pinAt.x + 'px';
-        this.pin.style.top = pinAt.y + 'px';
+        this.card.style.left = at.x + 'px';
+        this.card.style.top = at.y + 'px';
     },
 
     build() {
-        if (this.panel) return this.panel;
+        if (this.card) return this.card;
 
-        const pin = document.createElement('button');
-        pin.id = 'assistPin';
-        pin.type = 'button';
-        pin.className = 'show';
-        pin.title = 'Ambient - tap to open, drag to move';
-        pin.innerHTML = '<i class="fas fa-thumbtack"></i>';
-
-        const panel = document.createElement('div');
-        panel.id = 'assistPanel';
-        panel.innerHTML =
-            '<div id="assistHead">' +
-              '<strong>Ambient</strong>' +
-              '<span id="assistContext"></span>' +
-              '<button class="assist-hbtn" id="assistClear" title="Clear this conversation">clear</button>' +
-              '<button class="assist-hbtn" id="assistMin" title="Minimize to the pin">&minus;</button>' +
-            '</div>' +
-            '<div id="assistCard">' +
-              '<div id="assistCardInner">' +
-                '<div class="assist-face" id="assistFront">' +
-                  '<div id="assistThread"></div>' +
-                  '<div id="assistComposer">' +
-                    '<textarea id="assistInput" rows="1" placeholder="Ask about what is loaded..."></textarea>' +
-                    '<button id="assistSend" type="button" title="Ask Ambient"><i class="fas fa-arrow-up"></i></button>' +
-                  '</div>' +
-                '</div>' +
-                '<div class="assist-face assist-back" id="assistBack">' +
-                  '<div id="assistBackHead">' +
-                    '<span id="assistBackQ"></span>' +
-                    '<button class="assist-hbtn" id="assistAgain" type="button" title="Turn the card back over and ask">ask again</button>' +
-                  '</div>' +
-                  '<div id="assistAnswer"></div>' +
+        const card = document.createElement('div');
+        card.id = 'assistCard';
+        card.innerHTML =
+            '<div id="assistCardInner">' +
+              '<div class="assist-face" id="assistFront">' +
+                '<div id="assistDock">' +
+                  '<textarea id="assistInput" rows="1" placeholder="Ask Ambient..."></textarea>' +
+                  '<button id="assistSend" type="button" title="Ask Ambient"><i class="fas fa-arrow-up"></i></button>' +
                 '</div>' +
               '</div>' +
+              '<div class="assist-face assist-back" id="assistBack"><div class="assist-a"></div></div>' +
             '</div>' +
             '<div id="assistGrip" title="Drag to resize"></div>';
 
-        document.body.appendChild(pin);
-        document.body.appendChild(panel);
-        this.panel = panel;
-        this.pin = pin;
+        document.body.appendChild(card);
+        this.card = card;
 
-        panel.querySelector('#assistMin').onclick = () => this.toggle(false);
-        panel.querySelector('#assistClear').onclick = () => { this.thread = []; this.save(); this.flip(false); this.render(); };
-        panel.querySelector('#assistSend').onclick = () => this.send();
-        panel.querySelector('#assistAgain').onclick = () => this.flip(false);
-        const input = panel.querySelector('#assistInput');
+        card.querySelector('#assistSend').onclick = () => this.send();
+        const input = card.querySelector('#assistInput');
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.send(); }
         });
-        // The box is one oval, so it grows a line at a time instead of scrolling
-        // a question away inside it.
+        // The box is one oval, so it grows a line at a time instead of scrolling a
+        // question away inside it - and the card grows with it, because at rest the
+        // card is the box.
         input.addEventListener('input', () => {
             input.style.height = 'auto';
-            input.style.height = Math.min(input.scrollHeight, 96) + 'px';
+            input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+            if (!card.classList.contains('flipped')) this.sizeToPill();
         });
 
-        // The bar moves the window; a press on a control in the bar is that control.
-        this.drag(panel, panel.querySelector('#assistHead'), null);
-        // The pin moves the same way, and a press that never travels opens it.
-        this.drag(pin, pin, () => this.toggle(true));
-        // The corner changes the window's size instead of its place.
+        // A press that travels moves the card; a press that does not turns it over.
+        this.drag(card, card, () => {
+            if (card.classList.contains('flipped')) this.askAgain();
+        }, (x, y) => { this.layout.x = x; this.layout.y = y; });
         this.resize();
 
-        this.applyLayout();
-        window.addEventListener('resize', () => this.applyLayout());
-        return panel;
+        this.sizeToPill();
+        window.addEventListener('resize', () => {
+            if (!card.classList.contains('flipped')) this.sizeToPill();
+            else this.applyLayout();
+        });
+        return card;
     },
 
     /**
-     * One gesture for both moves. Below a few pixels it is a tap, because a
-     * pin that opens on a shaky press is a pin that cannot be moved at all.
+     * One gesture for the move. Below a few pixels it is a tap, because a card
+     * that turns over on a shaky press is a card that cannot be moved at all.
      */
-    drag(el, handle, onTap) {
+    drag(el, handle, onTap, save) {
         let from = null;
         let start = null;
         let moved = false;
-        const isPanel = el === this.panel;
 
         handle.addEventListener('pointerdown', (e) => {
-            if (isPanel && e.target.closest('button')) return;
+            if (e.target.closest('button') || e.target.closest('#assistGrip')) return;
             from = { x: e.clientX, y: e.clientY };
             start = { x: parseFloat(el.style.left) || 0, y: parseFloat(el.style.top) || 0 };
             moved = false;
             if (e.pointerId !== undefined && handle.setPointerCapture) {
                 try { handle.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ }
             }
-            if (isPanel) e.preventDefault();
         });
 
         handle.addEventListener('pointermove', (e) => {
@@ -4949,8 +4929,6 @@ const Ambient = {
             const at = this.clamp(start.x + dx, start.y + dy, el.offsetWidth || 44, el.offsetHeight || 44);
             el.style.left = at.x + 'px';
             el.style.top = at.y + 'px';
-            el.style.right = 'auto';
-            el.style.bottom = 'auto';
         });
 
         const end = () => {
@@ -4958,9 +4936,10 @@ const Ambient = {
             from = null;
             el.classList.remove('dragging');
             if (moved) {
-                const at = { x: Math.round(parseFloat(el.style.left) || 0), y: Math.round(parseFloat(el.style.top) || 0) };
-                if (isPanel) { this.layout.x = at.x; this.layout.y = at.y; }
-                else { this.layout.pinX = at.x; this.layout.pinY = at.y; }
+                save(
+                    Math.round(parseFloat(el.style.left) || 0),
+                    Math.round(parseFloat(el.style.top) || 0)
+                );
                 this.saveLayout();
             } else if (onTap) {
                 onTap();
@@ -4970,14 +4949,14 @@ const Ambient = {
         handle.addEventListener('pointercancel', end);
     },
 
-    /** The corner grip resizes; the size is remembered with the position. */
+    /** The corner grip resizes the answer; the size is remembered with the place. */
     resize() {
-        const grip = this.panel.querySelector('#assistGrip');
+        const grip = this.card.querySelector('#assistGrip');
         let from = null;
         let start = null;
 
         grip.addEventListener('pointerdown', (e) => {
-            const box = this.panel.getBoundingClientRect();
+            const box = this.card.getBoundingClientRect();
             from = { x: e.clientX, y: e.clientY };
             start = { w: box.width, h: box.height };
             if (e.pointerId !== undefined && grip.setPointerCapture) {
@@ -4989,18 +4968,18 @@ const Ambient = {
 
         grip.addEventListener('pointermove', (e) => {
             if (!from) return;
-            const w = Math.min(Math.max(260, start.w + (e.clientX - from.x)), window.innerWidth - 16);
-            const h = Math.min(Math.max(200, start.h + (e.clientY - from.y)), window.innerHeight - 16);
-            this.panel.style.width = Math.round(w) + 'px';
-            this.panel.style.height = Math.round(h) + 'px';
+            const w = Math.min(Math.max(240, start.w + (e.clientX - from.x)), window.innerWidth - 16);
+            const h = Math.min(Math.max(150, start.h + (e.clientY - from.y)), window.innerHeight - 16);
+            this.card.style.width = Math.round(w) + 'px';
+            this.card.style.height = Math.round(h) + 'px';
         });
 
         const end = () => {
             if (!from) return;
             from = null;
-            const box = this.panel.getBoundingClientRect();
-            this.layout.w = Math.round(box.width);
-            this.layout.h = Math.round(box.height);
+            const box = this.card.getBoundingClientRect();
+            this.layout.cw = Math.round(box.width);
+            this.layout.ch = Math.round(box.height);
             this.saveLayout();
             this.applyLayout();
         };
@@ -5008,76 +4987,43 @@ const Ambient = {
         grip.addEventListener('pointercancel', end);
     },
 
-    toggle(force) {
-        const panel = this.build();
-        const open = force === undefined ? !panel.classList.contains('open') : force;
-        panel.classList.toggle('open', open);
-        this.pin.classList.toggle('show', !open);
-        if (open) {
-            this.render();
-            this.applyLayout();
-            // On a phone the keyboard would cover the window it was opened for.
-            // A card turned over to its answer has no box to type in.
-            if (window.innerWidth > 768) {
-                const input = panel.querySelector('#assistInput');
-                const card = panel.querySelector('#assistCard');
-                if (input && card && !card.classList.contains('flipped')) input.focus();
-            }
-        }
+    /**
+     * The answer turns the card over and the card grows to hold it, measured at the
+     * width it will be read at. A size he dragged is kept instead: the answer then
+     * scrolls inside the card he made.
+     */
+    openAnswer() {
+        const card = this.card;
+        const back = card.querySelector('#assistBack');
+        const width = Math.round(this.layout.cw
+            ? Math.min(this.layout.cw, window.innerWidth - 16)
+            : Math.min(440, window.innerWidth - 24));
+        card.classList.add('open');
+        card.style.width = width + 'px';
+        const fit = this.layout.ch || (back.scrollHeight + 4);
+        const height = Math.round(Math.min(Math.max(120, fit), Math.round(window.innerHeight * 0.72)));
+        card.style.height = height + 'px';
+        card.classList.add('flipped');
+        this.applyLayout(width, height);
     },
 
-    /**
-     * The card turns over: the front is the box you type in, the back is the
-     * answer. Turning back to the front puts the caret where it was.
-     */
-    flip(on) {
-        const panel = this.build();
-        const card = panel.querySelector('#assistCard');
-        if (!card) return;
-        card.classList.toggle('flipped', Boolean(on));
-        if (!on && window.innerWidth > 768) {
-            const input = panel.querySelector('#assistInput');
+    /** Back to the box, which is where the next question is asked. */
+    askAgain() {
+        if (!this.card) return;
+        this.card.classList.remove('flipped');
+        this.card.classList.remove('open');
+        this.sizeToPill();
+        if (window.innerWidth > 768) {
+            const input = this.card.querySelector('#assistInput');
             if (input) input.focus();
         }
     },
 
     render() {
-        const panel = this.build();
-        const box = panel.querySelector('#assistThread');
-        const cards = (window.app && window.app.cards) || [];
-        panel.querySelector('#assistContext').textContent = cards.length
-            ? cards.length + ' card' + (cards.length === 1 ? '' : 's') + ' in view'
-            : 'nothing loaded';
-
-        // The newest exchange is the card: what was typed on the front, what came
-        // back on the back. Earlier turns stay above the box, so a conversation is
-        // still a conversation rather than one answer replacing the last.
+        if (!this.card) return;
         const pair = this.thread.slice(-2);
-        const older = this.thread.slice(0, Math.max(0, this.thread.length - pair.length));
-        const said = pair[0] && pair[0].role === 'user' ? pair[0].content : '';
         const answer = pair[1] && pair[1].role === 'assistant' ? pair[1].content : '';
-
-        box.innerHTML = '';
-        if (!older.length) {
-            const hint = document.createElement('div');
-            hint.style.cssText = 'color:#6f7885;font-size:12px';
-            hint.textContent = cards.length
-                ? 'I can see the cards on the canvas. Ask me about them.'
-                : 'Load or ask something first, then we can talk it through.';
-            box.appendChild(hint);
-        }
-        older.forEach((turn) => {
-            const bubble = document.createElement('div');
-            const mine = turn.role === 'user';
-            bubble.style.cssText = 'margin:0 0 10px;padding:8px 10px;border-radius:8px;white-space:pre-wrap;opacity:0.72;' +
-                (mine ? 'background:#1e2a3a;border:1px solid #2a3f5a' : 'background:#141821;border:1px solid #232833');
-            bubble.textContent = turn.content;
-            box.appendChild(bubble);
-        });
-        box.scrollTop = box.scrollHeight;
-
-        panel.querySelector('#assistBackQ').textContent = said || 'Ask me something';
-        const back = panel.querySelector('#assistAnswer');
+        const back = this.card.querySelector('.assist-a');
         back.innerHTML = '';
         if (answer === '…') {
             const wait = document.createElement('div');
@@ -5090,7 +5036,7 @@ const Ambient = {
             if (window.app && typeof window.app.md === 'function') {
                 back.innerHTML = window.app.md(answer);
             } else {
-                back.classList.add('plain');
+                back.style.whiteSpace = 'pre-wrap';
                 back.textContent = answer;
             }
         }
@@ -5138,17 +5084,18 @@ const Ambient = {
 
     async send() {
         if (this.busy) return;
-        const panel = this.build();
-        const input = panel.querySelector('#assistInput');
+        const card = this.build();
+        const input = card.querySelector('#assistInput');
         const said = (input.value || '').trim();
         if (!said) return;
         input.value = '';
         input.style.height = '';
+        this.sizeToPill();
         this.thread.push({ role: 'user', content: said });
         this.thread.push({ role: 'assistant', content: '…' });
         this.busy = true;
+        card.classList.add('busy');
         this.render();
-        this.flip(true);
         try {
             // The turns asked so far, without the placeholder being written to.
             const history = this.thread.slice(0, -1);
@@ -5212,8 +5159,10 @@ const Ambient = {
             this.thread[this.thread.length - 1] = { role: 'assistant', content: 'Ambient unavailable: ' + err.message };
         }
         this.busy = false;
+        card.classList.remove('busy');
         this.save();
         this.render();
+        this.openAnswer();
     }
 };
 

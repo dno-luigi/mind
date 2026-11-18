@@ -677,112 +677,87 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
 .decision-chips span { font-size: 10px; letter-spacing: 0.02em; opacity: 0.45;
     border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; }
 
-/* ─── Ambient: a window over the work, not a drawer beside it ───
-   It floats, it is moved by its own bar, and it closes down to a pin. The bar
-   and the composer are one surface, so minimizing takes the box away with it. */
-#assistPanel {
-    position: fixed; left: 12px; top: 120px; z-index: 245;
-    display: none; flex-direction: column;
-    width: min(380px, calc(100vw - 24px)); height: min(470px, 68dvh);
-    background: #171a20; color: #e6e9ef;
-    border: 1px solid #2a2f38; border-radius: 14px; overflow: hidden;
-    box-shadow: 0 18px 44px rgba(0,0,0,0.5);
+/* ─── Ambient: one card, whose front is the composer ───
+   At rest the card is exactly the size of the oval box and the blue circle, with
+   no frame around them: the box and the send are the front face. Asking turns the
+   card over and it grows to hold the answer, the way a card does anywhere else in
+   this app, and turning it back to the box is how the next question is asked. */
+#assistCard {
+    position: fixed; left: 14px; top: 120px; z-index: 246;
+    width: min(360px, calc(100vw - 28px)); height: 46px;
+    border: 1px solid transparent; border-radius: 999px;
+    background: transparent; color: var(--text);
+    perspective: 1200px; overflow: hidden;
     font: 13px/1.55 system-ui, sans-serif;
+    cursor: grab; touch-action: none;
+    transition: width 0.35s ease, height 0.35s ease, border-radius 0.35s ease,
+                background 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
 }
-#assistPanel.open { display: flex; }
-#assistPanel.dragging, #assistPin.dragging { box-shadow: 0 24px 60px rgba(0,0,0,0.65); }
-#assistHead {
-    display: flex; align-items: center; gap: 8px; padding: 9px 10px 9px 12px;
-    border-bottom: 1px solid #2a2f38; cursor: move; touch-action: none; flex-shrink: 0;
+/* Open is the answer's side of the card: the app's card surface, not a window's. */
+#assistCard.open {
+    border-radius: var(--radius); border-color: var(--border);
+    background: var(--card-bg); box-shadow: 0 18px 44px rgba(0,0,0,0.45);
 }
-#assistHead strong { flex: 1; }
-#assistContext { font: 11px/1 system-ui, sans-serif; color: #9aa4b2; white-space: nowrap; }
-.assist-hbtn {
-    background: none; border: 1px solid #2a2f38; border-radius: 4px; color: #9aa4b2;
-    font-size: 11px; padding: 3px 7px; cursor: pointer; touch-action: manipulation;
-}
-.assist-hbtn:hover { border-color: #4a5568; color: #e6e9ef; }
-/* Ambient is a card too. The front is the box: one oval input and one round blue
-   send - the colour and shape of the pin that opened the window. Sending turns the
-   card over, and the answer is the back. */
-#assistCard { flex: 1; min-height: 0; position: relative; perspective: 1200px; }
+#assistCard.dragging { cursor: grabbing; box-shadow: 0 24px 60px rgba(0,0,0,0.6); }
 #assistCardInner {
     position: absolute; inset: 0; transform-style: preserve-3d;
     transition: transform 0.55s cubic-bezier(0.4, 0.05, 0.2, 1);
 }
 #assistCard.flipped #assistCardInner { transform: rotateY(180deg); }
 .assist-face {
-    position: absolute; inset: 0; display: flex; flex-direction: column;
-    backface-visibility: hidden; background: #171a20; pointer-events: none;
+    position: absolute; inset: 0; overflow: hidden;
+    background: inherit; color: inherit; backface-visibility: hidden;
+    pointer-events: none;
 }
 /* A face turned away is invisible but still takes the press in Chromium, so only
    the face that is showing does. */
 #assistCard:not(.flipped) #assistFront, #assistCard.flipped #assistBack { pointer-events: auto; }
-#assistThread { flex: 1; overflow-y: auto; padding: 10px 12px; min-height: 0; }
-/* The composer is inset on the right so the corner grip never sits on send. */
-#assistComposer {
-    display: flex; align-items: center; gap: 8px; padding: 10px 22px 12px 12px;
-    border-top: 1px solid #2a2f38; flex-shrink: 0;
-}
+#assistFront { display: flex; align-items: center; }
+#assistDock { display: flex; align-items: center; gap: 8px; width: 100%; }
 #assistInput {
-    flex: 1; resize: none; min-height: 44px; max-height: 96px; margin: 0; padding: 10px 16px;
-    background: #0d0d1a; color: inherit; border: 1px solid #2a2f38; border-radius: 999px;
-    font: inherit; line-height: 1.4;
+    flex: 1; resize: none; min-height: 44px; max-height: 120px; margin: 0; padding: 11px 16px;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 999px; font: inherit; line-height: 1.4; cursor: text;
+    box-shadow: 0 10px 26px rgba(0,0,0,0.35); scrollbar-width: none;
 }
-#assistInput:focus { outline: none; border-color: #4a9eff; }
-/* The oval grows with what is typed, so a scrollbar inside it would only be a
-   grey widget sitting on the curve. */
-#assistInput { scrollbar-width: none; }
 #assistInput::-webkit-scrollbar { display: none; }
+#assistInput:focus { outline: none; border-color: #4a9eff; }
+#assistInput::placeholder { color: var(--text); opacity: 0.45; }
+/* Blue is Ambient's own, the same blue as the pin that used to stand for it, and
+   nothing else on the canvas takes it. */
 #assistSend {
     flex-shrink: 0; width: 44px; height: 44px; padding: 0; border-radius: 50%;
     border: 1px solid #6bb0ff; background: #1f6fd6; color: #ffffff;
     font-size: 14px; cursor: pointer; touch-action: manipulation;
     display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 10px 26px rgba(31,111,214,0.4);
 }
 #assistSend:hover, #assistSend:focus-visible { background: #2a80e6; outline: none; }
 #assistSend i { pointer-events: none; }
-#assistBack { transform: rotateY(180deg); padding: 10px 12px 12px; }
-#assistBackHead {
-    display: flex; align-items: center; gap: 8px; padding-bottom: 8px; margin-bottom: 10px;
-    border-bottom: 1px solid #2a2f38; flex-shrink: 0;
+/* The wait shows where the question was asked, on the box, not on a face that is
+   still turned away. */
+#assistCard.busy #assistSend { animation: thinking-text 1.4s ease-in-out infinite; }
+.assist-back {
+    transform: rotateY(180deg);
+    display: flex; flex-direction: column; padding: 14px; overflow-y: auto;
 }
-#assistBackQ {
-    flex: 1; min-width: 0; font-size: 11px; color: #9aa4b2;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-#assistAnswer { flex: 1; min-height: 0; overflow-y: auto; }
-#assistAnswer.plain { white-space: pre-wrap; }
-#assistAnswer p { margin: 0 0 10px; }
-#assistAnswer p:last-child { margin-bottom: 0; }
-/* The global reset takes the bullets off every list, so the answer puts them
-   back: a list without markers reads as loose lines. */
-#assistAnswer ul, #assistAnswer ol { margin: 0 0 10px; padding-left: 18px; }
-#assistAnswer ul { list-style: disc; }
-#assistAnswer ol { list-style: decimal; }
-#assistAnswer li { margin-bottom: 4px; }
-#assistAnswer pre { overflow-x: auto; padding: 8px; border-radius: 8px; background: #0d0d1a; }
-#assistAnswer code { font-size: 12px; }
-.assist-wait { color: #9aa4b2; font-size: 12px; animation: thinking-text 1.4s ease-in-out infinite; }
-/* Closed down, Ambient is a pin: the shape of the thing, not a chat bubble.
-   Blue is the window's own accent, so the collapsed control and the open one
-   read as the same object. 44px is kept for the thumb. */
-#assistPin {
-    position: fixed; left: 14px; top: 300px; z-index: 244;
-    width: 44px; height: 44px; padding: 0; border-radius: 50%;
-    display: none; align-items: center; justify-content: center;
-    border: 1px solid #6bb0ff; background: #1f6fd6; color: #ffffff;
-    font-size: 13px; cursor: grab; touch-action: none;
-    box-shadow: 0 8px 22px rgba(31,111,214,0.45);
-}
-#assistPin.show { display: flex; }
-#assistPin:hover { background: #2a80e6; }
-#assistPin i { pointer-events: none; }
+.assist-a { flex: 1; min-height: 0; }
+.assist-a p { margin: 0 0 10px; }
+.assist-a p:last-child { margin-bottom: 0; }
+.assist-a ul, .assist-a ol { margin: 0 0 10px; padding-left: 18px; }
+.assist-a ul { list-style: disc; }
+.assist-a ol { list-style: decimal; }
+.assist-a li { margin-bottom: 4px; }
+.assist-a pre { overflow-x: auto; padding: 8px; border-radius: 8px; background: rgba(0,0,0,0.25); }
+.assist-a code { font-size: 12px; }
+.assist-wait { opacity: 0.6; font-size: 12px; animation: thinking-text 1.4s ease-in-out infinite; }
 #assistGrip {
     position: absolute; right: 0; bottom: 0; width: 22px; height: 22px; z-index: 3;
-    cursor: nwse-resize; touch-action: none;
+    display: none; cursor: nwse-resize; touch-action: none;
 }
+#assistCard.open #assistGrip { display: block; }
 #assistGrip::after {
     content: ''; position: absolute; right: 5px; bottom: 5px; width: 9px; height: 9px;
-    border-right: 2px solid #3a414d; border-bottom: 2px solid #3a414d; border-radius: 0 0 2px 0;
+    border-right: 2px solid var(--border); border-bottom: 2px solid var(--border);
+    border-radius: 0 0 2px 0;
 }
