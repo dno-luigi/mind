@@ -1091,7 +1091,9 @@ class App {
         const webFab = document.getElementById('webFab');
         if (webFab) webFab.addEventListener('click', () => this.openBrowser());
         document.getElementById('viewFab').addEventListener('click', () => this.cycleView());
-        document.getElementById('undoFabTop').addEventListener('click', () => this.undo());
+        // The undo shortcut's slot is the Ambient launcher now: the arrow was never
+        // used as undo, and the pin is the way in and out of the card.
+        document.getElementById('ambientFab').addEventListener('click', () => Ambient.toggle());
 
         document.getElementById('cancelSelect').addEventListener('click', () => this.clearSelection());
         document.getElementById('mergeSelected').addEventListener('click', () => this.promptAction('merge'));
@@ -4763,7 +4765,7 @@ const Ambient = {
     key: 'mind_assist',
     layoutKey: 'mind_assist_layout',
     snapshot: null,
-    layout: { x: null, y: null, cw: null, ch: null },
+    layout: { x: null, y: null, cw: null, ch: null, hidden: false },
 
     load() {
         try { this.thread = JSON.parse(localStorage.getItem(this.key) || '[]'); } catch (e) { this.thread = []; }
@@ -4774,6 +4776,7 @@ const Ambient = {
                 ['x', 'y', 'cw', 'ch'].forEach((k) => {
                     if (Number.isFinite(saved[k])) this.layout[k] = saved[k];
                 });
+                this.layout.hidden = Boolean(saved.hidden);
             }
         } catch (e) { /* a lost layout is the corner it starts in */ }
     },
@@ -4865,7 +4868,10 @@ const Ambient = {
                   '<button id="assistSend" type="button" title="Ask Ambient"><i class="fas fa-arrow-up"></i></button>' +
                 '</div>' +
               '</div>' +
-              '<div class="assist-face assist-back" id="assistBack"><div class="assist-a"></div></div>' +
+              '<div class="assist-face assist-back" id="assistBack">' +
+                '<div class="assist-asked"></div>' +
+                '<div class="assist-a"></div>' +
+              '</div>' +
             '</div>' +
             '<div id="assistGrip" title="Drag to resize"></div>';
 
@@ -4893,6 +4899,7 @@ const Ambient = {
         this.resize();
 
         this.sizeToPill();
+        if (this.layout.hidden) card.classList.add('hidden');
         window.addEventListener('resize', () => {
             if (!card.classList.contains('flipped')) this.sizeToPill();
             else this.applyLayout();
@@ -5019,10 +5026,30 @@ const Ambient = {
         }
     },
 
+    /** The launcher in the bar hides the card and brings it back; the choice sticks. */
+    toggle(force) {
+        const card = this.build();
+        const hide = force === undefined ? !card.classList.contains('hidden') : !force;
+        card.classList.toggle('hidden', hide);
+        this.layout.hidden = hide;
+        this.saveLayout();
+        if (hide) return;
+        if (card.classList.contains('flipped')) this.applyLayout();
+        else this.sizeToPill();
+        if (window.innerWidth > 768 && !card.classList.contains('flipped')) {
+            const input = card.querySelector('#assistInput');
+            if (input) input.focus();
+        }
+    },
+
     render() {
         if (!this.card) return;
         const pair = this.thread.slice(-2);
+        const said = pair[0] && pair[0].role === 'user' ? pair[0].content : '';
         const answer = pair[1] && pair[1].role === 'assistant' ? pair[1].content : '';
+        // What was typed stays on the answer, so the question is read with the answer
+        // instead of having to be remembered or retyped.
+        this.card.querySelector('.assist-asked').textContent = said;
         const back = this.card.querySelector('.assist-a');
         back.innerHTML = '';
         if (answer === '…') {
