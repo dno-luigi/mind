@@ -701,15 +701,20 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
     align-self: stretch; padding: 0 12px; border-radius: 6px; border: 1px solid #4a9eff;
     background: #4a9eff22; color: #cfe4ff; font-weight: 600; cursor: pointer;
 }
+/* Closed down, Ambient is a pin: the shape of the thing, not a chat bubble.
+   Blue is the window's own accent, so the collapsed control and the open one
+   read as the same object. 44px is kept for the thumb. */
 #assistPin {
     position: fixed; left: 14px; top: 300px; z-index: 244;
     width: 44px; height: 44px; padding: 0; border-radius: 50%;
     display: none; align-items: center; justify-content: center;
-    border: 1px solid #2a2f38; background: #1e222a; color: #e6e9ef;
-    font-size: 15px; cursor: grab; touch-action: none;
-    box-shadow: 0 8px 22px rgba(0,0,0,0.45);
+    border: 1px solid #6bb0ff; background: #1f6fd6; color: #ffffff;
+    font-size: 13px; cursor: grab; touch-action: none;
+    box-shadow: 0 8px 22px rgba(31,111,214,0.45);
 }
 #assistPin.show { display: flex; }
+#assistPin:hover { background: #2a80e6; }
+#assistPin i { pointer-events: none; }
 #assistGrip {
     position: absolute; right: 0; bottom: 0; width: 22px; height: 22px; z-index: 3;
     cursor: nwse-resize; touch-action: none;

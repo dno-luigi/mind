@@ -4803,7 +4803,7 @@ const Ambient = {
         pin.type = 'button';
         pin.className = 'show';
         pin.title = 'Ambient - tap to open, drag to move';
-        pin.innerHTML = '<i class="fas fa-comment-dots"></i>';
+        pin.innerHTML = '<i class="fas fa-thumbtack"></i>';
 
         const panel = document.createElement('div');
         panel.id = 'assistPanel';
