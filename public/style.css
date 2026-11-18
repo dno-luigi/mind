@@ -135,7 +135,14 @@ body.view-full.input-hidden #grid .flip-card { height: calc(100dvh - 66px); }
     position: absolute; inset: 0; backface-visibility: hidden;
     display: flex; flex-direction: column; padding: 14px; overflow-y: auto;
     font-size: 14px; line-height: 1.5; background: inherit; color: inherit;
+    /* A face rotated away is invisible but still takes the press in Chromium, so
+       a press on the response landed on the request underneath and flipped the
+       card back - the read-aloud and menu buttons included. Only the face that
+       is actually showing takes input. */
+    pointer-events: none;
 }
+.flip-card:not(.flipped) .card-face:not(.card-back),
+.flip-card.flipped .card-back { pointer-events: auto; }
 .card-back { transform: rotateY(180deg); }
 
 .card-header {
