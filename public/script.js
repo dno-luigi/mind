@@ -4856,10 +4856,23 @@ const Ambient = {
               '<button class="assist-hbtn" id="assistClear" title="Clear this conversation">clear</button>' +
               '<button class="assist-hbtn" id="assistMin" title="Minimize to the pin">&minus;</button>' +
             '</div>' +
-            '<div id="assistThread"></div>' +
-            '<div id="assistComposer">' +
-              '<textarea id="assistInput" rows="2" placeholder="Ask about what is loaded..."></textarea>' +
-              '<button id="assistSend">send</button>' +
+            '<div id="assistCard">' +
+              '<div id="assistCardInner">' +
+                '<div class="assist-face" id="assistFront">' +
+                  '<div id="assistThread"></div>' +
+                  '<div id="assistComposer">' +
+                    '<textarea id="assistInput" rows="1" placeholder="Ask about what is loaded..."></textarea>' +
+                    '<button id="assistSend" type="button" title="Ask Ambient"><i class="fas fa-arrow-up"></i></button>' +
+                  '</div>' +
+                '</div>' +
+                '<div class="assist-face assist-back" id="assistBack">' +
+                  '<div id="assistBackHead">' +
+                    '<span id="assistBackQ"></span>' +
+                    '<button class="assist-hbtn" id="assistAgain" type="button" title="Turn the card back over and ask">ask again</button>' +
+                  '</div>' +
+                  '<div id="assistAnswer"></div>' +
+                '</div>' +
+              '</div>' +
             '</div>' +
             '<div id="assistGrip" title="Drag to resize"></div>';
 
@@ -4869,10 +4882,18 @@ const Ambient = {
         this.pin = pin;
 
         panel.querySelector('#assistMin').onclick = () => this.toggle(false);
-        panel.querySelector('#assistClear').onclick = () => { this.thread = []; this.save(); this.render(); };
+        panel.querySelector('#assistClear').onclick = () => { this.thread = []; this.save(); this.flip(false); this.render(); };
         panel.querySelector('#assistSend').onclick = () => this.send();
-        panel.querySelector('#assistInput').addEventListener('keydown', (e) => {
+        panel.querySelector('#assistAgain').onclick = () => this.flip(false);
+        const input = panel.querySelector('#assistInput');
+        input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.send(); }
+        });
+        // The box is one oval, so it grows a line at a time instead of scrolling
+        // a question away inside it.
+        input.addEventListener('input', () => {
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 96) + 'px';
         });
 
         // The bar moves the window; a press on a control in the bar is that control.
@@ -4986,10 +5007,27 @@ const Ambient = {
             this.render();
             this.applyLayout();
             // On a phone the keyboard would cover the window it was opened for.
+            // A card turned over to its answer has no box to type in.
             if (window.innerWidth > 768) {
                 const input = panel.querySelector('#assistInput');
-                if (input) input.focus();
+                const card = panel.querySelector('#assistCard');
+                if (input && card && !card.classList.contains('flipped')) input.focus();
             }
+        }
+    },
+
+    /**
+     * The card turns over: the front is the box you type in, the back is the
+     * answer. Turning back to the front puts the caret where it was.
+     */
+    flip(on) {
+        const panel = this.build();
+        const card = panel.querySelector('#assistCard');
+        if (!card) return;
+        card.classList.toggle('flipped', Boolean(on));
+        if (!on && window.innerWidth > 768) {
+            const input = panel.querySelector('#assistInput');
+            if (input) input.focus();
         }
     },
 
@@ -5000,25 +5038,53 @@ const Ambient = {
         panel.querySelector('#assistContext').textContent = cards.length
             ? cards.length + ' card' + (cards.length === 1 ? '' : 's') + ' in view'
             : 'nothing loaded';
+
+        // The newest exchange is the card: what was typed on the front, what came
+        // back on the back. Earlier turns stay above the box, so a conversation is
+        // still a conversation rather than one answer replacing the last.
+        const pair = this.thread.slice(-2);
+        const older = this.thread.slice(0, Math.max(0, this.thread.length - pair.length));
+        const said = pair[0] && pair[0].role === 'user' ? pair[0].content : '';
+        const answer = pair[1] && pair[1].role === 'assistant' ? pair[1].content : '';
+
         box.innerHTML = '';
-        if (!this.thread.length) {
+        if (!older.length) {
             const hint = document.createElement('div');
             hint.style.cssText = 'color:#6f7885;font-size:12px';
             hint.textContent = cards.length
                 ? 'I can see the cards on the canvas. Ask me about them.'
                 : 'Load or ask something first, then we can talk it through.';
             box.appendChild(hint);
-            return;
         }
-        this.thread.forEach((turn) => {
+        older.forEach((turn) => {
             const bubble = document.createElement('div');
             const mine = turn.role === 'user';
-            bubble.style.cssText = 'margin:0 0 10px;padding:8px 10px;border-radius:8px;white-space:pre-wrap;' +
+            bubble.style.cssText = 'margin:0 0 10px;padding:8px 10px;border-radius:8px;white-space:pre-wrap;opacity:0.72;' +
                 (mine ? 'background:#1e2a3a;border:1px solid #2a3f5a' : 'background:#141821;border:1px solid #232833');
             bubble.textContent = turn.content;
             box.appendChild(bubble);
         });
         box.scrollTop = box.scrollHeight;
+
+        panel.querySelector('#assistBackQ').textContent = said || 'Ask me something';
+        const back = panel.querySelector('#assistAnswer');
+        back.innerHTML = '';
+        if (answer === '…') {
+            const wait = document.createElement('div');
+            wait.className = 'assist-wait';
+            wait.textContent = 'thinking';
+            back.appendChild(wait);
+        } else if (answer) {
+            // The back of a card is where the answer lives, so it is set the way
+            // every other answer in the app is set.
+            if (window.app && typeof window.app.md === 'function') {
+                back.innerHTML = window.app.md(answer);
+            } else {
+                back.classList.add('plain');
+                back.textContent = answer;
+            }
+        }
+        back.scrollTop = 0;
     },
 
     /**
@@ -5067,10 +5133,12 @@ const Ambient = {
         const said = (input.value || '').trim();
         if (!said) return;
         input.value = '';
+        input.style.height = '';
         this.thread.push({ role: 'user', content: said });
         this.thread.push({ role: 'assistant', content: '…' });
         this.busy = true;
         this.render();
+        this.flip(true);
         try {
             // The turns asked so far, without the placeholder being written to.
             const history = this.thread.slice(0, -1);

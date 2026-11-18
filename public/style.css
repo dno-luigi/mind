@@ -702,18 +702,68 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
     font-size: 11px; padding: 3px 7px; cursor: pointer; touch-action: manipulation;
 }
 .assist-hbtn:hover { border-color: #4a5568; color: #e6e9ef; }
+/* Ambient is a card too. The front is the box: one oval input and one round blue
+   send - the colour and shape of the pin that opened the window. Sending turns the
+   card over, and the answer is the back. */
+#assistCard { flex: 1; min-height: 0; position: relative; perspective: 1200px; }
+#assistCardInner {
+    position: absolute; inset: 0; transform-style: preserve-3d;
+    transition: transform 0.55s cubic-bezier(0.4, 0.05, 0.2, 1);
+}
+#assistCard.flipped #assistCardInner { transform: rotateY(180deg); }
+.assist-face {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    backface-visibility: hidden; background: #171a20; pointer-events: none;
+}
+/* A face turned away is invisible but still takes the press in Chromium, so only
+   the face that is showing does. */
+#assistCard:not(.flipped) #assistFront, #assistCard.flipped #assistBack { pointer-events: auto; }
 #assistThread { flex: 1; overflow-y: auto; padding: 10px 12px; min-height: 0; }
 /* The composer is inset on the right so the corner grip never sits on send. */
-#assistComposer { display: flex; gap: 6px; padding: 10px 22px 10px 12px; border-top: 1px solid #2a2f38; flex-shrink: 0; }
+#assistComposer {
+    display: flex; align-items: center; gap: 8px; padding: 10px 22px 12px 12px;
+    border-top: 1px solid #2a2f38; flex-shrink: 0;
+}
 #assistInput {
-    flex: 1; resize: none; min-height: 0; margin: 0; padding: 6px 8px;
-    background: #0d0d1a; color: inherit; border: 1px solid #2a2f38; border-radius: 6px;
-    font: inherit;
+    flex: 1; resize: none; min-height: 44px; max-height: 96px; margin: 0; padding: 10px 16px;
+    background: #0d0d1a; color: inherit; border: 1px solid #2a2f38; border-radius: 999px;
+    font: inherit; line-height: 1.4;
 }
+#assistInput:focus { outline: none; border-color: #4a9eff; }
+/* The oval grows with what is typed, so a scrollbar inside it would only be a
+   grey widget sitting on the curve. */
+#assistInput { scrollbar-width: none; }
+#assistInput::-webkit-scrollbar { display: none; }
 #assistSend {
-    align-self: stretch; padding: 0 12px; border-radius: 6px; border: 1px solid #4a9eff;
-    background: #4a9eff22; color: #cfe4ff; font-weight: 600; cursor: pointer;
+    flex-shrink: 0; width: 44px; height: 44px; padding: 0; border-radius: 50%;
+    border: 1px solid #6bb0ff; background: #1f6fd6; color: #ffffff;
+    font-size: 14px; cursor: pointer; touch-action: manipulation;
+    display: flex; align-items: center; justify-content: center;
 }
+#assistSend:hover, #assistSend:focus-visible { background: #2a80e6; outline: none; }
+#assistSend i { pointer-events: none; }
+#assistBack { transform: rotateY(180deg); padding: 10px 12px 12px; }
+#assistBackHead {
+    display: flex; align-items: center; gap: 8px; padding-bottom: 8px; margin-bottom: 10px;
+    border-bottom: 1px solid #2a2f38; flex-shrink: 0;
+}
+#assistBackQ {
+    flex: 1; min-width: 0; font-size: 11px; color: #9aa4b2;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#assistAnswer { flex: 1; min-height: 0; overflow-y: auto; }
+#assistAnswer.plain { white-space: pre-wrap; }
+#assistAnswer p { margin: 0 0 10px; }
+#assistAnswer p:last-child { margin-bottom: 0; }
+/* The global reset takes the bullets off every list, so the answer puts them
+   back: a list without markers reads as loose lines. */
+#assistAnswer ul, #assistAnswer ol { margin: 0 0 10px; padding-left: 18px; }
+#assistAnswer ul { list-style: disc; }
+#assistAnswer ol { list-style: decimal; }
+#assistAnswer li { margin-bottom: 4px; }
+#assistAnswer pre { overflow-x: auto; padding: 8px; border-radius: 8px; background: #0d0d1a; }
+#assistAnswer code { font-size: 12px; }
+.assist-wait { color: #9aa4b2; font-size: 12px; animation: thinking-text 1.4s ease-in-out infinite; }
 /* Closed down, Ambient is a pin: the shape of the thing, not a chat bubble.
    Blue is the window's own accent, so the collapsed control and the open one
    read as the same object. 44px is kept for the thumb. */
