@@ -688,10 +688,15 @@ async function assist(request, env, ctx) {
   const thread = Array.isArray(body?.thread)
     ? body.thread
         .filter((m) => m && typeof m.content === 'string' && (m.role === 'user' || m.role === 'assistant'))
-        .map((m) => ({ role: m.role, content: m.content.slice(0, 4000) }))
+        // A file delivered for reading is source, not chat: 4000 characters cut
+        // the middle out of the one thing it was asked to look at.
+        .map((m) => ({ role: m.role, content: m.content.slice(0, 40000) }))
         .slice(-12)
     : [];
-  const context = String(body?.context || '').slice(0, 12000);
+  // Both faces of every loaded card, in full, is a larger brief than an excerpt
+  // was; the assistant is the voice between the system and the owner, so it reads
+  // the work rather than a preview of it.
+  const context = String(body?.context || '').slice(0, 30000);
   const ask = [...thread].reverse().find((m) => m.role === 'user')?.content.trim() || '';
   if (!ask) return fail(400, 'ask_required', 'Send { thread: [...], context } with a user message.');
 
@@ -699,7 +704,7 @@ async function assist(request, env, ctx) {
     "You are the ambient assistant inside mind, the owner's card workspace. He is talking to you with his",
     'loaded work in front of him, so speak as someone who can see it.',
     '',
-    'What is on the canvas right now:',
+    'What is on the canvas right now, both faces of each card:',
     context || '(nothing loaded yet)',
     '',
     'How to work:',
@@ -710,6 +715,10 @@ async function assist(request, env, ctx) {
     '- You assist; you do not take over. Help him do the work himself - point, suggest, narrow - and only do it when he asks you to.',
     '- Short by default. He is working, not reading.',
     '- You are not the audit engine: when a claim needs checking, name the check that would settle it.',
+    '',
+    "Mind's own code is below as a map, not as text. When a question is about how the app or the worker actually behaves, ask for the one file you need by writing a single line and nothing else:",
+    '[read: path/to/file.js]',
+    'The file arrives next turn, in full, as source. Do not guess at code you have not been shown; if the map has no file that answers the question, say that plainly.',
   ].join('\n');
 
   const messages = [{ role: 'system', content: brief }, ...thread];

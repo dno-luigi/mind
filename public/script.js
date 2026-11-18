@@ -4710,7 +4710,8 @@ const Ambient = {
     pin: null,
     key: 'mind_assist',
     layoutKey: 'mind_assist_layout',
-    layout: { x: null, y: null, pinX: null, pinY: null },
+    snapshot: null,
+    layout: { x: null, y: null, pinX: null, pinY: null, w: null, h: null },
 
     load() {
         try { this.thread = JSON.parse(localStorage.getItem(this.key) || '[]'); } catch (e) { this.thread = []; }
@@ -4718,7 +4719,7 @@ const Ambient = {
         try {
             const saved = JSON.parse(localStorage.getItem(this.layoutKey) || '{}');
             if (saved && typeof saved === 'object') {
-                ['x', 'y', 'pinX', 'pinY'].forEach((k) => {
+                ['x', 'y', 'pinX', 'pinY', 'w', 'h'].forEach((k) => {
                     if (Number.isFinite(saved[k])) this.layout[k] = saved[k];
                 });
             }
@@ -4730,18 +4731,32 @@ const Ambient = {
     saveLayout() {
         try { localStorage.setItem(this.layoutKey, JSON.stringify(this.layout)); } catch (e) {}
     },
+    /**
+     * Both faces of every card, in full. The assistant used to be handed 200
+     * characters of the request and 420 of the answer, so it was reading previews
+     * of the work and calling them the work: a letter cut mid-sentence reads like
+     * a letter that ends there. It is the voice between the system and him, so it
+     * gets what is actually on the canvas, front and back.
+     */
     context() {
         const cards = (window.app && window.app.cards) || [];
+        const LIMIT = 8000;
+        const cut = (text) => {
+            const full = String(text || '').trim();
+            return full.length > LIMIT
+                ? full.slice(0, LIMIT) + '\n[cut here at ' + LIMIT + ' characters]'
+                : full;
+        };
         const lines = cards.slice(0, 40).map((card, i) => {
             const d = card.decision || {};
-            const q = String(card.q || '').replace(/\s+/g, ' ').slice(0, 200);
-            const full = String(card.r || '');
-            const a = full.replace(/\s+/g, ' ').slice(0, 420);
+            const back = card.r === '...' ? '(still thinking)' : (cut(card.r) || '(empty)');
             return '#' + (i + 1) + ' [' + (d.domain || 'general') + ' / ' + (d.task || 'ask') + (d.source ? ' / ' + d.source : '') + ']' +
-                '\nQ: ' + q + '\nA: ' + a + (full.length > 420 ? ' …' : '');
+                '\nREQUEST (front face):\n' + (cut(card.q) || '(empty)') +
+                '\nRESPONSE (back face):\n' + back;
         });
-        const head = cards.length + ' card' + (cards.length === 1 ? '' : 's') + ' on the canvas.';
-        return [head].concat(lines).join('\n');
+        const head = cards.length + ' card' + (cards.length === 1 ? '' : 's') +
+            ' on the canvas. Both faces of each one are below.';
+        return [head].concat(lines).join('\n\n');
     },
 
     /** A window dragged off the edge is a window lost, so both keep to the screen. */
@@ -4759,6 +4774,9 @@ const Ambient = {
     },
     applyLayout() {
         if (!this.panel || !this.pin) return;
+        // A size he chose is kept inside the screen, the way a position is.
+        if (this.layout.w) this.panel.style.width = Math.min(this.layout.w, window.innerWidth - 16) + 'px';
+        if (this.layout.h) this.panel.style.height = Math.min(this.layout.h, window.innerHeight - 16) + 'px';
         const size = this.panelSize();
         const at = this.clamp(
             this.layout.x === null ? 12 : this.layout.x,
@@ -4800,7 +4818,8 @@ const Ambient = {
             '<div id="assistComposer">' +
               '<textarea id="assistInput" rows="2" placeholder="Ask about what is loaded..."></textarea>' +
               '<button id="assistSend">send</button>' +
-            '</div>';
+            '</div>' +
+            '<div id="assistGrip" title="Drag to resize"></div>';
 
         document.body.appendChild(pin);
         document.body.appendChild(panel);
@@ -4818,6 +4837,8 @@ const Ambient = {
         this.drag(panel, panel.querySelector('#assistHead'), null);
         // The pin moves the same way, and a press that never travels opens it.
         this.drag(pin, pin, () => this.toggle(true));
+        // The corner changes the window's size instead of its place.
+        this.resize();
 
         this.applyLayout();
         window.addEventListener('resize', () => this.applyLayout());
@@ -4876,6 +4897,44 @@ const Ambient = {
         handle.addEventListener('pointercancel', end);
     },
 
+    /** The corner grip resizes; the size is remembered with the position. */
+    resize() {
+        const grip = this.panel.querySelector('#assistGrip');
+        let from = null;
+        let start = null;
+
+        grip.addEventListener('pointerdown', (e) => {
+            const box = this.panel.getBoundingClientRect();
+            from = { x: e.clientX, y: e.clientY };
+            start = { w: box.width, h: box.height };
+            if (e.pointerId !== undefined && grip.setPointerCapture) {
+                try { grip.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ }
+            }
+            e.preventDefault();
+            e.stopPropagation();
+        });
+
+        grip.addEventListener('pointermove', (e) => {
+            if (!from) return;
+            const w = Math.min(Math.max(260, start.w + (e.clientX - from.x)), window.innerWidth - 16);
+            const h = Math.min(Math.max(200, start.h + (e.clientY - from.y)), window.innerHeight - 16);
+            this.panel.style.width = Math.round(w) + 'px';
+            this.panel.style.height = Math.round(h) + 'px';
+        });
+
+        const end = () => {
+            if (!from) return;
+            from = null;
+            const box = this.panel.getBoundingClientRect();
+            this.layout.w = Math.round(box.width);
+            this.layout.h = Math.round(box.height);
+            this.saveLayout();
+            this.applyLayout();
+        };
+        grip.addEventListener('pointerup', end);
+        grip.addEventListener('pointercancel', end);
+    },
+
     toggle(force) {
         const panel = this.build();
         const open = force === undefined ? !panel.classList.contains('open') : force;
@@ -4920,6 +4979,45 @@ const Ambient = {
         box.scrollTop = box.scrollHeight;
     },
 
+    /**
+     * The app's own code, as one generated snapshot (npm run snapshot). Fetched
+     * once per session: it is about a megabyte, so it is not re-fetched for
+     * every question, and it is never sent whole - only the file asked for.
+     */
+    async appSource() {
+        if (this.snapshot) return this.snapshot;
+        const base = (window.app && typeof window.app.getProxyUrl === 'function') ? window.app.getProxyUrl() : location.origin;
+        const res = await fetch(new URL('/source-snapshot.json', base).toString());
+        if (!res.ok) throw new Error('no source snapshot (' + res.status + ')');
+        this.snapshot = await res.json();
+        return this.snapshot;
+    },
+    sourceMap(snapshot) {
+        return (snapshot.files || [])
+            .map((f) => f.path + ' (' + f.lines + ' lines)' + (f.purpose ? ' - ' + f.purpose : ''))
+            .join('\n');
+    },
+    sourceOf(snapshot, path) {
+        const want = String(path || '').trim();
+        if (!want) return null;
+        const files = snapshot.files || [];
+        return files.find((f) => f.path === want)
+            || files.find((f) => f.path.endsWith(want) || f.path.endsWith('/' + want))
+            || null;
+    },
+    async ask(context, thread) {
+        const base = (window.app && typeof window.app.getProxyUrl === 'function') ? window.app.getProxyUrl() : location.origin;
+        const res = await fetch(new URL('/api/assist', base).toString(), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ thread, context })
+        });
+        const body = await res.json().catch(() => null);
+        return body && body.text
+            ? body.text
+            : ((body && body.error && body.error.message) || ('No answer (' + res.status + ').'));
+    },
+
     async send() {
         if (this.busy) return;
         const panel = this.build();
@@ -4932,17 +5030,41 @@ const Ambient = {
         this.busy = true;
         this.render();
         try {
-            const base = (window.app && typeof window.app.getProxyUrl === 'function') ? window.app.getProxyUrl() : location.origin;
-            const res = await fetch(new URL('/api/assist', base).toString(), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ thread: this.thread.slice(0, -1), context: this.context() })
-            });
-            const body = await res.json().catch(() => null);
-            const text = body && body.text
-                ? body.text
-                : ((body && body.error && body.error.message) || ('No answer (' + res.status + ').'));
-            this.thread[this.thread.length - 1] = { role: 'assistant', content: text };
+            // The turns asked so far, without the placeholder being written to.
+            const history = this.thread.slice(0, -1);
+            const snapshot = await this.appSource().catch(() => null);
+            const context = [
+                this.context(),
+                snapshot
+                    ? "Mind's own code, a map of the files you can read (paths exactly as listed):\n" + this.sourceMap(snapshot)
+                    : 'Mind\'s own code is not in this build (no source snapshot), so do not guess at it.'
+            ].join('\n\n');
+
+            let reply = await this.ask(context, history);
+
+            // One file per question. It asks with a line of its own and gets the
+            // file as source, because the point is that it reads the code rather
+            // than a description of the code.
+            const want = reply.match(/\[read:\s*([^\]]+)\]/i);
+            if (want && snapshot) {
+                const file = this.sourceOf(snapshot, want[1]);
+                reply = reply.replace(want[0], '').trim();
+                if (file) {
+                    // 40000 characters fits a whole stylesheet or a small worker
+                    // file; a 5000-line script still says where it was cut.
+                    const READ = 40000;
+                    const deliver = 'Here is ' + file.path + ' (' + file.lines + ' lines), as it stands:\n' +
+                        file.text.slice(0, READ) +
+                        (file.text.length > READ ? '\n[cut at ' + READ + ' of ' + file.text.length + ' characters]' : '');
+                    reply = await this.ask(context, history.concat([
+                        { role: 'assistant', content: want[0] },
+                        { role: 'user', content: deliver }
+                    ]));
+                } else {
+                    reply = (reply ? reply + '\n\n' : '') + 'No file at ' + String(want[1]).trim() + ' in the snapshot.';
+                }
+            }
+            this.thread[this.thread.length - 1] = { role: 'assistant', content: reply };
         } catch (err) {
             this.thread[this.thread.length - 1] = { role: 'assistant', content: 'Ambient unavailable: ' + err.message };
         }
