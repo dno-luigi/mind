@@ -684,30 +684,37 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
    this app, and turning it back to the box is how the next question is asked. */
 #assistCard {
     position: fixed; left: 14px; top: 120px; z-index: 246;
-    width: min(360px, calc(100vw - 28px)); height: 46px;
-    border: 1px solid transparent; border-radius: 999px;
-    background: transparent; color: var(--text);
+    width: min(360px, calc(100vw - 28px)); height: 72px;
+    border: 1px solid rgba(122, 182, 255, 0.45); border-radius: 18px;
+    /* Glass, not a panel: the work stays visible through it and the blue is the one
+       colour Ambient wears anywhere. */
+    background: rgba(18, 34, 58, 0.34); color: #eaf2ff;
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    backdrop-filter: blur(16px) saturate(140%);
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
     perspective: 1200px; overflow: hidden;
     font: 13px/1.55 system-ui, sans-serif;
     cursor: grab; touch-action: none;
     transition: width 0.35s ease, height 0.35s ease, border-radius 0.35s ease,
                 background 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
 }
-/* Open is the answer's side of the card: the app's card surface, not a window's. */
-#assistCard.open {
-    border-radius: var(--radius); border-color: var(--border);
-    background: var(--card-bg); box-shadow: 0 18px 44px rgba(0,0,0,0.45);
-}
-#assistCard.dragging { cursor: grabbing; box-shadow: 0 24px 60px rgba(0,0,0,0.6); }
+#assistCard.open { box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45); }
+#assistCard.dragging { cursor: grabbing; box-shadow: 0 24px 60px rgba(0,0,0,0.55); }
 #assistCard.hidden { display: none; }
-/* The launcher, in the bar where the undo arrow used to be: the pin is the way in
-   and out of the card, so the card itself can be put away. */
-#ambientFab {
-    background: #1f6fd6; border-color: #6bb0ff; color: #ffffff;
-    box-shadow: 0 6px 16px rgba(31,111,214,0.4);
+/* Away is not gone: the card folds into this pin, which is dragged where he wants it
+   and tapped to bring Ambient back. */
+#assistPin {
+    position: fixed; left: 14px; top: 300px; z-index: 244;
+    width: 44px; height: 44px; padding: 0; border-radius: 50%;
+    display: none; align-items: center; justify-content: center;
+    border: 1px solid rgba(122, 182, 255, 0.6);
+    background: rgba(31, 111, 214, 0.55); color: #ffffff;
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    font-size: 13px; cursor: grab; touch-action: none;
+    box-shadow: 0 8px 22px rgba(31, 111, 214, 0.35);
 }
-#ambientFab:hover { background: #2a80e6; }
-#ambientFab i { pointer-events: none; }
+#assistPin.show { display: flex; }
+#assistPin i { pointer-events: none; }
 #assistCardInner {
     position: absolute; inset: 0; transform-style: preserve-3d;
     transition: transform 0.55s cubic-bezier(0.4, 0.05, 0.2, 1);
@@ -721,22 +728,23 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
 /* A face turned away is invisible but still takes the press in Chromium, so only
    the face that is showing does. */
 #assistCard:not(.flipped) #assistFront, #assistCard.flipped #assistBack { pointer-events: auto; }
-#assistFront { display: flex; align-items: center; }
+#assistFront { display: flex; align-items: center; padding: 14px; }
 #assistDock { display: flex; align-items: center; gap: 8px; width: 100%; }
 #assistInput {
     flex: 1; resize: none; min-height: 44px; max-height: 120px; margin: 0; padding: 11px 16px;
-    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    background: rgba(6, 12, 22, 0.35); color: #eaf2ff;
+    border: 1px solid rgba(122, 182, 255, 0.4);
     border-radius: 999px; font: inherit; line-height: 1.4; cursor: text;
-    box-shadow: 0 10px 26px rgba(0,0,0,0.35); scrollbar-width: none;
+    scrollbar-width: none;
 }
 #assistInput::-webkit-scrollbar { display: none; }
 #assistInput:focus { outline: none; border-color: #4a9eff; }
-#assistInput::placeholder { color: var(--text); opacity: 0.45; }
+#assistInput::placeholder { color: #cfe2ff; opacity: 0.55; }
 /* Blue is Ambient's own, the same blue as the pin that used to stand for it, and
    nothing else on the canvas takes it. */
 #assistSend {
     flex-shrink: 0; width: 44px; height: 44px; padding: 0; border-radius: 50%;
-    border: 1px solid #6bb0ff; background: #1f6fd6; color: #ffffff;
+    border: 1px solid #6bb0ff; background: rgba(31, 111, 214, 0.92); color: #ffffff;
     font-size: 14px; cursor: pointer; touch-action: manipulation;
     display: flex; align-items: center; justify-content: center;
     box-shadow: 0 10px 26px rgba(31,111,214,0.4);
@@ -754,8 +762,8 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
    input is visible alongside what it was for. */
 .assist-asked {
     flex-shrink: 0; margin: 0 0 10px; padding-bottom: 8px;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-    font-size: 11px; line-height: 1.4; opacity: 0.55;
+    border-bottom: 1px solid rgba(122, 182, 255, 0.3);
+    font-size: 11px; line-height: 1.4; opacity: 0.7;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .assist-asked:empty { display: none; }
@@ -771,14 +779,13 @@ body.view-list .flip-card:has(.doc-frame) { height: calc(100dvh - 160px); min-he
 .assist-wait { opacity: 0.6; font-size: 12px; animation: thinking-text 1.4s ease-in-out infinite; }
 #assistGrip {
     position: absolute; right: 0; bottom: 0; width: 26px; height: 26px; z-index: 3;
-    display: none; cursor: nwse-resize; touch-action: none;
+    display: block; cursor: nwse-resize; touch-action: none;
 }
-#assistCard.open #assistGrip { display: block; }
 /* The grip has to be found before it can be used: in the card's own border colour it
    vanished into the surface it was drawn on. */
 #assistGrip::after {
     content: ''; position: absolute; right: 4px; bottom: 4px; width: 10px; height: 10px;
-    border-right: 2px solid color-mix(in srgb, var(--text) 45%, transparent);
-    border-bottom: 2px solid color-mix(in srgb, var(--text) 45%, transparent);
+    border-right: 2px solid rgba(122, 182, 255, 0.85);
+    border-bottom: 2px solid rgba(122, 182, 255, 0.85);
     border-radius: 0 0 2px 0;
 }

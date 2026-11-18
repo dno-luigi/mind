@@ -1091,9 +1091,7 @@ class App {
         const webFab = document.getElementById('webFab');
         if (webFab) webFab.addEventListener('click', () => this.openBrowser());
         document.getElementById('viewFab').addEventListener('click', () => this.cycleView());
-        // The undo shortcut's slot is the Ambient launcher now: the arrow was never
-        // used as undo, and the pin is the way in and out of the card.
-        document.getElementById('ambientFab').addEventListener('click', () => Ambient.toggle());
+
 
         document.getElementById('cancelSelect').addEventListener('click', () => this.clearSelection());
         document.getElementById('mergeSelected').addEventListener('click', () => this.promptAction('merge'));
@@ -4762,10 +4760,11 @@ const Ambient = {
     thread: [],
     busy: false,
     card: null,
+    pin: null,
     key: 'mind_assist',
     layoutKey: 'mind_assist_layout',
     snapshot: null,
-    layout: { x: null, y: null, cw: null, ch: null, hidden: false },
+    layout: { x: null, y: null, cw: null, ch: null, pinX: null, pinY: null, hidden: false },
 
     load() {
         try { this.thread = JSON.parse(localStorage.getItem(this.key) || '[]'); } catch (e) { this.thread = []; }
@@ -4773,7 +4772,7 @@ const Ambient = {
         try {
             const saved = JSON.parse(localStorage.getItem(this.layoutKey) || '{}');
             if (saved && typeof saved === 'object') {
-                ['x', 'y', 'cw', 'ch'].forEach((k) => {
+                ['x', 'y', 'cw', 'ch', 'pinX', 'pinY'].forEach((k) => {
                     if (Number.isFinite(saved[k])) this.layout[k] = saved[k];
                 });
                 this.layout.hidden = Boolean(saved.hidden);
@@ -4821,18 +4820,21 @@ const Ambient = {
             y: Math.round(Math.min(Math.max(8, y), Math.max(8, window.innerHeight - h - 8)))
         };
     },
-    pillWidth() {
-        return Math.min(360, window.innerWidth - 28);
+    /** The card is the box and its padding - or whatever size he dragged it to. */
+    cardWidth() {
+        return this.layout.cw
+            ? Math.min(this.layout.cw, window.innerWidth - 16)
+            : Math.min(360, window.innerWidth - 28);
     },
-    pillHeight() {
+    cardHeight() {
+        if (this.layout.ch) return Math.min(this.layout.ch, window.innerHeight - 16);
         const input = this.card && this.card.querySelector('#assistInput');
-        return Math.max(44, (input && input.offsetHeight) || 44);
+        return Math.max(44, (input && input.offsetHeight) || 44) + 28;
     },
-    /** At rest the card is the box: the same width as the box, the same height. */
-    sizeToPill() {
+    sizeToBox() {
         if (!this.card) return;
-        const w = this.pillWidth();
-        const h = this.pillHeight();
+        const w = this.cardWidth();
+        const h = this.cardHeight();
         this.card.style.width = w + 'px';
         this.card.style.height = h + 'px';
         this.applyLayout(w, h);
@@ -4844,8 +4846,8 @@ const Ambient = {
      */
     applyLayout(targetW, targetH) {
         if (!this.card) return;
-        const w = targetW || this.card.offsetWidth || this.pillWidth();
-        const h = targetH || this.card.offsetHeight || this.pillHeight();
+        const w = targetW || this.card.offsetWidth || this.cardWidth();
+        const h = targetH || this.card.offsetHeight || this.cardHeight();
         const at = this.clamp(
             this.layout.x === null ? 14 : this.layout.x,
             this.layout.y === null ? window.innerHeight - h - 104 : this.layout.y,
@@ -4878,6 +4880,20 @@ const Ambient = {
         document.body.appendChild(card);
         this.card = card;
 
+        // The card's way out: it folds into this pin, which stays where it is put.
+        const pin = document.createElement('button');
+        pin.id = 'assistPin';
+        pin.type = 'button';
+        pin.title = 'Ambient - tap to open, drag to move';
+        pin.innerHTML = '<i class="fas fa-thumbtack"></i>';
+        document.body.appendChild(pin);
+        this.pin = pin;
+        this.drag(pin, pin, () => this.toggle(true), (x, y) => {
+            this.layout.pinX = x;
+            this.layout.pinY = y;
+        }, true);
+        this.applyPin();
+
         card.querySelector('#assistSend').onclick = () => this.send();
         const input = card.querySelector('#assistInput');
         input.addEventListener('keydown', (e) => {
@@ -4889,7 +4905,7 @@ const Ambient = {
         input.addEventListener('input', () => {
             input.style.height = 'auto';
             input.style.height = Math.min(input.scrollHeight, 120) + 'px';
-            if (!card.classList.contains('flipped')) this.sizeToPill();
+            if (!card.classList.contains('flipped')) this.sizeToBox();
         });
 
         // A press that travels moves the card; a press that does not turns it over.
@@ -4898,11 +4914,17 @@ const Ambient = {
         }, (x, y) => { this.layout.x = x; this.layout.y = y; });
         this.resize();
 
-        this.sizeToPill();
-        if (this.layout.hidden) card.classList.add('hidden');
+        this.sizeToBox();
+        if (this.layout.hidden) {
+            card.classList.add('hidden');
+            pin.classList.add('show');
+        }
+        // The way in and out of Ambient: a long press on send, in either direction.
+        this.watchSend();
         window.addEventListener('resize', () => {
-            if (!card.classList.contains('flipped')) this.sizeToPill();
+            if (!card.classList.contains('flipped')) this.sizeToBox();
             else this.applyLayout();
+            this.applyPin();
         });
         return card;
     },
@@ -4911,13 +4933,13 @@ const Ambient = {
      * One gesture for the move. Below a few pixels it is a tap, because a card
      * that turns over on a shaky press is a card that cannot be moved at all.
      */
-    drag(el, handle, onTap, save) {
+    drag(el, handle, onTap, save, fromButton) {
         let from = null;
         let start = null;
         let moved = false;
 
         handle.addEventListener('pointerdown', (e) => {
-            if (e.target.closest('button') || e.target.closest('#assistGrip')) return;
+            if (!fromButton && (e.target.closest('button') || e.target.closest('#assistGrip'))) return;
             from = { x: e.clientX, y: e.clientY };
             start = { x: parseFloat(el.style.left) || 0, y: parseFloat(el.style.top) || 0 };
             moved = false;
@@ -5002,16 +5024,16 @@ const Ambient = {
     openAnswer() {
         const card = this.card;
         const back = card.querySelector('#assistBack');
-        const width = Math.round(this.layout.cw
-            ? Math.min(this.layout.cw, window.innerWidth - 16)
-            : Math.min(440, window.innerWidth - 24));
         card.classList.add('open');
-        card.style.width = width + 'px';
-        const fit = this.layout.ch || (back.scrollHeight + 4);
-        const height = Math.round(Math.min(Math.max(120, fit), Math.round(window.innerHeight * 0.72)));
-        card.style.height = height + 'px';
+        // The box is too short to hold an answer, so the card takes a reading height
+        // once. After that the size is his: the grip sets it, and the answer scrolls
+        // inside whatever he made.
+        if (!this.layout.ch) {
+            const fit = back.scrollHeight + 32;
+            card.style.height = Math.round(Math.min(Math.max(160, fit), Math.round(window.innerHeight * 0.45))) + 'px';
+        }
         card.classList.add('flipped');
-        this.applyLayout(width, height);
+        this.applyLayout(this.cardWidth(), parseFloat(card.style.height) || this.cardHeight());
     },
 
     /** Back to the box, which is where the next question is asked. */
@@ -5019,27 +5041,80 @@ const Ambient = {
         if (!this.card) return;
         this.card.classList.remove('flipped');
         this.card.classList.remove('open');
-        this.sizeToPill();
+        this.sizeToBox();
         if (window.innerWidth > 768) {
             const input = this.card.querySelector('#assistInput');
             if (input) input.focus();
         }
     },
 
-    /** The launcher in the bar hides the card and brings it back; the choice sticks. */
+    /**
+     * Ambient is put away into the pin and taken out of it again. A long press on
+     * send is the way in and out; the pin is how it stays findable while it is away.
+     */
     toggle(force) {
         const card = this.build();
-        const hide = force === undefined ? !card.classList.contains('hidden') : !force;
-        card.classList.toggle('hidden', hide);
-        this.layout.hidden = hide;
+        const show = force === undefined ? card.classList.contains('hidden') : Boolean(force);
+        card.classList.toggle('hidden', !show);
+        this.layout.hidden = !show;
         this.saveLayout();
-        if (hide) return;
+        if (this.pin) this.pin.classList.toggle('show', !show);
+        if (!show) return;
         if (card.classList.contains('flipped')) this.applyLayout();
-        else this.sizeToPill();
+        else this.sizeToBox();
         if (window.innerWidth > 768 && !card.classList.contains('flipped')) {
             const input = card.querySelector('#assistInput');
             if (input) input.focus();
         }
+    },
+
+    /** The pin keeps its own place, so putting Ambient away never loses it. */
+    applyPin() {
+        if (!this.pin) return;
+        const box = this.pin.offsetWidth || 44;
+        const at = this.clamp(
+            this.layout.pinX === null ? 14 : this.layout.pinX,
+            this.layout.pinY === null ? window.innerHeight - 170 : this.layout.pinY,
+            box, box
+        );
+        this.pin.style.left = at.x + 'px';
+        this.pin.style.top = at.y + 'px';
+    },
+
+    /**
+     * A long press on send is the way in and out: no second button in the bar. The
+     * press that toggled Ambient is not also a send, so the click it ends with is
+     * swallowed before the app's own handler sees it.
+     */
+    watchSend() {
+        const btn = document.getElementById('sendBtn');
+        if (!btn || btn.dataset.ambientWatch) return;
+        btn.dataset.ambientWatch = '1';
+        let timer = null;
+        let fired = false;
+        const start = () => {
+            fired = false;
+            clearTimeout(timer);
+            timer = setTimeout(() => {
+                fired = true;
+                if (navigator.vibrate) navigator.vibrate(12);
+                this.toggle();
+                setTimeout(() => { fired = false; }, 900);
+            }, 550);
+        };
+        const stop = () => { clearTimeout(timer); timer = null; };
+        btn.addEventListener('pointerdown', start);
+        btn.addEventListener('pointerup', stop);
+        btn.addEventListener('pointercancel', stop);
+        btn.addEventListener('pointerleave', stop);
+        // Android puts its own menu on a long press; this one is ours.
+        btn.addEventListener('contextmenu', (e) => { e.preventDefault(); this.toggle(); });
+        document.addEventListener('click', (e) => {
+            if (!fired || !e.target.closest || !e.target.closest('#sendBtn')) return;
+            fired = false;
+            e.preventDefault();
+            e.stopPropagation();
+        }, true);
     },
 
     render() {
@@ -5117,7 +5192,7 @@ const Ambient = {
         if (!said) return;
         input.value = '';
         input.style.height = '';
-        this.sizeToPill();
+        this.sizeToBox();
         this.thread.push({ role: 'user', content: said });
         this.thread.push({ role: 'assistant', content: '…' });
         this.busy = true;
@@ -5180,6 +5255,22 @@ const Ambient = {
                 } else {
                     reply = (reply ? reply + '\n\n' : '') + 'No file at ' + asked + ' in the snapshot.';
                 }
+            }
+            // One action, on an allow-list of one. Anything else it writes in that
+            // shape is dropped, so a hallucinated action does nothing rather than
+            // deleting something.
+            const acts = reply.match(/\[do:\s*([^\]]+)\]/gi) || [];
+            if (acts.length) {
+                acts.forEach((act) => { reply = reply.replace(act, ''); });
+                const done = [];
+                acts.forEach((act) => {
+                    const name = act.replace(/^\[do:\s*/i, '').replace(/\]$/, '').trim().toLowerCase();
+                    if (name === 'undo' && window.app && typeof window.app.undo === 'function') {
+                        window.app.undo();
+                        done.push('undo');
+                    }
+                });
+                if (done.length) reply = (reply.trim() + '\n\n_' + done.join(', ') + ' done._').trim();
             }
             this.thread[this.thread.length - 1] = { role: 'assistant', content: reply };
         } catch (err) {

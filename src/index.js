@@ -721,6 +721,10 @@ async function assist(request, env, ctx) {
     'The file arrives next turn, as source. A long file is sent from its start, so when the question is about one thing in it, ask for that instead:',
     '[read: path/to/file.js around aNameItContains]',
     'Do not guess at code you have not been shown; if the map has no file that answers the question, say that plainly.',
+    '',
+    'You may take back the last change to the workspace, and nothing else. Only when he asks for it, write a line of its own and nothing else in that shape:',
+    '[do: undo]',
+    'It is carried out exactly as asked. Any other action written in that shape is ignored.',
   ].join('\n');
 
   const messages = [{ role: 'system', content: brief }, ...thread];
