@@ -5107,8 +5107,15 @@ const Ambient = {
         btn.addEventListener('pointerup', stop);
         btn.addEventListener('pointercancel', stop);
         btn.addEventListener('pointerleave', stop);
-        // Android puts its own menu on a long press; this one is ours.
-        btn.addEventListener('contextmenu', (e) => { e.preventDefault(); this.toggle(); });
+        // Android puts its own menu on a long press. The timer above usually wins that
+        // race, so this only toggles when it has not - otherwise one long press would
+        // toggle twice and land back where it started.
+        btn.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            clearTimeout(timer);
+            if (fired) return;
+            this.toggle();
+        });
         document.addEventListener('click', (e) => {
             if (!fired || !e.target.closest || !e.target.closest('#sendBtn')) return;
             fired = false;
